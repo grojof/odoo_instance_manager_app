@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+import os
+import shlex
+import subprocess
+from dataclasses import dataclass
+
+from .ui import level_text, render_table, status_tag, style, title
+
+
+@dataclass
+class Command:
+    description: str
+    command: str
+
+
+def run(command: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed: {command}\n"
+            f"exit={result.returncode}\n"
+            f"stdout={result.stdout}\n"
+            f"stderr={result.stderr}"
+        )
+    return result
+
+
+def require_root_for_apply() -> None:
+    if os.geteuid() != 0:
+        raise RuntimeError("Para aplicar cambios en sistema ejecuta como root (sudo).")
+
+
+def command_ok(command: str) -> bool:
+    return run(command, check=False).returncode == 0
+
+
+def user_exists(username: str) -> bool:
+    return command_ok(f"id -u '{username}' >/dev/null 2>&1")
+
+
+def group_exists(groupname: str) -> bool:
+    return command_ok(f"getent group '{groupname}' >/dev/null 2>&1")
+
+
+def service_exists(service_name: str) -> bool:
+    return command_ok(f"systemctl cat '{service_name}' >/dev/null 2>&1")
+
+
+def service_active(service_name: str) -> bool:
+    return command_ok(f"systemctl is-active --quiet '{service_name}'")
+
+
+def service_enabled(service_name: str) -> bool:
+    return command_ok(f"systemctl is-enabled --quiet '{service_name}'")
+
+
+def path_exists(path: str) -> bool:
+    return command_ok(f"test -e '{path}'")
+
+
+def db_role_exists(role_name: str) -> bool:
+    query = f"sudo -u postgres psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='{role_name}'\""
+    result = run(query, check=False)
+    return result.returncode == 0 and "1" in result.stdout
+
+
+def database_exists(db_name: str) -> bool:
+    query = f"sudo -u postgres psql -tAc \"SELECT 1 FROM pg_database WHERE datname='{db_name}'\""
+    result = run(query, check=False)
+    return result.returncode == 0 and "1" in result.stdout
+
+
+def print_status_line(label: str, value: str, ok: bool) -> None:
+    print(f"{status_tag(ok)} {style(label, 'bold')}: {value}")
+
+
+def preview_commands(commands: list[Command]) -> None:
+    print(f"\n{title('Plan de ejecución')}")
+    rows: list[list[str]] = []
+    for index, item in enumerate(commands, start=1):
+        rows.append([
+            style(f"{index:02d}", "blue", "bold"),
+            item.description,
+            style(item.command, "dim"),
+        ])
+    print(render_table(["#", "Acción", "Comando"], rows))
+
+
+def apply_commands(commands: list[Command], stop_on_error: bool = True) -> None:
+    for index, item in enumerate(commands, start=1):
+        print(f"\n{style(f'[{index}/{len(commands)}]', 'blue', 'bold')} {item.description}")
+        result = run(item.command, check=False)
+        if result.stdout.strip():
+            print(result.stdout.strip())
+        if result.returncode != 0:
+            if result.stderr.strip():
+                print(level_text("ERROR", result.stderr.strip()))
+            if stop_on_error:
+                raise RuntimeError(f"Fallo ejecutando: {item.command}")
+
+
+def list_dirs(base_path: str) -> list[str]:
+    if not os.path.isdir(base_path):
+        return []
+    return sorted(
+        [
+            entry
+            for entry in os.listdir(base_path)
+            if os.path.isdir(os.path.join(base_path, entry))
+            and not entry.startswith(".")
+        ]
+    )
+
+
+def list_instances(base_path: str = "/opt/odoo") -> list[str]:
+    return list_dirs(base_path)
+
+
+def read_odoo_conf(conf_path: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not os.path.exists(conf_path):
+        return values
+
+    with open(conf_path, "r", encoding="utf-8") as file_handle:
+        for raw_line in file_handle:
+            line = raw_line.strip()
+            if (
+                not line
+                or line.startswith("#")
+                or line.startswith(";")
+                or line.startswith("[")
+            ):
+                continue
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+
+    return values
+
+
+def list_databases(
+    db_host: str,
+    db_port: int,
+    db_user: str,
+    db_password: str,
+) -> tuple[list[str], str | None]:
+    quoted_password = shlex.quote(db_password)
+    quoted_host = shlex.quote(db_host)
+    quoted_user = shlex.quote(db_user)
+    query_cmd = (
+        f"PGPASSWORD={quoted_password} psql -h {quoted_host} -p {db_port} -U {quoted_user} "
+        '-d postgres -tA -c "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"'
+    )
+    result = run(query_cmd, check=False)
+    if result.returncode != 0:
+        error_text = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or "Error desconocido al listar bases de datos."
+        )
+        return [], error_text
+
+    rows = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return rows, None
