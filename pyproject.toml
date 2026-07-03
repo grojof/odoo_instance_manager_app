@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odoo-instance-manager"
-version = "0.1.0"
+version = "1.0.0"
 description = "Interactive, root-run CLI to install, maintain, and audit multi-instance Odoo Community servers on Ubuntu."
 readme = "README.md"
 requires-python = ">=3.12"
