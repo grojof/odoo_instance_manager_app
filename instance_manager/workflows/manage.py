@@ -46,6 +46,7 @@ from .common import (
     _select_existing_instance,
     _validate_instance_or_abort,
 )
+from .health import run_health_check
 from .install import _maybe_plan_certs
 from .logrotate import manage_log_rotation
 
@@ -483,6 +484,7 @@ def manage_existing_instance() -> None:
             f"\nGestión segura de instancia: {instance}",
             [
                 "Consultar ubicaciones/config actual",
+                "Comprobar salud (health check)",
                 "Actualizar configuración existente",
                 "Reparar logs Nginx de instancia",
                 "Rotación de logs",
@@ -501,6 +503,8 @@ def manage_existing_instance() -> None:
 
         if action == "Consultar ubicaciones/config actual":
             _show_instance_locations(config)
+        elif action == "Comprobar salud (health check)":
+            run_health_check(config)
         elif action == "Actualizar configuración existente":
             update_existing_configs(instance)
             config = InstanceConfig(instance=instance)

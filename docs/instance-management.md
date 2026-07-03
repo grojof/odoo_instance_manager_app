@@ -31,6 +31,12 @@ preserved.
 > just a config rewrite. The prompts currently default to class defaults, so review every value before
 > confirming to avoid overwriting a working config (e.g. `db_password`).
 
+## Health check
+
+**Comprobar salud (health check)** runs a read-only check of the instance — systemd service, local HTTP
+response, database connectivity, and disk usage — flagging any problems. See
+[Instance health check](health-check.md).
+
 ## Service control
 
 **Servicios instancias** lists instance services with their run state and autostart state, and offers start,
