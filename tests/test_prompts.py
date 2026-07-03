@@ -37,9 +37,9 @@ class ChooseTests(unittest.TestCase):
             self.assertEqual(prompts.choose("Tipo", self.OPTS), "Solo Filestore")
 
     def test_explicit_cancel_entry_returned_verbatim(self) -> None:
-        # An existing Volver/Cancelar/Salir entry is the 0 option and is returned as-is.
+        # An existing Cancel/Back/Exit entry is the 0 option and is returned as-is.
         with scripted_input(["0"]):
-            self.assertEqual(prompts.choose("Menu", ["Hacer algo", "Volver"]), "Volver")
+            self.assertEqual(prompts.choose("Menu", ["Do something", "Back"]), "Back")
 
     def test_empty_with_default_returns_default(self) -> None:
         with scripted_input([""]):

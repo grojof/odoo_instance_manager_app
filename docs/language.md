@@ -1,19 +1,20 @@
 ---
 type: how-to
-title: "Interface language (Spanish / English)"
+title: "Interface language (English / Spanish)"
 description: "Choose the UI language at startup or with the OIM_LANG environment variable."
 tags: [i18n, language, ui]
 audience: [operator]
-updated: 2026-07-03
+updated: 2026-07-04
 ---
 
 # Interface language
 
-The tool's interface is available in **Spanish** (default) and **English**.
+The tool's interface is available in **English** (default) and **Spanish**. English is the source
+language: the strings live in English in the code, and Spanish is a full translation applied on demand.
 
 ## Choosing the language
 
-- **At startup** — when it starts, the tool asks **Español / English** (default Español), then shows the menu.
+- **At startup** — when it starts, the tool asks **Español / English**, then shows the menu.
 - **Non-interactively** — set the `OIM_LANG` environment variable to skip the prompt:
 
   ```bash
@@ -25,8 +26,9 @@ The tool's interface is available in **Spanish** (default) and **English**.
 
 ## What is translated
 
-Menus, prompts, section titles, table headers, and the plan preview render in the chosen language. Some
-detailed status messages remain in Spanish for now — anything without a translation falls back to Spanish, so
+Everything user-facing renders in the chosen language: menus, prompts, section titles, table headers and
+string cells, command/plan descriptions, interpolated status messages, and the yes/no shortcut (`Y/n` in
+English, `S/n` in Spanish). Anything without a Spanish translation falls back to its English source, so
 nothing breaks. The translation catalog lives in `instance_manager/i18n.py` and is easy to extend.
 
 ## Related

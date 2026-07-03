@@ -14,7 +14,7 @@ class HttpProbeTests(unittest.TestCase):
     def test_non_numeric_port_is_unhealthy(self) -> None:
         ok, detail = health._http_probe("false")
         self.assertFalse(ok)
-        self.assertIn("no numérico", detail)
+        self.assertIn("non-numeric", detail)
 
     def test_2xx_response_is_healthy(self) -> None:
         class _Resp:
@@ -40,7 +40,7 @@ class HttpProbeTests(unittest.TestCase):
         health.urllib.request.urlopen = _boom
         ok, detail = health._http_probe("8069")
         self.assertFalse(ok)
-        self.assertIn("sin respuesta", detail)
+        self.assertIn("no response", detail)
 
 
 class DiskRowTests(unittest.TestCase):
@@ -65,7 +65,7 @@ class DiskRowTests(unittest.TestCase):
         self._patch(False, "")
         tag, _label, detail = health._disk_row("Disco", "/nope")
         self.assertIn("INFO", strip_ansi(tag))
-        self.assertIn("no existe", detail)
+        self.assertIn("does not exist", detail)
 
 
 if __name__ == "__main__":

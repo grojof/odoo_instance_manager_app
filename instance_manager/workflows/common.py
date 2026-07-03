@@ -10,6 +10,7 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 
+from ..i18n import t, tf
 from ..models import InstanceConfig
 from ..prompts import ask_bool, ask_int, ask_secret, ask_text, choose
 from ..system import (
@@ -59,44 +60,44 @@ def _read_text_file(path: str) -> str:
 
 def _execute_plan(commands: list[Command]) -> None:
     if not commands:
-        print(level_text("INFO", "No hay acciones para ejecutar."))
+        print(level_text("INFO", 'There are no actions to run.'))
         return
 
     preview_commands(commands)
     mode = choose(
-        "Confirmar acción",
-        ["Cancelar", "Confirmar plan y ejecutar"],
+        'Confirm action',
+        ['Cancel', 'Confirm plan and run'],
         default_index=None,
     )
-    if mode in {"", "Cancelar"}:
+    if mode in {"", 'Cancel'}:
         return
     require_root_for_apply()
     apply_commands(commands)
-    print(f"\n{level_text('OK', 'Plan ejecutado correctamente.')}")
+    print(f"\n{level_text('OK', 'Plan executed successfully.')}")
 
 
 def _collect_db_connection(instance: str) -> tuple[str, int, str, str] | None:
     wants_db_query = ask_bool(
-        "¿Quieres conectarte a PostgreSQL para listar DBs disponibles?",
+        'Connect to PostgreSQL to list available databases?',
         False,
     )
     if not wants_db_query:
         return None
 
-    db_host = ask_text("DB server", "127.0.0.1", required=True)
-    db_port = ask_int("DB port", 5432)
-    db_user = ask_text("DB user", instance, required=True)
-    db_password = ask_secret("DB password")
+    db_host = ask_text('DB server', "127.0.0.1", required=True)
+    db_port = ask_int('DB port', 5432)
+    db_user = ask_text('DB user', instance, required=True)
+    db_password = ask_secret('DB password')
     return db_host, db_port, db_user, db_password
 
 
 def _list_detected_instances(base_dir: str) -> list[str]:
     instances = list_instances(base_dir)
-    print(f"\nInstancias detectadas en {base_dir}:")
+    print(tf('\nInstances detected in {}:', base_dir))
     if not instances:
-        print("  No se detectaron carpetas de instancia en el directorio base.")
-        print("  Puedes escribir el nombre de una instancia conocida")
-        print("  para eliminar otros datos residuales como configs, servicios, logs, etc.")
+        print(t('  No instance folders were detected in the base directory.'))
+        print(t('  You can type the name of a known instance'))
+        print(t('  to remove other residual data such as configs, services, logs, etc.'))
     for item in instances:
         print(f"- {item}")
     return instances
@@ -108,16 +109,16 @@ def _select_existing_instance() -> str:
 
     if instances:
         selected = choose(
-            "Selecciona instancia detectada",
-            instances + ["Escribir nombre", "Cancelar"],
+            'Select a detected instance',
+            instances + ['Type a name', 'Cancel'],
             default_index=None,
         )
-        if selected == "Cancelar" or selected == "":
+        if selected == 'Cancel' or selected == "":
             return ""
-        if selected != "Escribir nombre":
+        if selected != 'Type a name':
             return selected
 
-    return ask_text("Nombre de instancia", "", required=False)
+    return ask_text('Instance name', "", required=False)
 
 
 def _validate_instance_or_abort(instance: str) -> InstanceConfig | None:
@@ -164,23 +165,23 @@ def _probe_databases_for_management(instance: str) -> tuple[str, str | None, lis
         db_host, db_port, db_user, db_password = db_connection
         listed_dbs, db_error = list_databases(db_host, db_port, db_user, db_password)
         if db_error:
-            print(f"[WARN] Fallo al consultar DBs: {db_error}")
+            print(tf('[WARN] Failed to query DBs: {}', db_error))
         elif listed_dbs:
-            print("\nDBs disponibles:")
+            print(t('\nAvailable databases:'))
             for item in listed_dbs:
                 print(f"- {item}")
             selected = choose(
-                "Selecciona DB para validaciones (opcional)",
-                listed_dbs + ["No seleccionar"],
+                'Select a DB for validation (optional)',
+                listed_dbs + ['Do not select'],
                 default_index=None,
             )
-            if selected and selected != "No seleccionar":
+            if selected and selected != 'Do not select':
                 db_name = selected
         else:
-            print("[INFO] Conexión a DB exitosa, sin bases listadas.")
+            print(t('[INFO] DB connection successful, no databases listed.'))
 
     if not db_name:
-        db_name = ask_text("DB para validaciones (opcional)", "", required=False)
+        db_name = ask_text('DB for validation (optional)', "", required=False)
 
     return db_name, db_error, listed_dbs
 
@@ -213,14 +214,14 @@ def _ask_db_credentials(
 ) -> DbCredentials:
     """Collect DB credentials, offering to reuse the ones from earlier this session."""
     if cached is not None and ask_bool(
-        f"¿Usar credenciales DB anteriores ({cached.user}@{cached.host}:{cached.port})?",
+        tf('Reuse the previous DB credentials ({}@{}:{})?', cached.user, cached.host, cached.port),
         True,
     ):
         return cached
-    host = ask_text("DB server", cached.host if cached else "127.0.0.1", required=True)
-    port = ask_int("DB port", cached.port if cached else 5432)
-    user = ask_text("DB user", cached.user if cached else default_user, required=True)
-    password = ask_secret("DB password")
+    host = ask_text('DB server', cached.host if cached else "127.0.0.1", required=True)
+    port = ask_int('DB port', cached.port if cached else 5432)
+    user = ask_text('DB user', cached.user if cached else default_user, required=True)
+    password = ask_secret('DB password')
     return DbCredentials(host, port, user, password)
 
 
@@ -228,20 +229,20 @@ def _pick_db_name(creds: DbCredentials, label: str, required: bool = True) -> st
     """List databases with ``creds`` and let the operator pick one or type a name."""
     db_names, error = list_databases(creds.host, creds.port, creds.user, creds.password)
     if error:
-        print(level_text("WARN", f"No se pudo listar DBs: {error}"))
+        print(level_text("WARN", tf('Could not list databases: {}', error)))
     elif db_names:
-        print("\nDBs disponibles:")
+        print(t('\nAvailable databases:'))
         for item in db_names:
             print(f"- {item}")
         pick = choose(
-            f"{label} (selección rápida)",
-            db_names + ["Escribir nombre manualmente"],
+            tf('{} (quick pick)', label),
+            db_names + ['Type the name manually'],
             default_index=None,
         )
-        if pick and pick != "Escribir nombre manualmente":
+        if pick and pick != 'Type the name manually':
             return pick
     else:
-        print(level_text("INFO", "Conexión a DB exitosa, sin bases listadas."))
+        print(level_text("INFO", 'DB connection succeeded, no databases listed.'))
     return ask_text(label, "", required=required)
 
 

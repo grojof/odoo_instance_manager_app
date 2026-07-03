@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 
+from ..i18n import t, tf
 from ..models import InstanceConfig
 from ..planners import (
     plan_nginx_http,
@@ -88,13 +89,13 @@ def _detect_certificate_mode(config: InstanceConfig) -> tuple[str, bool]:
             config.ssl_key_file
         )
         if _is_self_signed_certificate(config.ssl_cert_file):
-            return "Autofirmado", has_expected_files
+            return 'Self-signed', has_expected_files
         return "Personalizado (CA)", has_expected_files
 
     if cert_path and key_path:
         return "Personalizado (externo)", path_exists(cert_path) and path_exists(key_path)
 
-    return "Configuración TLS incompleta", False
+    return 'Incomplete TLS configuration', False
 
 
 def _show_instance_status(
@@ -102,14 +103,14 @@ def _show_instance_status(
     db_error: str | None = None,
     listed_dbs: list[str] | None = None,
 ) -> None:
-    print(f"\n{title('Ubicaciones y nombres esperados')}")
+    print(f"\n{title('Expected locations and names')}")
     path_rows = [[key, value] for key, value in pretty_paths(config)]
-    print(render_table(["Campo", "Valor"], path_rows))
+    print(render_table(['Field', 'Value'], path_rows))
 
     conf_values = read_odoo_conf(config.odoo_conf_file)
     data_dir = _resolve_data_dir(config)
 
-    print(f"\n{title('Estado detectado')}")
+    print(f"\n{title('Detected state')}")
     status_rows: list[list[str]] = [
         ["OK" if user_exists(config.odoo_user) else "MISSING", "Linux user", config.odoo_user],
         ["OK" if path_exists(config.odoo_home) else "MISSING", "Odoo home", config.odoo_home],
@@ -123,9 +124,9 @@ def _show_instance_status(
     status_rows.append(["OK" if cert_ok else "MISSING", "Certificado TLS", cert_mode])
 
     if db_error:
-        status_rows.append(["MISSING", "DB listing", f"fallo de conexión/consulta -> {db_error}"])
+        status_rows.append(["MISSING", "DB listing", tf("connection/query failure -> {}", db_error)])
     elif listed_dbs is not None:
-        status_rows.append(["OK", "DB listing", f"{len(listed_dbs)} DB(s) detectada(s)"])
+        status_rows.append(["OK", "DB listing", tf("{} DB(s) detected", len(listed_dbs))])
 
     if config.db_name:
         status_rows.append([
@@ -134,13 +135,13 @@ def _show_instance_status(
             config.db_name,
         ])
     else:
-        status_rows.append(["INFO", "DB database", "no indicada, se omite validación"])
+        status_rows.append(["INFO", "DB database", 'not provided, validation skipped'])
 
     labeled_rows = [[level_tag(state), label, value] for state, label, value in status_rows]
-    print(render_table(["Estado", "Chequeo", "Valor"], labeled_rows))
+    print(render_table(['State', 'Check', 'Value'], labeled_rows))
 
     if conf_values:
-        print(f"\n{title('Valores útiles en config Odoo')}")
+        print(f"\n{title('Useful values in the Odoo config')}")
         conf_rows: list[list[str]] = []
         for key in [
             "db_host",
@@ -154,11 +155,11 @@ def _show_instance_status(
             if key in conf_values:
                 conf_rows.append([key, conf_values[key]])
         if conf_rows:
-            print(render_table(["Clave", "Valor"], conf_rows))
+            print(render_table(['Key', 'Value'], conf_rows))
 
 
 def _show_instance_locations(config: InstanceConfig) -> None:
-    print(f"\n{title('Ubicaciones relevantes de la instancia')}")
+    print(f"\n{title('Relevant instance locations')}")
     rows = [
         ["Odoo config", config.odoo_conf_file],
         ["Odoo home", config.odoo_home],
@@ -167,7 +168,7 @@ def _show_instance_locations(config: InstanceConfig) -> None:
         ["SSL dir", config.nginx_ssl_dir],
         ["Data store (data_dir)", _resolve_data_dir(config)],
     ]
-    print(render_table(["Elemento", "Ruta/Valor"], rows))
+    print(render_table(['Item', 'Path/Value'], rows))
 
 
 def _repair_instance_nginx_logs(config: InstanceConfig) -> None:
@@ -176,24 +177,24 @@ def _repair_instance_nginx_logs(config: InstanceConfig) -> None:
 
     commands: list[Command] = [
         Command(
-            "Asegurar directorio /var/log/nginx",
+            'Ensure /var/log/nginx directory',
             "install -d -m 755 -o root -g adm /var/log/nginx",
         ),
         Command(
-            "Recrear access log de instancia",
+            'Recreate instance access log',
             f"install -m 640 -o www-data -g adm /dev/null {_quote(access_log)}",
         ),
         Command(
-            "Recrear error log de instancia",
+            'Recreate instance error log',
             f"install -m 640 -o www-data -g adm /dev/null {_quote(error_log)}",
         ),
-        Command("Validar Nginx", "nginx -t"),
+        Command('Validate Nginx', "nginx -t"),
         Command(
-            "Reabrir logs Nginx",
+            'Reopen Nginx logs',
             "nginx -s reopen || systemctl reload nginx",
         ),
         Command(
-            "Mostrar permisos finales de logs",
+            'Show final log permissions',
             f"ls -l {_quote(access_log)} {_quote(error_log)}",
         ),
     ]
@@ -205,30 +206,30 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
     venv_activate = f"{config.odoo_home}/venv/bin/activate"
     venv_pip = f"{config.odoo_home}/venv/bin/pip"
 
-    print(f"\n{title('Instalar paquetes Python en venv de la instancia')}")
-    print(level_text("INFO", f"Venv objetivo: {config.odoo_home}/venv"))
+    print(f"\n{title('Install Python packages in the instance venv')}")
+    print(level_text("INFO", tf('Target venv: {}/venv', config.odoo_home)))
 
     mode = choose(
-        "Origen de paquetes",
+        'Package source',
         [
-            "requirements.txt (seleccionar ruta)",
-            "Lista manual de paquetes",
-            "Cancelar",
+            'requirements.txt (select path)',
+            'Manual package list',
+            'Cancel',
         ],
         default_index=None,
     )
-    if mode in {"", "Cancelar"}:
+    if mode in {"", 'Cancel'}:
         return
 
     commands: list[Command] = [
         Command(
-            "Validar venv de la instancia",
+            'Validate the instance venv',
             f"test -x {_quote(venv_pip)}",
         )
     ]
 
-    if mode == "requirements.txt (seleccionar ruta)":
-        print(level_text("INFO", "Selecciona el archivo requirements a instalar."))
+    if mode == 'requirements.txt (select path)':
+        print(level_text("INFO", 'Select the requirements file to install.'))
         req_path = select_file_path(
             ".",
             "Archivo requirements (TXT/IN)",
@@ -236,32 +237,32 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
         )
         commands.append(
             Command(
-                "Validar archivo requirements",
+                'Validate requirements file',
                 f"test -f {_quote(req_path)}",
             )
         )
         commands.append(
             Command(
-                "Instalar paquetes desde requirements en venv",
+                'Install packages from requirements into the venv',
                 f"sudo -u {_quote(config.odoo_user)} bash -lc \"source {_quote(venv_activate)} && pip install -r {_quote(req_path)}\"",
             )
         )
     else:
-        print(level_text("INFO", "Formato manual soportado:"))
-        print(level_text("INFO", "- Separados por comas en una línea"))
-        print(level_text("INFO", "- O una dependencia por línea (Enter en vacío para terminar)"))
+        print(level_text("INFO", 'Manual format supported:'))
+        print(level_text("INFO", '- Comma-separated on a single line'))
+        print(level_text("INFO", '- Or one dependency per line (empty Enter to finish)'))
         print(level_text("INFO", "- requests"))
         print(level_text("INFO", "- psycopg2-binary==2.9.10"))
         print(level_text("INFO", "- babel>=2.14,<3"))
 
         raw_packages = ask_text(
-            "Lista inicial de paquetes (coma o línea única)",
+            'Initial package list (comma-separated or one line)',
             "",
             required=False,
         )
 
         extra_lines: list[str] = []
-        print(level_text("INFO", "Añade más paquetes (una línea por paquete). Enter vacío para finalizar."))
+        print(level_text("INFO", 'Add more packages (one per line). Empty Enter to finish.'))
         while True:
             line = input("Paquete adicional: ").strip()
             if not line:
@@ -279,20 +280,20 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
             packages.extend(parts)
 
         if not packages:
-            print(level_text("WARN", "No se detectaron paquetes válidos. Operación cancelada."))
+            print(level_text("WARN", 'No valid packages detected. Operation cancelled.'))
             return
 
         package_args = " ".join(_quote(package) for package in packages)
         commands.append(
             Command(
-                "Instalar paquetes en venv",
+                'Install packages into the venv',
                 f"sudo -u {_quote(config.odoo_user)} bash -lc \"source {_quote(venv_activate)} && pip install {package_args}\"",
             )
         )
 
     commands.append(
         Command(
-            "Mostrar paquetes instalados (resumen)",
+            'Show installed packages (summary)',
             f"sudo -u {_quote(config.odoo_user)} bash -lc \"source {_quote(venv_activate)} && pip list\"",
         )
     )
@@ -304,16 +305,16 @@ def update_existing_configs(instance: str) -> None:
     config = InstanceConfig(instance=instance)
     config.normalize_defaults()
 
-    print("\nIntroduce nuevos valores (si aplican)")
-    config.domain = ask_text("Dominio", config.domain, required=True)
-    config.http_port = ask_int("HTTP interno", config.http_port)
-    config.gevent_port = ask_int("gevent interno", config.gevent_port)
-    config.db_host = ask_text("DB host", config.db_host, required=True)
-    config.db_port = ask_int("DB port", config.db_port)
-    config.db_user = ask_text("DB user", config.db_user, required=True)
-    config.db_password = ask_text("DB password", config.db_password, required=True)
+    print(t('\nEnter new values (if applicable)'))
+    config.domain = ask_text('Domain', config.domain, required=True)
+    config.http_port = ask_int('Internal HTTP', config.http_port)
+    config.gevent_port = ask_int('Internal gevent', config.gevent_port)
+    config.db_host = ask_text('DB host', config.db_host, required=True)
+    config.db_port = ask_int('DB port', config.db_port)
+    config.db_user = ask_text('DB user', config.db_user, required=True)
+    config.db_password = ask_text('DB password', config.db_password, required=True)
     config.odoo_admin_passwd = ask_text(
-        "admin_passwd Odoo", config.odoo_admin_passwd, required=True
+        'Odoo admin_passwd', config.odoo_admin_passwd, required=True
     )
 
     backup_root = f"/var/backups/{config.instance}/config_preupdate"
@@ -328,12 +329,12 @@ def update_existing_configs(instance: str) -> None:
         ("nginx https", f"/etc/nginx/sites-available/{config.nginx_https_name}"),
     ]
     backup_rows = [[name, source, f"{backup_dest}/{name.replace(' ', '_')}"] for name, source in backup_sources]
-    print(f"\n{title('Backup de configuración previo a actualización')}")
-    print(render_table(["Elemento", "Origen", "Destino backup"], backup_rows))
+    print(f"\n{title('Pre-update configuration backup')}")
+    print(render_table(['Item', "Origen", "Destino backup"], backup_rows))
 
     backup_commands: list[Command] = [
         Command(
-            "Crear directorio de backup de configuración",
+            'Create configuration backup directory',
             f"mkdir -p {_quote(backup_dest)}",
         )
     ]
@@ -341,7 +342,7 @@ def update_existing_configs(instance: str) -> None:
         target_name = name.replace(" ", "_")
         backup_commands.append(
             Command(
-                f"Backup previo de {name}",
+                tf('Pre-update backup of {}', name),
                 f"test -f {_quote(source)} && cp -a {_quote(source)} {_quote(f'{backup_dest}/{target_name}')} || true",
             )
         )
@@ -356,25 +357,25 @@ def update_existing_configs(instance: str) -> None:
     )
 
     nginx_mode = choose(
-        "Regenerar Nginx",
-        ["No", "Sí - HTTP", "Sí - HTTPS"],
+        'Regenerate Nginx',
+        ["No", 'Yes - HTTP', 'Yes - HTTPS'],
         default_index=None,
     )
-    if nginx_mode == "Sí - HTTP":
+    if nginx_mode == 'Yes - HTTP':
         commands.extend(plan_nginx_http(config))
-    elif nginx_mode == "Sí - HTTPS":
+    elif nginx_mode == 'Yes - HTTPS':
         commands.extend(_maybe_plan_certs(config))
         commands.extend(plan_nginx_https(config))
 
     _execute_plan(commands)
-    print(level_text("INFO", f"Backup de configuración (si se ejecutó el plan) en: {backup_dest}"))
+    print(level_text("INFO", tf('Configuration backup (if the plan ran) at: {}', backup_dest)))
 
 
 def _delete_instance(
     config: InstanceConfig, cached: DbCredentials | None = None
 ) -> DbCredentials | None:
-    drop_db = ask_bool("¿Eliminar también base de datos?", False)
-    remove_store = ask_bool("¿Eliminar también filestore?", False)
+    drop_db = ask_bool('Also delete the database?', False)
+    remove_store = ask_bool('Also delete the filestore?', False)
 
     db_name = ""
     db_host = ""
@@ -384,82 +385,81 @@ def _delete_instance(
     creds = cached
 
     if drop_db:
-        db_name = ask_text("DB a eliminar", config.instance, required=True)
+        db_name = ask_text('DB to delete', config.instance, required=True)
         creds = _ask_db_credentials(config.instance, cached)
         db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
         if not _database_exists(creds, db_name):
             print(
                 level_text(
                     "WARN",
-                    f"No se encontró la base de datos '{db_name}' en {creds.host}:{creds.port} "
-                    "(no existe o no se pudo conectar); se omite su eliminación.",
+                    tf("Database '{}' not found on {}:{} (missing or unreachable); skipping its deletion.", db_name, creds.host, creds.port),
                 )
             )
             drop_db = False
 
     commands: list[Command] = [
         Command(
-            "Detener servicio Odoo",
+            'Stop the Odoo service',
             f"systemctl stop {_quote(config.odoo_service)} || true",
         ),
         Command(
-            "Deshabilitar servicio Odoo",
+            'Disable the Odoo service',
             f"systemctl disable {_quote(config.odoo_service)} || true",
         ),
         Command(
-            "Eliminar unit file",
+            'Remove unit file',
             f"rm -f {_quote(f'/etc/systemd/system/{config.odoo_service}.service')}",
         ),
-        Command("Recargar systemd", "systemctl daemon-reload"),
+        Command('Reload systemd', "systemctl daemon-reload"),
         Command(
-            "Eliminar configuración Odoo", f"rm -rf {_quote(config.odoo_conf_dir)}"
+            'Remove Odoo configuration', f"rm -rf {_quote(config.odoo_conf_dir)}"
         ),
-        Command("Eliminar home de instancia", f"rm -rf {_quote(config.odoo_home)}"),
+        Command('Remove instance home', f"rm -rf {_quote(config.odoo_home)}"),
         Command(
-            "Eliminar Nginx HTTP",
+            'Remove Nginx HTTP',
             f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_http_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_http_name}')}",
         ),
         Command(
-            "Eliminar Nginx HTTPS",
+            'Remove Nginx HTTPS',
             f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_https_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_https_name}')}",
         ),
-        Command("Eliminar SSL de instancia", f"rm -rf {_quote(config.nginx_ssl_dir)}"),
-        Command("Validar Nginx", "nginx -t"),
-        Command("Recargar Nginx", "systemctl reload nginx || true"),
+        Command('Remove instance SSL', f"rm -rf {_quote(config.nginx_ssl_dir)}"),
+        Command('Validate Nginx', "nginx -t"),
+        Command('Reload Nginx', "systemctl reload nginx || true"),
     ]
 
     if drop_db and db_name:
         commands.append(
             Command(
-                "Eliminar DB",
+                'Delete DB',
                 f"PGPASSWORD={_quote(db_password)} dropdb --if-exists -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} {_quote(db_name)}",
             )
         )
 
     if remove_store:
         store_db = ask_text(
-            "Filestore DB a eliminar", db_name or config.instance, required=True
+            'Filestore DB to delete', db_name or config.instance, required=True
         )
         if not _is_safe_path_component(store_db):
             print(
                 level_text(
                     "ERROR",
-                    "Nombre de DB de filestore no válido (no se permiten '/', '..' ni nombres reservados).",
+                    "Invalid filestore DB name ('/', '..' and reserved names are not allowed).",
                 )
             )
             return creds
         commands.append(
             Command(
-                "Eliminar filestore",
+                'Remove filestore',
                 f"rm -rf {_quote(_filestore_path(config, store_db))}",
             )
         )
 
     if not confirm_with_phrase(
-        "Acción destructiva detectada.",
-        f"ELIMINAR {config.instance}",
+        'Destructive action detected.',
+        f"DELETE {config.instance}",
     ):
-        print(level_text("INFO", "Confirmación no válida. Operación cancelada."))
+        print(level_text("INFO", 'Invalid confirmation. Operation cancelled.'))
         return creds
 
     _execute_plan(commands)
@@ -469,7 +469,7 @@ def _delete_instance(
 def manage_existing_instance() -> None:
     instance = _select_existing_instance()
     if not instance:
-        print("[INFO] Operación cancelada.")
+        print(t('[INFO] Operation cancelled.'))
         return
 
     config = _validate_instance_or_abort(instance)
@@ -480,61 +480,61 @@ def manage_existing_instance() -> None:
     db_creds: DbCredentials | None = None
 
     while True:
-        print("\nEstado completo de la instancia:")
+        print(t('\nFull instance status:'))
         _show_instance_status(config, db_error=db_error, listed_dbs=listed_dbs)
 
         action = choose(
-            f"\nGestión segura de instancia: {instance}",
+            tf('\nSafe instance management: {}', instance),
             [
-                "Consultar ubicaciones/config actual",
-                "Comprobar salud (health check)",
-                "Actualizar configuración existente",
-                "Reparar logs Nginx de instancia",
-                "Rotación de logs",
-                "Uso de disco y limpieza",
-                "Instalar paquetes Python en venv",
-                "Inventario de addons",
-                "Realizar backup",
-                "Backups programados",
-                "Restaurar backup",
-                "Duplicar instancia",
-                "Eliminar instancia",
-                "Volver",
+                'Show locations / current config',
+                'Health check',
+                'Update existing configuration',
+                'Repair instance Nginx logs',
+                'Log rotation',
+                'Disk usage and cleanup',
+                'Install Python packages in the venv',
+                'Addon inventory',
+                'Create backup',
+                'Scheduled backups',
+                'Restore backup',
+                'Duplicate instance',
+                'Delete instance',
+                'Back',
             ],
             default_index=None,
         )
 
-        if action in {"", "Volver"}:
+        if action in {"", 'Back'}:
             return
 
-        if action == "Consultar ubicaciones/config actual":
+        if action == 'Show locations / current config':
             _show_instance_locations(config)
-        elif action == "Comprobar salud (health check)":
+        elif action == 'Health check':
             run_health_check(config)
-        elif action == "Actualizar configuración existente":
+        elif action == 'Update existing configuration':
             update_existing_configs(instance)
             config = InstanceConfig(instance=instance)
             config.db_name, db_error, listed_dbs = _probe_databases_for_management(
                 instance
             )
             config.normalize_defaults()
-        elif action == "Reparar logs Nginx de instancia":
+        elif action == 'Repair instance Nginx logs':
             _repair_instance_nginx_logs(config)
-        elif action == "Rotación de logs":
+        elif action == 'Log rotation':
             manage_log_rotation(config)
-        elif action == "Uso de disco y limpieza":
+        elif action == 'Disk usage and cleanup':
             manage_disk_usage(config)
-        elif action == "Instalar paquetes Python en venv":
+        elif action == 'Install Python packages in the venv':
             _install_python_packages_in_instance_venv(config)
-        elif action == "Inventario de addons":
+        elif action == 'Addon inventory':
             show_addon_inventory(config)
-        elif action == "Realizar backup":
+        elif action == 'Create backup':
             db_creds = _backup_instance(config, db_creds)
-        elif action == "Backups programados":
+        elif action == 'Scheduled backups':
             manage_scheduled_backup(config)
-        elif action == "Restaurar backup":
+        elif action == 'Restore backup':
             db_creds = _restore_backup(config, db_creds)
-        elif action == "Duplicar instancia":
+        elif action == 'Duplicate instance':
             db_creds = _duplicate_instance(config, db_creds)
-        elif action == "Eliminar instancia":
+        elif action == 'Delete instance':
             db_creds = _delete_instance(config, db_creds)

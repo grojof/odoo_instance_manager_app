@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 
+from ..i18n import tf
 from ..models import InstanceConfig
 from ..planners import (
     plan_copy_custom_certs,
@@ -30,11 +31,11 @@ from .common import _execute_plan, _odoo_conf_candidates, _quote
 
 def _collect_instance_config() -> InstanceConfig:
     while True:
-        instance = ask_text("Nombre de instancia", "odoo18", required=True)
+        instance = ask_text('Instance name', "odoo18", required=True)
         config = InstanceConfig(instance=instance)
-        config.version = ask_text("Versión Odoo", config.version, required=True)
-        config.repo_branch = ask_text("Rama repo Odoo", config.repo_branch, required=True)
-        config.domain = ask_text("Dominio público", config.domain, required=True)
+        config.version = ask_text('Odoo version', config.version, required=True)
+        config.repo_branch = ask_text('Odoo repo branch', config.repo_branch, required=True)
+        config.domain = ask_text('Public domain', config.domain, required=True)
 
         suggested_http, suggested_gevent = _suggest_instance_ports(
             base_http=config.http_port,
@@ -44,24 +45,24 @@ def _collect_instance_config() -> InstanceConfig:
             print(
                 level_text(
                     "INFO",
-                    f"Puertos sugeridos automáticamente por disponibilidad: HTTP={suggested_http}, gevent={suggested_gevent}",
+                    tf('Ports suggested automatically by availability: HTTP={}, gevent={}', suggested_http, suggested_gevent),
                 )
             )
 
-        config.http_port = ask_int("Puerto HTTP interno Odoo", suggested_http)
-        config.gevent_port = ask_int("Puerto gevent interno Odoo", suggested_gevent)
-        config.db_host = ask_text("DB host", config.db_host, required=True)
-        config.db_port = ask_int("DB port", config.db_port)
-        config.db_user = ask_text("DB user", config.instance, required=True)
-        config.db_password = ask_text("DB password", config.instance, required=True)
+        config.http_port = ask_int('Internal Odoo HTTP port', suggested_http)
+        config.gevent_port = ask_int('Internal Odoo gevent port', suggested_gevent)
+        config.db_host = ask_text('DB host', config.db_host, required=True)
+        config.db_port = ask_int('DB port', config.db_port)
+        config.db_user = ask_text('DB user', config.instance, required=True)
+        config.db_password = ask_text('DB password', config.instance, required=True)
         config.db_name = ask_text(
-            "DB nombre (opcional para validaciones)", "", required=False
+            'DB name (optional, for validation)', "", required=False
         )
         config.app_server_ip = ask_text(
-            "IP servidor app para regla pg_hba", config.app_server_ip, required=True
+            'App-server IP for the pg_hba rule', config.app_server_ip, required=True
         )
         config.odoo_admin_passwd = ask_text(
-            "admin_passwd Odoo", config.instance, required=True
+            'Odoo admin_passwd', config.instance, required=True
         )
         config.normalize_defaults()
 
@@ -73,7 +74,7 @@ def _collect_instance_config() -> InstanceConfig:
             print(
                 level_text(
                     "INFO",
-                    "Vuelve a introducir los datos de instalación con un formato seguro.",
+                    'Re-enter the installation data using a safe format.',
                 )
             )
 
@@ -83,44 +84,44 @@ def _build_partial_install_cleanup(
 ) -> list[Command]:
     commands: list[Command] = [
         Command(
-            "[Cleanup] Detener servicio Odoo",
+            '[Cleanup] Stop the Odoo service',
             f"systemctl stop {_quote(config.odoo_service)} || true",
         ),
         Command(
-            "[Cleanup] Deshabilitar servicio Odoo",
+            '[Cleanup] Disable the Odoo service',
             f"systemctl disable {_quote(config.odoo_service)} || true",
         ),
         Command(
-            "[Cleanup] Eliminar unit file",
+            '[Cleanup] Remove unit file',
             f"rm -f {_quote(f'/etc/systemd/system/{config.odoo_service}.service')}",
         ),
-        Command("[Cleanup] Recargar systemd", "systemctl daemon-reload"),
+        Command('[Cleanup] Reload systemd', "systemctl daemon-reload"),
         Command(
-            "[Cleanup] Eliminar configuración Odoo",
+            '[Cleanup] Remove Odoo configuration',
             f"rm -rf {_quote(config.odoo_conf_dir)}",
         ),
         Command(
-            "[Cleanup] Eliminar home de instancia", f"rm -rf {_quote(config.odoo_home)}"
+            '[Cleanup] Remove instance home', f"rm -rf {_quote(config.odoo_home)}"
         ),
         Command(
-            "[Cleanup] Eliminar Nginx HTTP",
+            '[Cleanup] Remove Nginx HTTP',
             f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_http_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_http_name}')}",
         ),
         Command(
-            "[Cleanup] Eliminar Nginx HTTPS",
+            '[Cleanup] Remove Nginx HTTPS',
             f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_https_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_https_name}')}",
         ),
         Command(
-            "[Cleanup] Eliminar SSL de instancia",
+            '[Cleanup] Remove instance SSL',
             f"rm -rf {_quote(config.nginx_ssl_dir)}",
         ),
-        Command("[Cleanup] Recargar Nginx", "systemctl reload nginx || true"),
+        Command('[Cleanup] Reload Nginx', "systemctl reload nginx || true"),
     ]
 
     if cleanup_db_role:
         commands.append(
             Command(
-                "[Cleanup] Eliminar rol PostgreSQL de la instancia (si existe)",
+                '[Cleanup] Remove the instance PostgreSQL role (if it exists)',
                 f'sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DROP ROLE IF EXISTS {config.db_user};" || true',
             )
         )
@@ -139,19 +140,19 @@ def _execute_install_with_cleanup(
         reason = (
             "interrumpida (Ctrl+C)"
             if isinstance(error, KeyboardInterrupt)
-            else "falló"
+            else 'failed'
         )
         cleanup_commands = _build_partial_install_cleanup(
             config, cleanup_db_role=cleanup_db_role
         )
         print(
-            f"\n{level_text('WARN', f'La instalación {reason}. Ejecutando limpieza automática de residuos de la instancia...')}"
+            f"\n{level_text('WARN', tf('The installation {}. Running automatic cleanup of the instance residues...', reason))}"
         )
         apply_commands(cleanup_commands, stop_on_error=False)
         print(
             level_text(
                 "WARN",
-                "Limpieza automática finalizada. Revisa los mensajes anteriores.",
+                'Automatic cleanup finished. Review the messages above.',
             )
         )
         # Return to the menu instead of crashing the CLI with an uncaught raise.
@@ -160,8 +161,8 @@ def _execute_install_with_cleanup(
 
 def _choose_nginx_mode() -> str:
     return choose(
-        "Modo Nginx para la instancia",
-        ["No tocar Nginx", "Configurar HTTP", "Configurar HTTPS"],
+        'Nginx mode for the instance',
+        ['Leave Nginx untouched', 'Configure HTTP', 'Configure HTTPS'],
         default_index=None,
     )
 
@@ -169,45 +170,45 @@ def _choose_nginx_mode() -> str:
 def _maybe_plan_logrotate(config: InstanceConfig) -> list[Command]:
     """Offer to set up system log rotation for the instance's Odoo log at install
     time (recommended, defaults to yes)."""
-    if not ask_bool("¿Configurar rotación de logs de la instancia (recomendado)?", True):
+    if not ask_bool('Set up log rotation for the instance (recommended)?', True):
         return []
     return plan_logrotate_config(config, frequency="weekly", rotate_count=14, compress=True)
 
 
 def _maybe_plan_certs(config: InstanceConfig) -> list[Command]:
     cert_mode = choose(
-        "Gestión de certificados para HTTPS",
+        'HTTPS certificate management',
         [
-            "No tocar certificados",
-            "Autofirmado (detectar o generar automáticamente)",
-            "Let's Encrypt (gestionado externamente)",
-            "Copiar certificados propios (CRT/KEY[/Intermediate])",
+            'Leave certificates untouched',
+            'Self-signed (detect or generate automatically)',
+            "Let's Encrypt (managed externally)",
+            'Copy your own certificates (CRT/KEY[/Intermediate])',
         ],
         default_index=None,
     )
 
-    if cert_mode in {"", "No tocar certificados", "Let's Encrypt (gestionado externamente)"}:
+    if cert_mode in {"", 'Leave certificates untouched', "Let's Encrypt (managed externally)"}:
         return []
 
-    if cert_mode == "Autofirmado (detectar o generar automáticamente)":
+    if cert_mode == 'Self-signed (detect or generate automatically)':
         return plan_ensure_self_signed_certs(config)
 
-    print(level_text("INFO", "Selecciona el certificado público (server.crt)"))
+    print(level_text("INFO", 'Select the public certificate (server.crt)'))
     cert_src = select_file_path(
         ".",
-        "Certificado público (CRT)",
+        'Public certificate (CRT)',
         (".crt", ".pem", ".cer"),
     )
-    print(level_text("INFO", "Selecciona la clave privada (server.key)"))
+    print(level_text("INFO", 'Select the private key (server.key)'))
     key_src = select_file_path(
         ".",
         "Clave privada (KEY)",
         (".key", ".pem"),
     )
-    use_intermediate = ask_bool("¿Tienes archivo intermedio?", True)
+    use_intermediate = ask_bool('Do you have an intermediate file?', True)
     intermediate_src = None
     if use_intermediate:
-        print(level_text("INFO", "Selecciona la cadena intermedia/cabundle"))
+        print(level_text("INFO", 'Select the intermediate chain / CA bundle'))
         intermediate_src = select_file_path(
             ".",
             "Cadena intermedia (CA bundle / intermediate)",
@@ -334,7 +335,7 @@ def _suggest_instance_ports(base_http: int, base_gevent: int) -> tuple[int, int]
 def install_odoo_only() -> None:
     config = _collect_instance_config()
     service_autostart = ask_bool(
-        "¿Habilitar autoarranque del servicio Odoo al iniciar el servidor?",
+        'Enable the Odoo service to start on boot?',
         True,
     )
     commands: list[Command] = []
@@ -342,9 +343,9 @@ def install_odoo_only() -> None:
     commands.extend(plan_odoo_base_setup(config, service_autostart=service_autostart))
 
     nginx_mode = _choose_nginx_mode()
-    if nginx_mode == "Configurar HTTP":
+    if nginx_mode == 'Configure HTTP':
         commands.extend(plan_nginx_http(config))
-    elif nginx_mode == "Configurar HTTPS":
+    elif nginx_mode == 'Configure HTTPS':
         commands.extend(_maybe_plan_certs(config))
         commands.extend(plan_nginx_https(config))
 
@@ -356,7 +357,7 @@ def install_odoo_only() -> None:
 def install_db_only() -> None:
     config = _collect_instance_config()
     ensure_remote_access = ask_bool(
-        "¿Configurar listen_addresses y pg_hba para acceso remoto?", True
+        'Configure listen_addresses and pg_hba for remote access?', True
     )
     commands = plan_db_setup(config, ensure_remote_access=ensure_remote_access)
     _execute_install_with_cleanup(commands, config, cleanup_db_role=True)
@@ -365,7 +366,7 @@ def install_db_only() -> None:
 def install_odoo_and_db() -> None:
     config = _collect_instance_config()
     service_autostart = ask_bool(
-        "¿Habilitar autoarranque del servicio Odoo al iniciar el servidor?",
+        'Enable the Odoo service to start on boot?',
         True,
     )
     commands: list[Command] = []
@@ -373,9 +374,9 @@ def install_odoo_and_db() -> None:
     commands.extend(plan_odoo_base_setup(config, service_autostart=service_autostart))
 
     nginx_mode = _choose_nginx_mode()
-    if nginx_mode == "Configurar HTTP":
+    if nginx_mode == 'Configure HTTP':
         commands.extend(plan_nginx_http(config))
-    elif nginx_mode == "Configurar HTTPS":
+    elif nginx_mode == 'Configure HTTPS':
         commands.extend(_maybe_plan_certs(config))
         commands.extend(plan_nginx_https(config))
 

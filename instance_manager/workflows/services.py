@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..i18n import tf
 from ..models import InstanceConfig
 from ..prompts import ask_text, choose
 from ..system import (
@@ -24,17 +25,17 @@ def _list_existing_instance_services() -> list[str]:
 
 
 def _show_services_table(services: list[str]) -> None:
-    print(f"\n{title('Servicios de instancias detectados')}")
+    print(f"\n{title('Detected instance services')}")
     if not services:
-        print(level_text("INFO", "No se detectaron servicios de instancia en systemd."))
+        print(level_text("INFO", 'No instance services detected in systemd.'))
         return
 
     rows: list[list[str]] = []
     for service_name in services:
-        active_text = level_text("OK", "en marcha") if service_active(service_name) else level_text("MISSING", "detenido")
-        enabled_text = level_text("OK", "autoarranque sí") if service_enabled(service_name) else level_text("INFO", "autoarranque no")
+        active_text = level_text("OK", 'running') if service_active(service_name) else level_text("MISSING", 'stopped')
+        enabled_text = level_text("OK", 'autostart on') if service_enabled(service_name) else level_text("INFO", 'autostart off')
         rows.append([service_name, active_text, enabled_text])
-    print(render_table(["Servicio", "Estado", "Arranque"], rows))
+    print(render_table(['Service', 'State', 'Startup'], rows))
 
 
 def manage_instance_services() -> None:
@@ -43,55 +44,55 @@ def manage_instance_services() -> None:
         _show_services_table(services)
 
         action = choose(
-            "Acciones de servicios",
-            ["Seleccionar servicio", "Refrescar", "Volver"],
+            'Service actions',
+            ['Select a service', 'Refresh', 'Back'],
             default_index=None,
         )
-        if action in {"", "Volver"}:
+        if action in {"", 'Back'}:
             return
-        if action == "Refrescar":
+        if action == 'Refresh':
             continue
 
         service_name = ""
         if services:
             pick = choose(
-                "Selecciona servicio",
-                services + ["Escribir nombre", "Cancelar"],
+                'Select a service',
+                services + ['Type a name', 'Cancel'],
                 default_index=None,
             )
-            if pick in {"", "Cancelar"}:
+            if pick in {"", 'Cancel'}:
                 continue
-            if pick == "Escribir nombre":
-                service_name = ask_text("Nombre de servicio", "", required=True)
+            if pick == 'Type a name':
+                service_name = ask_text('Service name', "", required=True)
             else:
                 service_name = pick
         else:
-            service_name = ask_text("Nombre de servicio", "", required=True)
+            service_name = ask_text('Service name', "", required=True)
 
         service_action = choose(
-            f"Acción para servicio {service_name}",
+            tf('Action for service {}', service_name),
             [
-                "Iniciar",
-                "Detener",
-                "Reiniciar",
-                "Habilitar autoarranque",
-                "Deshabilitar autoarranque",
-                "Cancelar",
+                'Start',
+                'Stop',
+                'Restart',
+                'Enable autostart',
+                'Disable autostart',
+                'Cancel',
             ],
             default_index=None,
         )
-        if service_action in {"", "Cancelar"}:
+        if service_action in {"", 'Cancel'}:
             continue
 
-        if service_action == "Iniciar":
-            commands = [Command(f"Iniciar servicio {service_name}", f"systemctl start {_quote(service_name)}")]
-        elif service_action == "Detener":
-            commands = [Command(f"Detener servicio {service_name}", f"systemctl stop {_quote(service_name)}")]
-        elif service_action == "Reiniciar":
-            commands = [Command(f"Reiniciar servicio {service_name}", f"systemctl restart {_quote(service_name)}")]
-        elif service_action == "Habilitar autoarranque":
-            commands = [Command(f"Habilitar autoarranque {service_name}", f"systemctl enable {_quote(service_name)}")]
+        if service_action == 'Start':
+            commands = [Command(tf('Start service {}', service_name), f"systemctl start {_quote(service_name)}")]
+        elif service_action == 'Stop':
+            commands = [Command(tf('Stop service {}', service_name), f"systemctl stop {_quote(service_name)}")]
+        elif service_action == 'Restart':
+            commands = [Command(tf('Restart service {}', service_name), f"systemctl restart {_quote(service_name)}")]
+        elif service_action == 'Enable autostart':
+            commands = [Command(tf('Enable autostart {}', service_name), f"systemctl enable {_quote(service_name)}")]
         else:
-            commands = [Command(f"Deshabilitar autoarranque {service_name}", f"systemctl disable {_quote(service_name)}")]
+            commands = [Command(tf('Disable autostart {}', service_name), f"systemctl disable {_quote(service_name)}")]
 
         _execute_plan(commands)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import urllib.error
 import urllib.request
 
+from ..i18n import tf
 from ..models import InstanceConfig
 from ..system import (
     path_exists,
@@ -20,7 +21,7 @@ from .common import _quote, _resolve_data_dir
 def _http_probe(port: str) -> tuple[bool, str]:
     """GET the instance's local HTTP port; any 2xx/3xx counts as responding."""
     if not port.isdigit():
-        return False, "puerto HTTP no numérico en config"
+        return False, 'non-numeric HTTP port in config'
     for path in ("/web/health", "/web/login", "/"):
         url = f"http://127.0.0.1:{port}{path}"
         try:
@@ -31,7 +32,7 @@ def _http_probe(port: str) -> tuple[bool, str]:
             return 200 <= error.code < 500, f"HTTP {error.code} en {path}"
         except (urllib.error.URLError, OSError):
             continue
-    return False, "sin respuesta en 127.0.0.1"
+    return False, 'no response on 127.0.0.1'
 
 
 def _db_probe(config: InstanceConfig, conf: dict[str, str]) -> tuple[bool, str]:
@@ -49,19 +50,19 @@ def _db_probe(config: InstanceConfig, conf: dict[str, str]) -> tuple[bool, str]:
 
 def _disk_row(label: str, path: str) -> list[str]:
     if not path_exists(path):
-        return [level_tag("INFO"), label, f"{path} (no existe)"]
+        return [level_tag("INFO"), label, tf("{} (does not exist)", path)]
     result = run(f"df -Ph {_quote(path)} | tail -1", check=False)
     parts = result.stdout.split()
     if len(parts) >= 5:
         used_pct = parts[4].rstrip("%")
         avail = parts[3]
         tag = "MISSING" if used_pct.isdigit() and int(used_pct) >= 90 else "OK"
-        return [level_tag(tag), label, f"{avail} libres, {parts[4]} usado ({path})"]
-    return [level_tag("INFO"), label, f"{path} (no medible)"]
+        return [level_tag(tag), label, tf("{} free, {} used ({})", avail, parts[4], path)]
+    return [level_tag("INFO"), label, tf("{} (not measurable)", path)]
 
 
 def run_health_check(config: InstanceConfig) -> None:
-    print(f"\n{title(f'Health check: {config.instance}')}")
+    print(f"\n{title(tf('Health check: {}', config.instance))}")
     conf = read_odoo_conf(config.odoo_conf_file)
 
     rows: list[list[str]] = []
@@ -71,9 +72,9 @@ def run_health_check(config: InstanceConfig) -> None:
     rows.append(
         [
             level_tag("OK" if active else "MISSING"),
-            "Servicio Odoo",
-            ("activo" if active else "detenido/inexistente")
-            + (", autoarranque sí" if enabled else ", autoarranque no"),
+            'Odoo service',
+            ('active' if active else 'stopped/nonexistent')
+            + (', autostart yes' if enabled else ', autostart no'),
         ]
     )
 
@@ -82,14 +83,14 @@ def run_health_check(config: InstanceConfig) -> None:
     rows.append([level_tag("OK" if http_ok else "MISSING"), "HTTP local", http_detail])
 
     db_ok, db_detail = _db_probe(config, conf)
-    rows.append([level_tag("OK" if db_ok else "MISSING"), "Conexión DB", db_detail])
+    rows.append([level_tag("OK" if db_ok else "MISSING"), 'DB connection', db_detail])
 
     rows.append(_disk_row("Disco (home)", config.odoo_home))
     rows.append(_disk_row("Disco (data dir)", _resolve_data_dir(config)))
 
-    print(render_table(["Estado", "Chequeo", "Detalle"], rows))
+    print(render_table(['State', 'Check', 'Detail'], rows))
 
     if not active:
-        print(level_text("WARN", "El servicio no está activo: arráncalo desde 'Servicios instancias'."))
+        print(level_text("WARN", "The service is not active: start it from 'Instance services'."))
     elif not http_ok:
-        print(level_text("WARN", "El servicio está activo pero no responde por HTTP; revisa el log de Odoo."))
+        print(level_text("WARN", 'The service is active but does not answer over HTTP; check the Odoo log.'))

@@ -147,7 +147,7 @@ class PlanLogrotateConfigTests(unittest.TestCase):
 
     def test_default_plan_writes_validates_and_installs(self) -> None:
         text = self._commands_text()
-        self.assertIn("logrotate instalado", text)
+        self.assertIn("Ensure logrotate is installed", text)
         self.assertIn("/etc/logrotate.d/odoo-odoo18", text)
         self.assertIn("logrotate -d", text)
 
