@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
+from instance_manager.i18n import set_language, t
 from instance_manager.prompts import choose, clear_screen
 from instance_manager.workflows import (
     external_server_report,
@@ -47,6 +48,15 @@ def _installation_menu() -> None:
             install_odoo_and_db()
 
 
+def _select_language() -> None:
+    env = os.environ.get("OIM_LANG", "").strip().lower()
+    if env in {"en", "es"}:
+        set_language(env)
+        return
+    lang = choose("Idioma / Language", ["Español", "English"], default_index=0)
+    set_language("en" if lang == "English" else "es")
+
+
 def main() -> int:
     _configure_utf8_console()
 
@@ -56,10 +66,11 @@ def main() -> int:
         return 1
 
     clear_screen()
-    print("Odoo Instance Manager")
-    print("- Instalación interactiva por instancia")
-    print("- Soporta instancia Odoo + usuario de PostgreSQL, PosgreSQL o ambos")
-    print("- Muestra el listado de comandos a ejecutar para cada acción")
+    _select_language()
+    print(t("Odoo Instance Manager"))
+    print(t("- Instalación interactiva por instancia"))
+    print(t("- Soporta instancia Odoo + usuario de PostgreSQL, PosgreSQL o ambos"))
+    print(t("- Muestra el listado de comandos a ejecutar para cada acción"))
 
     while True:
         try:

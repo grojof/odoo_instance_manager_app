@@ -33,6 +33,9 @@ tool is for you. If you use Odoo's SaaS/Online or a managed host, you don't need
 - An **Ubuntu 24.04** server, run as **root** (`sudo`).
 - **Python 3.12+** (ships with 24.04). Nothing else.
 
+The interface is available in **Spanish** (default) or **English** — chosen at startup or via `OIM_LANG=en|es`
+(see [Interface language](docs/language.md)).
+
 ## Quickstart
 
 ```bash
@@ -84,6 +87,7 @@ flowchart LR
 - [Auditing a server](docs/server-audit.md) — the read-only whole-server report.
 - [Architecture](docs/architecture.md) — the layered design and the plan → preview → apply flow.
 - [Glossary](docs/glossary.md) — domain vocabulary (instance, filestore, jail, neutralize, …).
+- [Interface language](docs/language.md) — choose Spanish or English.
 
 **Behavior specs** live under [`openspec/specs/`](openspec/specs/) — validated with `openspec validate --specs`.
 **Decisions** are recorded in [`docs/decisions/`](docs/decisions/).

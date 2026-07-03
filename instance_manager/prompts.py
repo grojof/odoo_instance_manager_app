@@ -4,6 +4,7 @@ import getpass
 import os
 from pathlib import Path
 
+from .i18n import t
 from .ui import level_text, prompt_label, style, title
 
 _last_selected_dir: Path | None = None
@@ -116,7 +117,9 @@ def choose(label: str, options: list[str], default_index: int | None = None) -> 
 
     indexed_options = [option for option in options if option != zero_option]
 
-    print(f"  {style('0)', 'blue', 'bold')} {zero_label}")
+    # Options are shown translated but the ORIGINAL string is returned, so caller
+    # comparisons against the source (Spanish) options keep working.
+    print(f"  {style('0)', 'blue', 'bold')} {t(zero_label)}")
 
     for index, option in enumerate(indexed_options, start=1):
         default_tag = (
@@ -125,7 +128,7 @@ def choose(label: str, options: list[str], default_index: int | None = None) -> 
             else ""
         )
         marker = style(f"{index})", "blue", "bold")
-        print(f"  {marker} {option}{style(default_tag, 'dim')}")
+        print(f"  {marker} {t(option)}{style(default_tag, 'dim')}")
 
     while True:
         raw = input(f"{prompt_label('Selecciona opción')}: ").strip()

@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Interface language (Spanish / English)**: choose the UI language at startup or via `OIM_LANG`.
+  A modular `i18n` catalog translates menus, prompts, titles, table headers, and the plan preview at display
+  chokepoints (no call-site changes), returning the original option value so behavior is language-independent;
+  untranslated strings fall back to Spanish. stdlib only.
+
 - **Scheduled backups** (instance management → "Backups programados"): unattended backups on a systemd timer
   (Diario/Semanal/Mensual) — atomic `sudo -u postgres pg_dump` of a chosen DB (local peer auth, no stored
   password) + optional filestore, with retention; plus status and removal.
