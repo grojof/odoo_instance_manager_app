@@ -25,21 +25,24 @@ The policy uses **`copytruncate`**, so Odoo keeps writing to the same file and d
 `su <instance> <instance>` directive lets logrotate rotate the instance-owned log safely. The plan installs
 `logrotate` if missing and validates the file with `logrotate -d` before finishing.
 
-### Avoiding double rotation
+Log rotation is also offered **at install time** (recommended, default yes), so a fresh instance starts with a
+rotation policy in place.
 
-The generated `odoo.conf` sets `logrotate = True` (Odoo's own rotator). Running that **and** system logrotate
-on the same file rotates it twice, so Configure detects the flag, warns, and offers to set `logrotate = False`
-in the config. If you accept, **restart the Odoo service** (from *Servicios instancias → Reiniciar*) for it to
-take effect.
+### Obsolete `logrotate` conf key
+
+Odoo's built-in `logrotate` option was **removed in Odoo 13**, so the generated `odoo.conf` no longer sets it.
+If an older instance's `odoo.conf` still has a `logrotate` key, Configure detects it (it is an ignored no-op)
+and offers to delete the line — no restart needed.
 
 ## Query
 
 **Consultar rotación actual** is read-only and shows:
 
+- whether rotation of the Odoo log is **ACTIVA** (a system logrotate policy covers it) or **INACTIVA**,
 - the Odoo log path and current log file sizes,
 - whether a system logrotate policy exists and its full contents,
 - a `logrotate -d` dry-run preview of what would rotate,
-- the state of Odoo's built-in `logrotate` flag.
+- a note if the `odoo.conf` still carries the obsolete `logrotate` key.
 
 ## Nginx logs
 
@@ -57,5 +60,5 @@ The Odoo log keeps `copytruncate` because Odoo has no log-reopen signal — the 
 ## Related
 
 - [Managing existing instances](instance-management.md)
-- [Configuration reference](configuration-reference.md) — the `logfile` / `logrotate` config keys.
+- [Configuration reference](configuration-reference.md) — the `logfile` config key.
 - [Log-rotation spec](../openspec/specs/log-rotation/spec.md) — the behavior contract.

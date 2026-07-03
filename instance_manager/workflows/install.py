@@ -11,6 +11,7 @@ from ..planners import (
     plan_db_setup,
     plan_ensure_db_role,
     plan_ensure_self_signed_certs,
+    plan_logrotate_config,
     plan_nginx_http,
     plan_nginx_https,
     plan_odoo_base_setup,
@@ -163,6 +164,14 @@ def _choose_nginx_mode() -> str:
         ["No tocar Nginx", "Configurar HTTP", "Configurar HTTPS"],
         default_index=None,
     )
+
+
+def _maybe_plan_logrotate(config: InstanceConfig) -> list[Command]:
+    """Offer to set up system log rotation for the instance's Odoo log at install
+    time (recommended, defaults to yes)."""
+    if not ask_bool("¿Configurar rotación de logs de la instancia (recomendado)?", True):
+        return []
+    return plan_logrotate_config(config, frequency="weekly", rotate_count=14, compress=True)
 
 
 def _maybe_plan_certs(config: InstanceConfig) -> list[Command]:
@@ -339,6 +348,8 @@ def install_odoo_only() -> None:
         commands.extend(_maybe_plan_certs(config))
         commands.extend(plan_nginx_https(config))
 
+    commands.extend(_maybe_plan_logrotate(config))
+
     _execute_install_with_cleanup(commands, config, cleanup_db_role=False)
 
 
@@ -367,5 +378,7 @@ def install_odoo_and_db() -> None:
     elif nginx_mode == "Configurar HTTPS":
         commands.extend(_maybe_plan_certs(config))
         commands.extend(plan_nginx_https(config))
+
+    commands.extend(_maybe_plan_logrotate(config))
 
     _execute_install_with_cleanup(commands, config, cleanup_db_role=True)

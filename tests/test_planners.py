@@ -8,8 +8,21 @@ from instance_manager.models import InstanceConfig
 from instance_manager.planners import (
     _logrotate_content,
     _nginx_logrotate_content,
+    _odoo_conf_content,
     plan_logrotate_config,
 )
+
+
+class OdooConfContentTests(unittest.TestCase):
+    def test_no_obsolete_logrotate_key(self) -> None:
+        content = _odoo_conf_content(_config())
+        # `logrotate` was removed from Odoo in v13; it must not be emitted.
+        self.assertNotIn("logrotate", content)
+
+    def test_current_options_present(self) -> None:
+        content = _odoo_conf_content(_config())
+        for key in ("proxy_mode = True", "gevent_port =", "http_port =", "logfile ="):
+            self.assertIn(key, content)
 
 
 def _config() -> InstanceConfig:
@@ -64,11 +77,12 @@ class PlanLogrotateConfigTests(unittest.TestCase):
         self.assertIn("/etc/logrotate.d/odoo-odoo18", text)
         self.assertIn("logrotate -d", text)
 
-    def test_disable_odoo_internal_adds_sed_only_when_requested(self) -> None:
-        self.assertNotIn("logrotate = False", self._commands_text(disable_odoo_internal=False))
-        with_disable = self._commands_text(disable_odoo_internal=True)
-        self.assertIn("logrotate = False", with_disable)
-        self.assertIn("/etc/odoo/odoo18/odoo18.conf", with_disable)
+    def test_remove_obsolete_odoo_key_adds_sed_only_when_requested(self) -> None:
+        self.assertNotIn("sed", self._commands_text(remove_obsolete_odoo_key=False))
+        with_cleanup = self._commands_text(remove_obsolete_odoo_key=True)
+        # Deletes the obsolete logrotate line from the conf (Odoo >=13 ignores it).
+        self.assertIn("/^[[:space:]]*logrotate[[:space:]]*=/d", with_cleanup)
+        self.assertIn("/etc/odoo/odoo18/odoo18.conf", with_cleanup)
 
     def test_include_nginx_adds_nginx_stanza_only_when_requested(self) -> None:
         self.assertNotIn("/var/log/nginx/odoo18.access.log", self._commands_text(include_nginx=False))
