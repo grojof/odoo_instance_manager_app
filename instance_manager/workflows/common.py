@@ -245,6 +245,21 @@ def _pick_db_name(creds: DbCredentials, label: str, required: bool = True) -> st
     return ask_text(label, "", required=required)
 
 
+def _database_exists(creds: DbCredentials, db_name: str) -> bool:
+    """Best-effort check that ``db_name`` exists using ``creds``.
+
+    Returns False both when the database is absent and when the check cannot run
+    (e.g. connection failure); callers treat both as "do not attempt the drop".
+    """
+    sql = "SELECT 1 FROM pg_database WHERE datname='" + db_name.replace("'", "''") + "'"
+    cmd = (
+        f"PGPASSWORD={shlex.quote(creds.password)} psql -h {shlex.quote(creds.host)} "
+        f"-p {creds.port} -U {shlex.quote(creds.user)} -d postgres -tAc {shlex.quote(sql)}"
+    )
+    result = run(cmd, check=False)
+    return result.returncode == 0 and result.stdout.strip() == "1"
+
+
 def _is_self_signed_certificate(cert_path: str) -> bool:
     if not cert_path or not path_exists(cert_path):
         return False

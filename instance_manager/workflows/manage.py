@@ -35,6 +35,7 @@ from .backup_restore import _backup_instance, _duplicate_instance, _restore_back
 from .common import (
     DbCredentials,
     _ask_db_credentials,
+    _database_exists,
     _execute_plan,
     _filestore_path,
     _is_safe_path_component,
@@ -382,6 +383,15 @@ def _delete_instance(
         db_name = ask_text("DB a eliminar", config.instance, required=True)
         creds = _ask_db_credentials(config.instance, cached)
         db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
+        if not _database_exists(creds, db_name):
+            print(
+                level_text(
+                    "WARN",
+                    f"No se encontró la base de datos '{db_name}' en {creds.host}:{creds.port} "
+                    "(no existe o no se pudo conectar); se omite su eliminación.",
+                )
+            )
+            drop_db = False
 
     commands: list[Command] = [
         Command(
@@ -418,7 +428,7 @@ def _delete_instance(
         commands.append(
             Command(
                 "Eliminar DB",
-                f"PGPASSWORD={_quote(db_password)} dropdb -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} {_quote(db_name)}",
+                f"PGPASSWORD={_quote(db_password)} dropdb --if-exists -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} {_quote(db_name)}",
             )
         )
 
