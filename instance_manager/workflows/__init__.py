@@ -7,6 +7,7 @@ re-exports the stable public entry points used by ``odoo_instance_manager``.
 from __future__ import annotations
 
 from .fail2ban import manage_fail2ban
+from .firewall import manage_firewall
 from .install import install_db_only, install_odoo_and_db, install_odoo_only
 from .manage import manage_existing_instance
 from .purge import purge_instance_superuser
@@ -20,6 +21,7 @@ __all__ = [
     "install_odoo_only",
     "manage_existing_instance",
     "manage_fail2ban",
+    "manage_firewall",
     "manage_instance_services",
     "purge_instance_superuser",
 ]

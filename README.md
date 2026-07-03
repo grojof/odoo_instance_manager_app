@@ -57,6 +57,7 @@ Every action shows its full command plan and waits for your confirmation before 
 - [Disk usage & retention](docs/disk-usage.md) — instance footprint and pruning old backups.
 - [Addon inventory](docs/addon-inventory.md) — modules by origin (core/OCA/custom) with versions and installed state.
 - [Fail2ban protection](docs/security-fail2ban.md) — base hardening, per-instance jails, real-IP checks.
+- [Firewall (UFW)](docs/firewall.md) — install and manage a UFW baseline (SSH/HTTP/HTTPS + PostgreSQL).
 - [Auditing a server](docs/server-audit.md) — the read-only external report.
 
 **Understand & reference**

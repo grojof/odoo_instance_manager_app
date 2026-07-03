@@ -11,7 +11,35 @@ from instance_manager.planners import (
     _odoo_conf_content,
     plan_backup_retention,
     plan_logrotate_config,
+    plan_ufw_allow_port,
+    plan_ufw_base_setup,
 )
+
+
+class UfwPlanTests(unittest.TestCase):
+    def test_base_setup_order_and_rules(self) -> None:
+        cmds = plan_ufw_base_setup(ssh_port=2222, allow_http=True, allow_https=True, pg_from_ip="10.0.0.5")
+        text = [c.command for c in cmds]
+        joined = "\n".join(text)
+        self.assertIn("apt-get -y install ufw", joined)
+        self.assertIn("ufw default deny incoming", joined)
+        self.assertIn("ufw allow 2222/tcp", joined)
+        self.assertIn("ufw allow 80/tcp", joined)
+        self.assertIn("ufw allow 443/tcp", joined)
+        self.assertIn("ufw allow from 10.0.0.5 to any port 5432 proto tcp", joined)
+        # SSH must be allowed before enabling, and enable is last.
+        self.assertLess(joined.index("ufw allow 2222/tcp"), joined.index("ufw --force enable"))
+        self.assertEqual(text[-1], "ufw --force enable")
+
+    def test_base_setup_optional_rules_off(self) -> None:
+        joined = "\n".join(c.command for c in plan_ufw_base_setup(allow_http=False, allow_https=False))
+        self.assertNotIn("80/tcp", joined)
+        self.assertNotIn("443/tcp", joined)
+        self.assertNotIn("5432", joined)
+
+    def test_allow_port_defaults_proto(self) -> None:
+        self.assertIn("ufw allow 8069/tcp", plan_ufw_allow_port(8069, "weird")[0].command)
+        self.assertIn("ufw allow 53/udp", plan_ufw_allow_port(53, "udp")[0].command)
 
 
 class BackupRetentionTests(unittest.TestCase):
