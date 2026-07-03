@@ -46,6 +46,7 @@ from .common import (
     _validate_instance_or_abort,
 )
 from .install import _maybe_plan_certs
+from .logrotate import manage_log_rotation
 
 
 def _read_nginx_https_ssl_paths(config: InstanceConfig) -> tuple[str, str]:
@@ -474,6 +475,7 @@ def manage_existing_instance() -> None:
                 "Consultar ubicaciones/config actual",
                 "Actualizar configuración existente",
                 "Reparar logs Nginx de instancia",
+                "Rotación de logs",
                 "Instalar paquetes Python en venv",
                 "Realizar backup",
                 "Restaurar backup",
@@ -498,6 +500,8 @@ def manage_existing_instance() -> None:
             config.normalize_defaults()
         elif action == "Reparar logs Nginx de instancia":
             _repair_instance_nginx_logs(config)
+        elif action == "Rotación de logs":
+            manage_log_rotation(config)
         elif action == "Instalar paquetes Python en venv":
             _install_python_packages_in_instance_venv(config)
         elif action == "Realizar backup":

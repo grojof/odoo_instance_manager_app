@@ -223,6 +223,77 @@ def write_text_file_command(
     ]
 
 
+def _logrotate_content(
+    config: InstanceConfig,
+    frequency: str,
+    rotate_count: int,
+    compress: bool,
+    maxsize: str,
+) -> str:
+    lines = [
+        f"{config.odoo_log_file} {{",
+        f"    {frequency}",
+        f"    rotate {rotate_count}",
+        "    missingok",
+        "    notifempty",
+        "    copytruncate",
+        f"    su {config.odoo_user} {config.odoo_user}",
+    ]
+    if compress:
+        lines.append("    compress")
+        lines.append("    delaycompress")
+    if maxsize:
+        lines.append(f"    maxsize {maxsize}")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def plan_logrotate_config(
+    config: InstanceConfig,
+    *,
+    frequency: str = "weekly",
+    rotate_count: int = 14,
+    compress: bool = True,
+    maxsize: str = "",
+    disable_odoo_internal: bool = False,
+) -> list[Command]:
+    """Build a system-logrotate policy for the instance's Odoo log.
+
+    Uses ``copytruncate`` so the running service keeps writing without a restart.
+    Optionally disables Odoo's own ``logrotate`` conf flag to avoid rotating the
+    same file twice.
+    """
+    commands: list[Command] = [
+        Command(
+            "Asegurar logrotate instalado",
+            "command -v logrotate >/dev/null 2>&1 || (apt-get update && apt-get -y install logrotate)",
+        ),
+    ]
+    commands.extend(
+        write_text_file_command(
+            config.logrotate_config_file,
+            _logrotate_content(config, frequency, rotate_count, compress, maxsize),
+            "644",
+        )
+    )
+    commands.append(
+        Command(
+            "Validar configuración logrotate (dry-run)",
+            f"logrotate -d {shlex.quote(config.logrotate_config_file)}",
+        )
+    )
+    if disable_odoo_internal:
+        commands.append(
+            Command(
+                "Desactivar logrotate interno de Odoo (evita doble rotación)",
+                f"test -f {shlex.quote(config.odoo_conf_file)} && "
+                f"sed -ri 's/^[[:space:]]*logrotate[[:space:]]*=[[:space:]]*True/logrotate = False/' "
+                f"{shlex.quote(config.odoo_conf_file)} || true",
+            )
+        )
+    return commands
+
+
 def _safe_token(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", (value or "").strip())
 

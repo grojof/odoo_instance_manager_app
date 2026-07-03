@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Log rotation capability** (instance management → "Rotación de logs"): configure a system `logrotate`
+  policy for an instance's Odoo log (`/etc/logrotate.d/odoo-<instance>`, `copytruncate`, tunable
+  frequency/retention/compression/size) and query the current rotation state (`logrotate -d` preview, log
+  sizes, Odoo's built-in `logrotate` flag). Offers to disable Odoo's built-in `logrotate` to avoid double
+  rotation. Nginx per-instance logs are left to the distribution's own `nginx` logrotate.
+
+
 - Operator UX: DB credentials are now collected once per management session and reused across backup /
   restore / duplicate / delete (with a reuse prompt); passwords are read without echo (`getpass`); the file
   picker can be cancelled; and numeric prompts report the correct range (fixing the "Puerto fuera de rango"
