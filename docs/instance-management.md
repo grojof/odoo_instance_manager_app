@@ -83,6 +83,8 @@ home, service, database, or filestore already exists, and copies the DB via `cre
   [Log rotation](log-rotation.md).
 - **Instalar paquetes Python en venv** installs into the instance virtualenv from a selected requirements
   file or an inline package list, running pip as the instance user.
+- **Uso de disco y limpieza** shows the instance footprint and prunes old backups by retention — see
+  [Disk usage and backup retention](disk-usage.md).
 
 ## Removing an instance
 

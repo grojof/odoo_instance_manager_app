@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Disk usage & backup retention** (instance management → "Uso de disco y limpieza"): a read-only
+  footprint report (home, data dir, logs, backups; free space) and a retention cleanup that keeps the N newest
+  backups of each kind (dumps + filestore archives).
 - **Instance health check** (instance management → "Comprobar salud"): a read-only check of the systemd
   service, local HTTP responsiveness, database connectivity, and disk usage, flagging any problems. stdlib
   only (uses `urllib`, no `curl` dependency).
