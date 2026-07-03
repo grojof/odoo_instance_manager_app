@@ -21,7 +21,7 @@
 
 ## Phase 3 — report.py (PR 3)
 
-- [ ] 3.1 Extract the external-report cluster into `workflows/report.py`.
+- [x] 3.1 Extract the external-report cluster into `workflows/report.py`.
 - [ ] 3.2 Replace the 27-field positional rows with an `InstanceReportRow` dataclass.
 
 ## Phase 4 — fail2ban.py + services.py (PR 4)

@@ -16,6 +16,7 @@ from ..system import (
     apply_commands,
     list_databases,
     list_instances,
+    path_exists,
     preview_commands,
     read_odoo_conf,
     require_root_for_apply,
@@ -222,3 +223,26 @@ def _resolve_data_dir(config: InstanceConfig) -> str:
 def _filestore_path(config: InstanceConfig, db_name: str) -> str:
     data_dir = _resolve_data_dir(config)
     return f"{data_dir}/filestore/{db_name}"
+
+
+def _is_self_signed_certificate(cert_path: str) -> bool:
+    if not cert_path or not path_exists(cert_path):
+        return False
+
+    result = run(
+        f"openssl x509 -in {_quote(cert_path)} -noout -subject -issuer",
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+
+    subject_line = ""
+    issuer_line = ""
+    for line in result.stdout.splitlines():
+        normalized = line.strip()
+        if normalized.startswith("subject="):
+            subject_line = normalized[len("subject=") :].strip()
+        elif normalized.startswith("issuer="):
+            issuer_line = normalized[len("issuer=") :].strip()
+
+    return bool(subject_line and issuer_line and subject_line == issuer_line)

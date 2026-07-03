@@ -8,7 +8,6 @@ points re-exported here are the stable surface used by ``odoo_instance_manager``
 from __future__ import annotations
 
 from ._core import (
-    external_server_report,
     install_db_only,
     install_odoo_and_db,
     install_odoo_only,
@@ -17,6 +16,7 @@ from ._core import (
     manage_instance_services,
     purge_instance_superuser,
 )
+from .report import external_server_report
 
 __all__ = [
     "external_server_report",
