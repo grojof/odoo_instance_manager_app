@@ -9,10 +9,15 @@
   `planners.py`.
 - [x] 1.4 Gate green (`ruff`, `pytest`, `openspec validate`, docs/provenance checks).
 
-## Phase 2 — package + common.py (PR 2)
+## Phase 2 — package skeleton (PR 2)
 
-- [ ] 2.1 Convert `workflows.py` into a `workflows/` package; `__init__` re-exports the 8 entry functions.
-- [ ] 2.2 Move shared helpers into `workflows/common.py`; update imports.
+- [x] 2.1 Convert `workflows.py` into a `workflows/` package (`_core.py` holds the implementation; `__init__`
+  re-exports the 8 entry functions); fix relative imports to the parent package; point test imports at
+  `._core`.
+
+## Phase 2b — common.py (PR 3)
+
+- [ ] 2.2 Move shared helpers into `workflows/common.py`; `_core` and later feature modules import from it.
 
 ## Phase 3 — report.py (PR 3)
 

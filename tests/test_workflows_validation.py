@@ -12,7 +12,7 @@ import io
 import unittest
 
 from instance_manager.models import InstanceConfig
-from instance_manager.workflows import _validate_instance_or_abort
+from instance_manager.workflows._core import _validate_instance_or_abort
 
 
 class ValidateInstanceOrAbortTests(unittest.TestCase):

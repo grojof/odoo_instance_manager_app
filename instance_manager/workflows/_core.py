@@ -8,8 +8,8 @@ import shlex
 import socket
 import uuid
 
-from .models import InstanceConfig
-from .planners import (
+from ..models import InstanceConfig
+from ..planners import (
     _is_local_db_host,
     _sql_literal,
     plan_copy_custom_certs,
@@ -24,7 +24,7 @@ from .planners import (
     plan_odoo_base_setup,
     pretty_paths,
 )
-from .prompts import (
+from ..prompts import (
     ask_bool,
     ask_int,
     ask_text,
@@ -32,7 +32,7 @@ from .prompts import (
     confirm_with_phrase,
     select_file_path,
 )
-from .system import (
+from ..system import (
     Command,
     apply_commands,
     database_exists,
@@ -49,7 +49,7 @@ from .system import (
     service_exists,
     user_exists,
 )
-from .ui import level_tag, level_text, render_table, strip_ansi, title
+from ..ui import level_tag, level_text, render_table, strip_ansi, title
 
 
 def _collect_instance_config() -> InstanceConfig:
