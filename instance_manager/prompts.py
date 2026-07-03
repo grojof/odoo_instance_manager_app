@@ -71,10 +71,17 @@ def ask_int(label: str, default: int) -> int:
 
 def ask_bool(label: str, default: bool = True) -> bool:
     marker = "Y/n" if default else "y/N"
-    raw = input(f"{prompt_label(label)} ({style(marker, 'dim')}): ").strip().lower()
-    if not raw:
-        return default
-    return raw in {"y", "yes", "s", "si"}
+    affirmative = {"y", "yes", "s", "si", "sí"}
+    negative = {"n", "no"}
+    while True:
+        raw = input(f"{prompt_label(label)} ({style(marker, 'dim')}): ").strip().lower()
+        if not raw:
+            return default
+        if raw in affirmative:
+            return True
+        if raw in negative:
+            return False
+        print(level_text("ERROR", "Responde 'sí'/'s' o 'no'/'n' (Enter = opción por defecto)."))
 
 
 def choose(label: str, options: list[str], default_index: int | None = None) -> str:

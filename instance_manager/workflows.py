@@ -175,16 +175,27 @@ def _execute_install_with_cleanup(
 ) -> None:
     try:
         _execute_plan(commands)
-    except RuntimeError:
+    except (RuntimeError, KeyboardInterrupt) as error:
+        reason = (
+            "interrumpida (Ctrl+C)"
+            if isinstance(error, KeyboardInterrupt)
+            else "falló"
+        )
         cleanup_commands = _build_partial_install_cleanup(
             config, cleanup_db_role=cleanup_db_role
         )
         print(
-            "\n[WARN] La instalación falló. Ejecutando limpieza automática de residuos de la instancia..."
+            f"\n{level_text('WARN', f'La instalación {reason}. Ejecutando limpieza automática de residuos de la instancia...')}"
         )
         apply_commands(cleanup_commands, stop_on_error=False)
-        print("[WARN] Limpieza automática finalizada. Revisa los mensajes anteriores.")
-        raise
+        print(
+            level_text(
+                "WARN",
+                "Limpieza automática finalizada. Revisa los mensajes anteriores.",
+            )
+        )
+        # Return to the menu instead of crashing the CLI with an uncaught raise.
+        return
 
 
 def _choose_nginx_mode() -> str:
@@ -457,6 +468,22 @@ def _validate_instance_or_abort(instance: str) -> InstanceConfig | None:
         print(level_text("ERROR", str(error)))
         return None
     return config
+
+
+def _is_safe_path_component(name: str) -> bool:
+    """True if ``name`` is safe to embed as a single filesystem path component.
+
+    Guards against path traversal when an operator-entered database name is
+    interpolated into a filestore path that is created, archived, or deleted.
+    """
+    return (
+        bool(name)
+        and "/" not in name
+        and "\\" not in name
+        and "\x00" not in name
+        and name not in {".", ".."}
+        and not name.startswith(".")
+    )
 
 
 def _probe_databases_for_management(instance: str) -> tuple[str, str | None, list[str]]:
@@ -883,20 +910,24 @@ def update_existing_configs(instance: str) -> None:
     )
 
     backup_root = f"/var/backups/{config.instance}/config_preupdate"
+    # One timestamped directory for the whole pre-update backup, so all files
+    # land together instead of scattering across per-command timestamps.
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_dest = f"{backup_root}/{ts}"
     backup_sources = [
         ("config odoo", config.odoo_conf_file),
         ("systemd service", f"/etc/systemd/system/{config.odoo_service}.service"),
         ("nginx http", f"/etc/nginx/sites-available/{config.nginx_http_name}"),
         ("nginx https", f"/etc/nginx/sites-available/{config.nginx_https_name}"),
     ]
-    backup_rows = [[name, source, f"{backup_root}/<timestamp>/{name.replace(' ', '_')}"] for name, source in backup_sources]
+    backup_rows = [[name, source, f"{backup_dest}/{name.replace(' ', '_')}"] for name, source in backup_sources]
     print(f"\n{title('Backup de configuración previo a actualización')}")
     print(render_table(["Elemento", "Origen", "Destino backup"], backup_rows))
 
     backup_commands: list[Command] = [
         Command(
-            "Crear directorio base de backups de configuración",
-            f"mkdir -p {_quote(backup_root)}",
+            "Crear directorio de backup de configuración",
+            f"mkdir -p {_quote(backup_dest)}",
         )
     ]
     for name, source in backup_sources:
@@ -904,9 +935,7 @@ def update_existing_configs(instance: str) -> None:
         backup_commands.append(
             Command(
                 f"Backup previo de {name}",
-                "TS=$(date +%Y%m%d_%H%M%S) && "
-                f"DEST={_quote(backup_root)}/$TS && mkdir -p \"$DEST\" && "
-                f"test -f {_quote(source)} && cp -a {_quote(source)} \"$DEST/{target_name}\" || true",
+                f"test -f {_quote(source)} && cp -a {_quote(source)} {_quote(f'{backup_dest}/{target_name}')} || true",
             )
         )
 
@@ -931,7 +960,7 @@ def update_existing_configs(instance: str) -> None:
         commands.extend(plan_nginx_https(config))
 
     _execute_plan(commands)
-    print(level_text("OK", f"Backup de configuración realizado en: {backup_root}/<timestamp>"))
+    print(level_text("INFO", f"Backup de configuración (si se ejecutó el plan) en: {backup_dest}"))
 
 
 def _list_existing_instance_services() -> list[str]:
@@ -1362,6 +1391,9 @@ def _backup_instance(config: InstanceConfig) -> None:
     if not db_name:
         print("[INFO] Sin DB origen, operación cancelada.")
         return
+    if not _is_safe_path_component(db_name):
+        print(level_text("ERROR", "Nombre de DB no válido para construir la ruta de filestore."))
+        return
 
     db_host = ask_text("DB server", "127.0.0.1", required=True)
     db_port = ask_int("DB port", 5432)
@@ -1382,6 +1414,11 @@ def _backup_instance(config: InstanceConfig) -> None:
 
     filestore_dir = _filestore_path(config, db_name)
     quoted_backup_dir = _quote(backup_dir)
+    # One timestamp for the whole operation so the DB dump and the filestore
+    # archive of the same backup share a suffix and can be paired.
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    dump_path = f"{backup_dir}/{config.instance}_{ts}.dump"
+    archive_path = f"{backup_dir}/{config.instance}_{ts}.filestore.tar.gz"
     commands: list[Command] = [
         Command("Crear directorio de backup", f"mkdir -p {quoted_backup_dir}")
     ]
@@ -1389,23 +1426,26 @@ def _backup_instance(config: InstanceConfig) -> None:
     if backup_mode in {"Solo DB", "DB + Filestore"}:
         commands.append(
             Command(
-                "Exportar backup de DB (formato custom)",
-                "TS=$(date +%Y%m%d_%H%M%S) && "
-                f"PGPASSWORD={_quote(db_password)} pg_dump -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -Fc {_quote(db_name)} > "
-                f"{quoted_backup_dir}/{_quote(config.instance)}_${{TS}}.dump",
+                "Exportar backup de DB (formato custom, atómico)",
+                f"TMP={_quote(dump_path + '.partial')} && "
+                f"PGPASSWORD={_quote(db_password)} pg_dump -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -Fc -f \"$TMP\" {_quote(db_name)} && "
+                f"mv \"$TMP\" {_quote(dump_path)} || {{ rm -f \"$TMP\"; exit 1; }}",
             )
         )
 
     if backup_mode in {"Solo Filestore", "DB + Filestore"}:
         commands.append(
             Command(
-                "Exportar backup de Filestore",
-                "TS=$(date +%Y%m%d_%H%M%S) && "
-                f"test -d {_quote(filestore_dir)} && tar -czf {quoted_backup_dir}/{_quote(config.instance)}_${{TS}}.filestore.tar.gz -C {_quote(filestore_dir)} .",
+                "Exportar backup de Filestore (atómico)",
+                f"TMP={_quote(archive_path + '.partial')} && "
+                f"test -d {_quote(filestore_dir)} && "
+                f"tar -czf \"$TMP\" -C {_quote(filestore_dir)} . && "
+                f"mv \"$TMP\" {_quote(archive_path)} || {{ rm -f \"$TMP\"; exit 1; }}",
             )
         )
 
     _execute_plan(commands)
+    print(level_text("INFO", f"Sufijo de backup: {ts}"))
 
 
 def _restore_backup(config: InstanceConfig) -> None:
@@ -1419,6 +1459,9 @@ def _restore_backup(config: InstanceConfig) -> None:
         return
 
     target_db = ask_text("DB destino", config.instance, required=True)
+    if not _is_safe_path_component(target_db):
+        print(level_text("ERROR", "Nombre de DB destino no válido para construir la ruta de filestore."))
+        return
     migration_mode = choose(
         "Modo de operación (equivalente Odoo)",
         ["Copiada (nuevo UUID en destino)", "Movida (mantener UUID)"],
@@ -1573,7 +1616,9 @@ def _duplicate_instance(config: InstanceConfig) -> None:
 
     if duplicate_filestore:
         source_filestore = _filestore_path(config, source_db)
-        target_filestore = _filestore_path(config, target_db)
+        # Target filestore must resolve under the TARGET instance's data dir, not
+        # the source instance's, or the duplicated instance starts without it.
+        target_filestore = _filestore_path(target_config, target_db)
         if path_exists(target_filestore):
             print(f"[ERROR] Ya existe filestore destino: {target_filestore}")
             return
@@ -1662,6 +1707,14 @@ def _delete_instance(config: InstanceConfig) -> None:
         store_db = ask_text(
             "Filestore DB a eliminar", db_name or config.instance, required=True
         )
+        if not _is_safe_path_component(store_db):
+            print(
+                level_text(
+                    "ERROR",
+                    "Nombre de DB de filestore no válido (no se permiten '/', '..' ni nombres reservados).",
+                )
+            )
+            return
         commands.append(
             Command(
                 "Eliminar filestore",
@@ -1718,14 +1771,17 @@ def _resolve_db_admin_access() -> tuple[str, str, int, str, str] | None:
     return None
 
 
-def _db_admin_psql_command(session: tuple[str, str, int, str, str], sql: str) -> str:
+def _db_admin_psql_command(
+    session: tuple[str, str, int, str, str], sql: str, psql_flags: str = ""
+) -> str:
     mode, db_host, db_port, db_admin_user, db_admin_password = session
+    flags = f"{psql_flags} " if psql_flags else ""
     if mode == "local":
-        return f"sudo -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c {shlex.quote(sql)}"
+        return f"sudo -u postgres psql -v ON_ERROR_STOP=1 -d postgres {flags}-c {shlex.quote(sql)}"
 
     return (
         f"PGPASSWORD={_quote(db_admin_password)} psql -v ON_ERROR_STOP=1 -h {_quote(db_host)} -p {db_port} "
-        f"-U {_quote(db_admin_user)} -d postgres -c {shlex.quote(sql)}"
+        f"-U {_quote(db_admin_user)} -d postgres {flags}-c {shlex.quote(sql)}"
     )
 
 
@@ -1752,7 +1808,7 @@ def _list_instance_databases(
         f"AND datname LIKE '{instance_literal}%' "
         "ORDER BY datname;"
     )
-    query_cmd = _db_admin_psql_command(session, sql).replace("-c", "-tA -c", 1)
+    query_cmd = _db_admin_psql_command(session, sql, psql_flags="-tA")
     result = run(query_cmd, check=False)
     if result.returncode != 0:
         error_text = result.stderr.strip() or result.stdout.strip() or "Error desconocido"

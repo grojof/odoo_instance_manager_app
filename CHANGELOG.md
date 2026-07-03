@@ -6,7 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Duplication now places the copied filestore under the **target** instance's data directory (was placed under
+  the source instance's, leaving the duplicate without attachments).
+- Backups are written atomically (dump/tar to a temp file, promoted on success) and the DB dump and filestore
+  archive of one backup now share a single timestamp; the config pre-update backup uses one timestamped
+  directory. Prevents 0-byte/partial dumps and mismatched backup pairs.
+- Purge database discovery no longer corrupts its `psql` command when the admin password/host contains `-c`
+  (removed a fragile string replace).
+- Ctrl+C during an install now triggers the same residue cleanup as a failure, and a failed/interrupted
+  install returns to the menu instead of crashing the CLI with a traceback.
+- `ask_bool` accepts the accented Spanish `sí` (and re-prompts on unrecognized input) instead of silently
+  reading it as "no".
+
 ### Security
+
+- Reject path-traversal in operator-entered database names before they are embedded in a filestore path that
+  is created, archived, or deleted.
 
 - Validate instance and PostgreSQL identifiers on the destructive flows (manage, delete, total purge, and
   duplication target) before any command or SQL is built, closing a root-level shell- and SQL-injection surface
