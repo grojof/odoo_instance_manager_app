@@ -9,9 +9,9 @@ from instance_manager.workflows import (
     install_db_only,
     install_odoo_and_db,
     install_odoo_only,
+    manage_existing_instance,
     manage_fail2ban,
     manage_instance_services,
-    manage_existing_instance,
     purge_instance_superuser,
 )
 

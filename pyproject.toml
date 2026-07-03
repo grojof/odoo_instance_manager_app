@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odoo-instance-manager"
+version = "0.1.0"
+description = "Interactive, root-run CLI to install, maintain, and audit multi-instance Odoo Community servers on Ubuntu."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Guillermo Rojo" }]
+keywords = ["odoo", "ubuntu", "sysadmin", "multi-instance", "postgresql", "nginx", "fail2ban"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Systems Administration",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+odoo-instance-manager = "odoo_instance_manager:main"
+
+[project.urls]
+Homepage = "https://github.com/grojof/odoo_instance_manager_app"
+Repository = "https://github.com/grojof/odoo_instance_manager_app"
+Issues = "https://github.com/grojof/odoo_instance_manager_app/issues"
+
+[tool.setuptools]
+py-modules = ["odoo_instance_manager"]
+packages = ["instance_manager"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Value rules: real bugs (F, B), imports (I), modernization (UP), style (E, W).
+# E501 (line length) is deferred: many long lines are embedded shell/SQL command
+# strings that should not be wrapped. New code should still aim for <=100 cols.
+select = ["E", "F", "I", "UP", "B", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

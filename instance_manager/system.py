@@ -128,7 +128,7 @@ def read_odoo_conf(conf_path: str) -> dict[str, str]:
     if not os.path.exists(conf_path):
         return values
 
-    with open(conf_path, "r", encoding="utf-8") as file_handle:
+    with open(conf_path, encoding="utf-8") as file_handle:
         for raw_line in file_handle:
             line = raw_line.strip()
             if (

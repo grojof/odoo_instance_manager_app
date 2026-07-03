@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Packaging (`pyproject.toml`): `odoo-instance-manager` console entry point, `requires-python >=3.12`, AGPL
+  license metadata, `dev` extras (`pytest`, `ruff`), and ruff/pytest configuration.
+- Continuous integration (`.github/workflows/ci.yml`): ruff, pytest, byte-compile, `openspec validate`, and
+  the eunomai `docs-check` / `provenance-check` gates on push/PR to `main`.
 - OpenSpec spec-driven-development layer under `openspec/`, with baseline capability specs reverse-engineered
   from the current behavior: `execution-safety`, `instance-provisioning`, `web-proxy-tls`,
   `instance-configuration`, `service-control`, `fail2ban-protection`, `data-backup-restore`,
