@@ -40,6 +40,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Deleting an instance and choosing to drop a **non-existent database** no longer crashes: the tool checks the
+  database first and warns + skips the drop (and `dropdb` now uses `--if-exists`). More generally, a failed
+  command in any non-install flow now returns to the menu with an error message instead of terminating the CLI.
 - Stop writing the obsolete `logrotate` option in the generated `odoo.conf` (removed from Odoo in v13, ignored
   since). Log rotation is offered **at install time** (default on), the rotation **Query** now clearly reports
   whether the Odoo log rotation is ACTIVA/INACTIVA, and Configure offers to delete a stale `logrotate` key from

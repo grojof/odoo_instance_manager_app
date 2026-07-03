@@ -105,6 +105,11 @@ def main() -> int:
         except EOFError:
             print("\nEntrada cerrada. Saliendo.")
             return 0
+        except RuntimeError as error:
+            # A command in a plan failed (already reported by apply_commands):
+            # surface it and return to the menu instead of crashing the CLI.
+            print(f"\n[ERROR] La operación no se completó: {error}")
+            continue
 
 
 if __name__ == "__main__":
