@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- Validate instance and PostgreSQL identifiers on the destructive flows (manage, delete, total purge, and
+  duplication target) before any command or SQL is built, closing a root-level shell- and SQL-injection surface
+  where a manually-typed instance name reached `rm -f`, `DROP ROLE`, and related commands unquoted. Path
+  interpolations in the residue-cleanup builders are now quoted as defense in depth. Tracked as the
+  `harden-identifier-validation` OpenSpec change; covered by new unit tests under `tests/`.
+
 ### Added
 
 - OpenSpec spec-driven-development layer under `openspec/`, with baseline capability specs reverse-engineered
