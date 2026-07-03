@@ -7,7 +7,16 @@ from ..planners import plan_logrotate_config
 from ..prompts import ask_bool, ask_int, ask_text, choose
 from ..system import path_exists, read_odoo_conf, run
 from ..ui import level_text, render_table, title
-from .common import _execute_plan, _quote
+from .common import _execute_plan, _quote, _read_text_file
+
+
+def _nginx_logs_covered_by_system() -> bool:
+    """True if the distribution's `/etc/logrotate.d/nginx` already rotates the
+    per-instance Nginx logs (its standard `/var/log/nginx/*.log` glob covers them)."""
+    content = _read_text_file("/etc/logrotate.d/nginx")
+    if not content:
+        return False
+    return "/var/log/nginx/*.log" in content or "/var/log/nginx/*" in content
 
 
 def _query_log_rotation(config: InstanceConfig) -> None:
@@ -24,10 +33,11 @@ def _query_log_rotation(config: InstanceConfig) -> None:
     ]
     print(render_table(["Elemento", "Valor"], rows))
 
+    policy_content = ""
     if lr_present:
         print(f"\n{title('Política logrotate actual')}")
-        current = run(f"cat {_quote(lr_file)}", check=False)
-        print(current.stdout.strip() or "(vacío)")
+        policy_content = _read_text_file(lr_file)
+        print(policy_content.strip() or "(vacío)")
         print(f"\n{title('Previsualización (logrotate -d)')}")
         dry = run(f"logrotate -d {_quote(lr_file)}", check=False)
         print((dry.stdout or dry.stderr).strip() or "(sin salida)")
@@ -38,13 +48,17 @@ def _query_log_rotation(config: InstanceConfig) -> None:
     sizes = run(f"ls -lh {_quote(config.odoo_log_file)}* 2>/dev/null", check=False)
     print(sizes.stdout.strip() or "(sin ficheros de log)")
 
-    print(
-        level_text(
-            "INFO",
-            "Los logs de Nginx (/var/log/nginx/<inst>.*.log) los rota el logrotate del sistema "
-            "de Nginx (/etc/logrotate.d/nginx); esta utilidad gestiona el log de Odoo.",
+    if _nginx_logs_covered_by_system():
+        print(level_text("INFO", "Logs de Nginx: rotados por el logrotate del sistema (/etc/logrotate.d/nginx)."))
+    elif config.nginx_access_log in policy_content:
+        print(level_text("OK", "Logs de Nginx: rotados por esta política (create + reopen SIGUSR1)."))
+    else:
+        print(
+            level_text(
+                "WARN",
+                "Logs de Nginx: sin cobertura de rotación detectada; considera incluirlos al configurar.",
+            )
         )
-    )
     if odoo_flag.strip().lower() == "true" and lr_present:
         print(
             level_text(
@@ -85,6 +99,27 @@ def _configure_log_rotation(config: InstanceConfig) -> None:
             "¿Poner logrotate=False en el odoo.conf? (requiere reiniciar Odoo)", True
         )
 
+    include_nginx = False
+    if _nginx_logs_covered_by_system():
+        print(
+            level_text(
+                "INFO",
+                "Los logs de Nginx ya los cubre el logrotate del sistema "
+                "(/etc/logrotate.d/nginx); no se añaden aquí para evitar doble rotación.",
+            )
+        )
+    else:
+        print(
+            level_text(
+                "WARN",
+                "El logrotate del sistema no cubre los logs de Nginx de la instancia.",
+            )
+        )
+        include_nginx = ask_bool(
+            "¿Incluir también los logs de Nginx de la instancia (create + reopen SIGUSR1)?",
+            True,
+        )
+
     commands = plan_logrotate_config(
         config,
         frequency=frequency,
@@ -92,6 +127,7 @@ def _configure_log_rotation(config: InstanceConfig) -> None:
         compress=compress,
         maxsize=maxsize,
         disable_odoo_internal=disable_odoo_internal,
+        include_nginx=include_nginx,
     )
     _execute_plan(commands)
     if disable_odoo_internal:
