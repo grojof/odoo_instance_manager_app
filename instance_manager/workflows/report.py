@@ -1012,6 +1012,8 @@ def external_server_report() -> None:
         threshold_days = ask_int(
             "Umbral de alerta para expiración TLS (días)",
             120,
+            min_value=1,
+            max_value=3650,
         )
         cert_paths: set[str] = set(cert_details_map.keys())
 

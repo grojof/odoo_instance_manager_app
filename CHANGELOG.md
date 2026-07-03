@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Operator UX: DB credentials are now collected once per management session and reused across backup /
+  restore / duplicate / delete (with a reuse prompt); passwords are read without echo (`getpass`); the file
+  picker can be cancelled; and numeric prompts report the correct range (fixing the "Puerto fuera de rango"
+  message on `maxretry`).
+
 ### Changed
 
 - Aligned the specs and docs with actual behavior (config update replays the full base setup; audit read-only

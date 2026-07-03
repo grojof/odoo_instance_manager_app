@@ -192,7 +192,7 @@ def manage_fail2ban() -> None:
             ignore_ips = " ".join(["127.0.0.1/8", "::1", *extra_tokens])
             bantime = ask_text("bantime", "1h", required=True)
             findtime = ask_text("findtime", "10m", required=True)
-            maxretry = ask_int("maxretry", 8)
+            maxretry = ask_int("maxretry", 8, min_value=1, max_value=1000)
             recidive_bantime = ask_text("recidive bantime", "24h", required=True)
 
             commands = plan_fail2ban_base_setup(
@@ -229,7 +229,7 @@ def manage_fail2ban() -> None:
 
             bantime = ask_text("bantime instancia", "1h", required=True)
             findtime = ask_text("findtime instancia", "10m", required=True)
-            maxretry = ask_int("maxretry instancia", 8)
+            maxretry = ask_int("maxretry instancia", 8, min_value=1, max_value=1000)
 
             commands = plan_fail2ban_enable_odoo_instance(
                 instance=instance,

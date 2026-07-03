@@ -33,6 +33,8 @@ from ..system import (
 from ..ui import level_tag, level_text, render_table, title
 from .backup_restore import _backup_instance, _duplicate_instance, _restore_backup
 from .common import (
+    DbCredentials,
+    _ask_db_credentials,
     _execute_plan,
     _filestore_path,
     _is_safe_path_component,
@@ -362,7 +364,9 @@ def update_existing_configs(instance: str) -> None:
     print(level_text("INFO", f"Backup de configuración (si se ejecutó el plan) en: {backup_dest}"))
 
 
-def _delete_instance(config: InstanceConfig) -> None:
+def _delete_instance(
+    config: InstanceConfig, cached: DbCredentials | None = None
+) -> DbCredentials | None:
     drop_db = ask_bool("¿Eliminar también base de datos?", False)
     remove_store = ask_bool("¿Eliminar también filestore?", False)
 
@@ -371,13 +375,12 @@ def _delete_instance(config: InstanceConfig) -> None:
     db_port = 5432
     db_user = ""
     db_password = ""
+    creds = cached
 
     if drop_db:
         db_name = ask_text("DB a eliminar", config.instance, required=True)
-        db_host = ask_text("DB server", "127.0.0.1", required=True)
-        db_port = ask_int("DB port", 5432)
-        db_user = ask_text("DB user", config.instance, required=True)
-        db_password = ask_text("DB password", None, required=True)
+        creds = _ask_db_credentials(config.instance, cached)
+        db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
 
     commands: list[Command] = [
         Command(
@@ -429,7 +432,7 @@ def _delete_instance(config: InstanceConfig) -> None:
                     "Nombre de DB de filestore no válido (no se permiten '/', '..' ni nombres reservados).",
                 )
             )
-            return
+            return creds
         commands.append(
             Command(
                 "Eliminar filestore",
@@ -441,10 +444,11 @@ def _delete_instance(config: InstanceConfig) -> None:
         "Acción destructiva detectada.",
         f"ELIMINAR {config.instance}",
     ):
-        print("[INFO] Confirmación no válida. Operación cancelada.")
-        return
+        print(level_text("INFO", "Confirmación no válida. Operación cancelada."))
+        return creds
 
     _execute_plan(commands)
+    return creds
 
 
 def manage_existing_instance() -> None:
@@ -458,6 +462,7 @@ def manage_existing_instance() -> None:
         return
 
     config.db_name, db_error, listed_dbs = _probe_databases_for_management(instance)
+    db_creds: DbCredentials | None = None
 
     while True:
         print("\nEstado completo de la instancia:")
@@ -496,10 +501,10 @@ def manage_existing_instance() -> None:
         elif action == "Instalar paquetes Python en venv":
             _install_python_packages_in_instance_venv(config)
         elif action == "Realizar backup":
-            _backup_instance(config)
+            db_creds = _backup_instance(config, db_creds)
         elif action == "Restaurar backup":
-            _restore_backup(config)
+            db_creds = _restore_backup(config, db_creds)
         elif action == "Duplicar instancia":
-            _duplicate_instance(config)
+            db_creds = _duplicate_instance(config, db_creds)
         elif action == "Eliminar instancia":
-            _delete_instance(config)
+            db_creds = _delete_instance(config, db_creds)

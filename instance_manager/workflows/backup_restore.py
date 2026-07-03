@@ -8,7 +8,6 @@ import uuid
 from ..models import InstanceConfig
 from ..prompts import (
     ask_bool,
-    ask_int,
     ask_text,
     choose,
     confirm_with_phrase,
@@ -22,11 +21,13 @@ from ..system import (
 )
 from ..ui import level_text
 from .common import (
+    DbCredentials,
+    _ask_db_credentials,
     _execute_plan,
     _filestore_path,
     _is_safe_path_component,
+    _pick_db_name,
     _quote,
-    _select_db_name,
 )
 
 
@@ -75,19 +76,19 @@ def _post_db_mode_commands(
     return commands
 
 
-def _backup_instance(config: InstanceConfig) -> None:
-    db_name = _select_db_name(config.instance, "DB origen para backup", required=True)
+def _backup_instance(
+    config: InstanceConfig, cached: DbCredentials | None = None
+) -> DbCredentials | None:
+    creds = _ask_db_credentials(config.instance, cached)
+    db_name = _pick_db_name(creds, "DB origen para backup", required=True)
     if not db_name:
-        print("[INFO] Sin DB origen, operación cancelada.")
-        return
+        print(level_text("INFO", "Sin DB origen, operación cancelada."))
+        return creds
     if not _is_safe_path_component(db_name):
         print(level_text("ERROR", "Nombre de DB no válido para construir la ruta de filestore."))
-        return
+        return creds
 
-    db_host = ask_text("DB server", "127.0.0.1", required=True)
-    db_port = ask_int("DB port", 5432)
-    db_user = ask_text("DB user", config.instance, required=True)
-    db_password = ask_text("DB password", None, required=True)
+    db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
 
     backup_dir = ask_text(
         "Directorio destino de backup", f"/var/backups/{config.instance}", required=True
@@ -98,8 +99,8 @@ def _backup_instance(config: InstanceConfig) -> None:
         default_index=None,
     )
     if not backup_mode:
-        print("[INFO] Operación cancelada.")
-        return
+        print(level_text("INFO", "Operación cancelada."))
+        return creds
 
     filestore_dir = _filestore_path(config, db_name)
     quoted_backup_dir = _quote(backup_dir)
@@ -135,46 +136,50 @@ def _backup_instance(config: InstanceConfig) -> None:
 
     _execute_plan(commands)
     print(level_text("INFO", f"Sufijo de backup: {ts}"))
+    return creds
 
 
-def _restore_backup(config: InstanceConfig) -> None:
+def _restore_backup(
+    config: InstanceConfig, cached: DbCredentials | None = None
+) -> DbCredentials | None:
     restore_mode = choose(
         "Tipo de restauración",
         ["Solo DB", "Solo Filestore", "DB + Filestore"],
         default_index=None,
     )
     if not restore_mode:
-        print("[INFO] Operación cancelada.")
-        return
+        print(level_text("INFO", "Operación cancelada."))
+        return cached
 
     target_db = ask_text("DB destino", config.instance, required=True)
     if not _is_safe_path_component(target_db):
         print(level_text("ERROR", "Nombre de DB destino no válido para construir la ruta de filestore."))
-        return
+        return cached
     migration_mode = choose(
         "Modo de operación (equivalente Odoo)",
         ["Copiada (nuevo UUID en destino)", "Movida (mantener UUID)"],
         default_index=None,
     )
     if not migration_mode:
-        print("[INFO] Operación cancelada.")
-        return
+        print(level_text("INFO", "Operación cancelada."))
+        return cached
     neutralize = ask_bool("¿Neutralizar destino?", True)
 
-    db_host = ask_text("DB server", "127.0.0.1", required=True)
-    db_port = ask_int("DB port", 5432)
-    db_user = ask_text("DB user", config.instance, required=True)
-    db_password = ask_text("DB password", None, required=True)
+    creds = _ask_db_credentials(config.instance, cached)
+    db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
 
     commands: list[Command] = []
 
     if restore_mode in {"Solo DB", "DB + Filestore"}:
         if database_exists(target_db):
-            print(f"[ERROR] La DB destino ya existe: {target_db}")
-            return
+            print(level_text("ERROR", f"La DB destino ya existe: {target_db}"))
+            return creds
 
-        print("Selecciona archivo dump (.dump)")
-        dump_file = select_file_path(".")
+        print(level_text("INFO", "Selecciona archivo dump (.dump)"))
+        dump_file = select_file_path(".", "Dump de base de datos", (".dump",))
+        if not dump_file:
+            print(level_text("INFO", "Operación cancelada."))
+            return creds
         commands.extend(
             [
                 Command(
@@ -200,8 +205,11 @@ def _restore_backup(config: InstanceConfig) -> None:
         )
 
     if restore_mode in {"Solo Filestore", "DB + Filestore"}:
-        print("Selecciona archivo backup de filestore (.tar.gz)")
-        filestore_backup = select_file_path(".")
+        print(level_text("INFO", "Selecciona archivo backup de filestore (.tar.gz)"))
+        filestore_backup = select_file_path(".", "Backup de filestore", (".tar.gz", ".tgz"))
+        if not filestore_backup:
+            print(level_text("INFO", "Operación cancelada."))
+            return creds
         target_filestore = _filestore_path(config, target_db)
         overwrite_store = False
         if path_exists(target_filestore):
@@ -209,8 +217,8 @@ def _restore_backup(config: InstanceConfig) -> None:
                 "El filestore destino existe, ¿sobrescribir?", False
             )
             if not overwrite_store:
-                print("[INFO] Restauración de filestore cancelada por conflicto.")
-                return
+                print(level_text("INFO", "Restauración de filestore cancelada por conflicto."))
+                return creds
 
         commands.append(
             Command(
@@ -234,19 +242,21 @@ def _restore_backup(config: InstanceConfig) -> None:
         "Acción sensible de restauración detectada.",
         f"RESTORE {config.instance}",
     ):
-        print("[INFO] Confirmación no válida. Operación cancelada.")
-        return
+        print(level_text("INFO", "Confirmación no válida. Operación cancelada."))
+        return creds
 
     _execute_plan(commands)
+    return creds
 
 
-def _duplicate_instance(config: InstanceConfig) -> None:
-    source_db = _select_db_name(
-        config.instance, "DB origen para duplicar", required=True
-    )
+def _duplicate_instance(
+    config: InstanceConfig, cached: DbCredentials | None = None
+) -> DbCredentials | None:
+    creds = _ask_db_credentials(config.instance, cached)
+    source_db = _pick_db_name(creds, "DB origen para duplicar", required=True)
     if not source_db:
-        print("[INFO] Sin DB origen, operación cancelada.")
-        return
+        print(level_text("INFO", "Sin DB origen, operación cancelada."))
+        return creds
 
     target_instance = ask_text("Nueva instancia destino", "", required=True)
     target_db = ask_text("Nueva DB destino", target_instance, required=True)
@@ -257,21 +267,18 @@ def _duplicate_instance(config: InstanceConfig) -> None:
         target_config.validate_identifiers()
     except ValueError as error:
         print(level_text("ERROR", str(error)))
-        return
+        return creds
     if path_exists(target_config.odoo_home):
-        print(f"[ERROR] Ya existe {target_config.odoo_home}")
-        return
+        print(level_text("ERROR", f"Ya existe {target_config.odoo_home}"))
+        return creds
     if service_exists(target_instance):
-        print(f"[ERROR] Ya existe servicio systemd: {target_instance}")
-        return
+        print(level_text("ERROR", f"Ya existe servicio systemd: {target_instance}"))
+        return creds
     if database_exists(target_db):
-        print(f"[ERROR] Ya existe DB destino: {target_db}")
-        return
+        print(level_text("ERROR", f"Ya existe DB destino: {target_db}"))
+        return creds
 
-    db_host = ask_text("DB server", "127.0.0.1", required=True)
-    db_port = ask_int("DB port", 5432)
-    db_user = ask_text("DB user", config.instance, required=True)
-    db_password = ask_text("DB password", None, required=True)
+    db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
 
     migration_mode = choose(
         "Modo de duplicación",
@@ -279,8 +286,8 @@ def _duplicate_instance(config: InstanceConfig) -> None:
         default_index=None,
     )
     if not migration_mode:
-        print("[INFO] Operación cancelada.")
-        return
+        print(level_text("INFO", "Operación cancelada."))
+        return creds
     neutralize = ask_bool("¿Neutralizar DB duplicada?", True)
     duplicate_filestore = ask_bool("¿Duplicar también filestore?", True)
 
@@ -309,8 +316,8 @@ def _duplicate_instance(config: InstanceConfig) -> None:
         # the source instance's, or the duplicated instance starts without it.
         target_filestore = _filestore_path(target_config, target_db)
         if path_exists(target_filestore):
-            print(f"[ERROR] Ya existe filestore destino: {target_filestore}")
-            return
+            print(level_text("ERROR", f"Ya existe filestore destino: {target_filestore}"))
+            return creds
 
         target_parent = target_filestore.rsplit("/", 1)[0]
         commands.extend(
@@ -330,7 +337,8 @@ def _duplicate_instance(config: InstanceConfig) -> None:
         "Acción sensible de duplicación detectada.",
         f"DUPLICAR {config.instance}",
     ):
-        print("[INFO] Confirmación no válida. Operación cancelada.")
-        return
+        print(level_text("INFO", "Confirmación no válida. Operación cancelada."))
+        return creds
 
     _execute_plan(commands)
+    return creds

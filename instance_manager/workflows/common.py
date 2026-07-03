@@ -8,9 +8,10 @@ module — so importing it never creates a cycle.
 from __future__ import annotations
 
 import shlex
+from dataclasses import dataclass
 
 from ..models import InstanceConfig
-from ..prompts import ask_bool, ask_int, ask_text, choose
+from ..prompts import ask_bool, ask_int, ask_secret, ask_text, choose
 from ..system import (
     Command,
     apply_commands,
@@ -85,36 +86,8 @@ def _collect_db_connection(instance: str) -> tuple[str, int, str, str] | None:
     db_host = ask_text("DB server", "127.0.0.1", required=True)
     db_port = ask_int("DB port", 5432)
     db_user = ask_text("DB user", instance, required=True)
-    db_password = ask_text("DB password", None, required=True)
+    db_password = ask_secret("DB password")
     return db_host, db_port, db_user, db_password
-
-
-def _select_db_name(instance: str, label: str, required: bool = True) -> str:
-    db_name = ""
-    db_connection = _collect_db_connection(instance)
-    if db_connection:
-        db_host, db_port, db_user, db_password = db_connection
-        db_names, error = list_databases(db_host, db_port, db_user, db_password)
-        if error:
-            print(f"[WARN] No se pudo listar DBs: {error}")
-        elif db_names:
-            print("\nDBs disponibles:")
-            for item in db_names:
-                print(f"- {item}")
-            pick = choose(
-                f"{label} (selección rápida)",
-                db_names + ["Escribir nombre manualmente"],
-                default_index=None,
-            )
-            if pick and pick != "Escribir nombre manualmente":
-                db_name = pick
-        else:
-            print("[INFO] La conexión fue exitosa, pero no hay DBs listadas.")
-
-    if db_name:
-        return db_name
-
-    return ask_text(label, "", required=required)
 
 
 def _list_detected_instances(base_dir: str) -> list[str]:
@@ -223,6 +196,53 @@ def _resolve_data_dir(config: InstanceConfig) -> str:
 def _filestore_path(config: InstanceConfig, db_name: str) -> str:
     data_dir = _resolve_data_dir(config)
     return f"{data_dir}/filestore/{db_name}"
+
+
+@dataclass(frozen=True)
+class DbCredentials:
+    """PostgreSQL connection credentials reused across a management session."""
+
+    host: str
+    port: int
+    user: str
+    password: str
+
+
+def _ask_db_credentials(
+    default_user: str, cached: DbCredentials | None = None
+) -> DbCredentials:
+    """Collect DB credentials, offering to reuse the ones from earlier this session."""
+    if cached is not None and ask_bool(
+        f"¿Usar credenciales DB anteriores ({cached.user}@{cached.host}:{cached.port})?",
+        True,
+    ):
+        return cached
+    host = ask_text("DB server", cached.host if cached else "127.0.0.1", required=True)
+    port = ask_int("DB port", cached.port if cached else 5432)
+    user = ask_text("DB user", cached.user if cached else default_user, required=True)
+    password = ask_secret("DB password")
+    return DbCredentials(host, port, user, password)
+
+
+def _pick_db_name(creds: DbCredentials, label: str, required: bool = True) -> str:
+    """List databases with ``creds`` and let the operator pick one or type a name."""
+    db_names, error = list_databases(creds.host, creds.port, creds.user, creds.password)
+    if error:
+        print(level_text("WARN", f"No se pudo listar DBs: {error}"))
+    elif db_names:
+        print("\nDBs disponibles:")
+        for item in db_names:
+            print(f"- {item}")
+        pick = choose(
+            f"{label} (selección rápida)",
+            db_names + ["Escribir nombre manualmente"],
+            default_index=None,
+        )
+        if pick and pick != "Escribir nombre manualmente":
+            return pick
+    else:
+        print(level_text("INFO", "Conexión a DB exitosa, sin bases listadas."))
+    return ask_text(label, "", required=required)
 
 
 def _is_self_signed_certificate(cert_path: str) -> bool:
