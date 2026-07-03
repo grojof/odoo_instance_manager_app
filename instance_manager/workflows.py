@@ -10,6 +10,8 @@ import uuid
 
 from .models import InstanceConfig
 from .planners import (
+    _is_local_db_host,
+    _sql_literal,
     plan_copy_custom_certs,
     plan_db_setup,
     plan_ensure_db_role,
@@ -1732,10 +1734,6 @@ def _delete_instance(config: InstanceConfig) -> None:
     _execute_plan(commands)
 
 
-def _sql_literal(value: str) -> str:
-    return value.replace("'", "''")
-
-
 def _resolve_db_admin_access() -> tuple[str, str, int, str, str] | None:
     db_host = ask_text("DB server para eliminación total", "127.0.0.1", required=True)
     db_port = ask_int("DB port", 5432)
@@ -2098,17 +2096,6 @@ def _list_odoo_service_names() -> list[str]:
     return sorted(set(services))
 
 
-def _list_odoo_conf_instances() -> list[str]:
-    instances: list[str] = []
-    if os.path.isdir("/etc/odoo"):
-        for name in sorted(os.listdir("/etc/odoo")):
-            for conf_path in _odoo_conf_candidates(name):
-                if os.path.isfile(conf_path):
-                    instances.append(name)
-                    break
-    return sorted(set(instances))
-
-
 def _safe_find_paths(
     roots: list[str],
     entry_type: str,
@@ -2159,24 +2146,6 @@ def _is_valid_odoo_conf_file(path: str) -> bool:
         "data_dir",
     }
     return len([key for key in expected_keys if key in values]) >= 2
-
-
-def _discover_odoo_conf_paths(service_names: list[str]) -> list[str]:
-    conf_paths: set[str] = set()
-    for service_name in service_names:
-        for candidate in _odoo_conf_candidates(service_name):
-            if os.path.isfile(candidate):
-                conf_paths.add(candidate)
-
-    for path in _safe_find_paths(["/etc/odoo"], "f", "*.conf", max_depth=4, max_items=300):
-        conf_paths.add(path)
-    for path in _safe_find_paths(["/etc", "/opt", "/srv", "/home", "/var/lib"], "f", "odoo.conf"):
-        conf_paths.add(path)
-
-    for path in _safe_find_paths(["/etc", "/opt", "/srv", "/home", "/var/lib"], "f", "*odoo*.conf"):
-        conf_paths.add(path)
-
-    return sorted(conf_paths)
 
 
 def _discover_odoo_named_directories() -> list[str]:
@@ -2250,15 +2219,6 @@ def _discover_filestore_roots(
         if os.path.isdir(path) and "/.ssh/" not in path and not path.endswith("/.ssh/filestore")
     ]
     return existing
-
-
-def _truncate_text(value: str, limit: int) -> str:
-    text = (value or "").strip()
-    if len(text) <= limit:
-        return text
-    if limit <= 3:
-        return text[:limit]
-    return text[: limit - 3] + "..."
 
 
 def _cell_multiline(value: str) -> str:
@@ -2509,19 +2469,6 @@ def _certificate_expiry_status(cert_path: str, threshold_days: int) -> tuple[str
     if expires_text:
         return "WARN", f"caduca antes de {threshold_days} días ({expires_text})"
     return "ERROR", "no se pudo validar expiración"
-
-
-def _is_local_db_host(db_host: str) -> bool:
-    value = (db_host or "").strip().lower()
-    return value in {
-        "",
-        "false",
-        "none",
-        "localhost",
-        "127.0.0.1",
-        "::1",
-        "/var/run/postgresql",
-    }
 
 
 def _list_local_postgres_databases(instance: str, db_user: str) -> list[str]:

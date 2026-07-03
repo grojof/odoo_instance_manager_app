@@ -5,7 +5,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 
-from .ui import level_text, render_table, status_tag, style, title
+from .ui import level_text, render_table, style, title
 
 
 @dataclass
@@ -45,10 +45,6 @@ def user_exists(username: str) -> bool:
     return command_ok(f"id -u '{username}' >/dev/null 2>&1")
 
 
-def group_exists(groupname: str) -> bool:
-    return command_ok(f"getent group '{groupname}' >/dev/null 2>&1")
-
-
 def service_exists(service_name: str) -> bool:
     return command_ok(f"systemctl cat '{service_name}' >/dev/null 2>&1")
 
@@ -75,10 +71,6 @@ def database_exists(db_name: str) -> bool:
     query = f"sudo -u postgres psql -tAc \"SELECT 1 FROM pg_database WHERE datname='{db_name}'\""
     result = run(query, check=False)
     return result.returncode == 0 and "1" in result.stdout
-
-
-def print_status_line(label: str, value: str, ok: bool) -> None:
-    print(f"{status_tag(ok)} {style(label, 'bold')}: {value}")
 
 
 def preview_commands(commands: list[Command]) -> None:
