@@ -51,6 +51,8 @@ directory:
 - Database → `pg_dump -Fc` → `<instance>_<timestamp>.dump`
 - Filestore → gzipped tar → `<instance>_<timestamp>.filestore.tar.gz`
 
+**Backups programados** sets up unattended backups on a systemd timer — see [Scheduled backups](scheduled-backups.md).
+
 > **Credentials are collected once per session:** the first data action (backup / restore / duplicate /
 > delete) that needs a database connection prompts for host/port/user/password; subsequent actions offer to
 > reuse them. Passwords are read without echo.

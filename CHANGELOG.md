@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Scheduled backups** (instance management → "Backups programados"): unattended backups on a systemd timer
+  (Diario/Semanal/Mensual) — atomic `sudo -u postgres pg_dump` of a chosen DB (local peer auth, no stored
+  password) + optional filestore, with retention; plus status and removal.
 - **Firewall (UFW)** (main menu): install and manage a UFW baseline — deny incoming / allow outgoing, allow
   SSH (before enabling, to avoid lock-out), HTTP/HTTPS, and optionally PostgreSQL from an app-server IP;
   plus allow-port, delete-rule, and enable/disable. Closes the gap Fail2ban's `banaction = ufw` assumed.

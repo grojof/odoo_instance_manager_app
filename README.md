@@ -56,6 +56,7 @@ Every action shows its full command plan and waits for your confirmation before 
 - [Instance health check](docs/health-check.md) — read-only check of service, HTTP, database, and disk.
 - [Disk usage & retention](docs/disk-usage.md) — instance footprint and pruning old backups.
 - [Addon inventory](docs/addon-inventory.md) — modules by origin (core/OCA/custom) with versions and installed state.
+- [Scheduled backups](docs/scheduled-backups.md) — unattended backups on a systemd timer, with retention.
 - [Fail2ban protection](docs/security-fail2ban.md) — base hardening, per-instance jails, real-IP checks.
 - [Firewall (UFW)](docs/firewall.md) — install and manage a UFW baseline (SSH/HTTP/HTTPS + PostgreSQL).
 - [Auditing a server](docs/server-audit.md) — the read-only external report.
