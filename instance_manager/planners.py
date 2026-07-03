@@ -248,6 +248,34 @@ def _logrotate_content(
     return "\n".join(lines) + "\n"
 
 
+def _nginx_logrotate_content(
+    config: InstanceConfig,
+    frequency: str,
+    rotate_count: int,
+    compress: bool,
+) -> str:
+    """Idiomatic Nginx stanza: `create` + `postrotate` reopen (Nginx reopens its
+    logs on SIGUSR1), matching the distribution's own `nginx` logrotate — not
+    `copytruncate`, which would risk losing lines Nginx *can* avoid losing."""
+    lines = [
+        f"{config.nginx_access_log} {config.nginx_error_log} {{",
+        f"    {frequency}",
+        f"    rotate {rotate_count}",
+        "    missingok",
+        "    notifempty",
+        "    create 0640 www-data adm",
+        "    sharedscripts",
+    ]
+    if compress:
+        lines.append("    compress")
+        lines.append("    delaycompress")
+    lines.append("    postrotate")
+    lines.append('        [ -f /run/nginx.pid ] && kill -USR1 "$(cat /run/nginx.pid)"')
+    lines.append("    endscript")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
 def plan_logrotate_config(
     config: InstanceConfig,
     *,
@@ -256,13 +284,19 @@ def plan_logrotate_config(
     compress: bool = True,
     maxsize: str = "",
     disable_odoo_internal: bool = False,
+    include_nginx: bool = False,
 ) -> list[Command]:
-    """Build a system-logrotate policy for the instance's Odoo log.
+    """Build a system-logrotate policy for the instance's logs.
 
-    Uses ``copytruncate`` so the running service keeps writing without a restart.
-    Optionally disables Odoo's own ``logrotate`` conf flag to avoid rotating the
-    same file twice.
+    The Odoo log uses ``copytruncate`` (Odoo does not reopen its log on a signal);
+    the Nginx logs, when included, use ``create`` + a ``postrotate`` SIGUSR1 reopen
+    (the modern Nginx-idiomatic method). Optionally disables Odoo's own
+    ``logrotate`` conf flag to avoid rotating the Odoo log twice.
     """
+    content = _logrotate_content(config, frequency, rotate_count, compress, maxsize)
+    if include_nginx:
+        content += "\n" + _nginx_logrotate_content(config, frequency, rotate_count, compress)
+
     commands: list[Command] = [
         Command(
             "Asegurar logrotate instalado",
@@ -270,11 +304,7 @@ def plan_logrotate_config(
         ),
     ]
     commands.extend(
-        write_text_file_command(
-            config.logrotate_config_file,
-            _logrotate_content(config, frequency, rotate_count, compress, maxsize),
-            "644",
-        )
+        write_text_file_command(config.logrotate_config_file, content, "644")
     )
     commands.append(
         Command(

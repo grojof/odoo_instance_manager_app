@@ -12,7 +12,10 @@ All notable changes to this project are documented here. The format is based on
   policy for an instance's Odoo log (`/etc/logrotate.d/odoo-<instance>`, `copytruncate`, tunable
   frequency/retention/compression/size) and query the current rotation state (`logrotate -d` preview, log
   sizes, Odoo's built-in `logrotate` flag). Offers to disable Odoo's built-in `logrotate` to avoid double
-  rotation. Nginx per-instance logs are left to the distribution's own `nginx` logrotate.
+  rotation. Nginx per-instance logs are left to the distribution's own `nginx` logrotate **when it already
+  covers them**; when it does not, the tool offers to rotate them with the modern Nginx-idiomatic method
+  (`create` + `postrotate` SIGUSR1 reopen, not `copytruncate`). The Odoo log keeps `copytruncate` (Odoo has no
+  log-reopen signal). Query reports who rotates the Nginx logs (distro / this tool / neither).
 
 
 - Operator UX: DB credentials are now collected once per management session and reused across backup /

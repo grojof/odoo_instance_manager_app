@@ -5,7 +5,11 @@ from __future__ import annotations
 import unittest
 
 from instance_manager.models import InstanceConfig
-from instance_manager.planners import _logrotate_content, plan_logrotate_config
+from instance_manager.planners import (
+    _logrotate_content,
+    _nginx_logrotate_content,
+    plan_logrotate_config,
+)
 
 
 def _config() -> InstanceConfig:
@@ -36,6 +40,19 @@ class LogrotateContentTests(unittest.TestCase):
         self.assertIn("    maxsize 50M", content)
 
 
+class NginxLogrotateContentTests(unittest.TestCase):
+    def test_uses_create_and_postrotate_reopen_not_copytruncate(self) -> None:
+        content = _nginx_logrotate_content(_config(), "daily", 30, compress=True)
+        self.assertIn("/var/log/nginx/odoo18.access.log", content)
+        self.assertIn("/var/log/nginx/odoo18.error.log", content)
+        self.assertIn("create 0640 www-data adm", content)
+        self.assertIn("sharedscripts", content)
+        self.assertIn("postrotate", content)
+        self.assertIn("kill -USR1", content)
+        # Nginx reopens on signal, so copytruncate must NOT be used here.
+        self.assertNotIn("copytruncate", content)
+
+
 class PlanLogrotateConfigTests(unittest.TestCase):
     def _commands_text(self, **kwargs: object) -> str:
         commands = plan_logrotate_config(_config(), **kwargs)  # type: ignore[arg-type]
@@ -52,6 +69,14 @@ class PlanLogrotateConfigTests(unittest.TestCase):
         with_disable = self._commands_text(disable_odoo_internal=True)
         self.assertIn("logrotate = False", with_disable)
         self.assertIn("/etc/odoo/odoo18/odoo18.conf", with_disable)
+
+    def test_include_nginx_adds_nginx_stanza_only_when_requested(self) -> None:
+        self.assertNotIn("/var/log/nginx/odoo18.access.log", self._commands_text(include_nginx=False))
+        with_nginx = self._commands_text(include_nginx=True)
+        self.assertIn("/var/log/nginx/odoo18.access.log", with_nginx)
+        self.assertIn("kill -USR1", with_nginx)
+        # The Odoo stanza still uses copytruncate even when Nginx is included.
+        self.assertIn("copytruncate", with_nginx)
 
 
 if __name__ == "__main__":

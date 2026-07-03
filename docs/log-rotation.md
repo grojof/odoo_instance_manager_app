@@ -43,9 +43,16 @@ take effect.
 
 ## Nginx logs
 
-This capability manages the **Odoo** log only. Per-instance Nginx logs
-(`/var/log/nginx/<instance>.{access,error}.log`) are already rotated by the distribution's own
-`/etc/logrotate.d/nginx`; the query notes this so you don't double-configure them.
+On a standard Ubuntu, per-instance Nginx logs (`/var/log/nginx/<instance>.{access,error}.log`) are already
+rotated by the distribution's own `/etc/logrotate.d/nginx` (`/var/log/nginx/*.log`), so the tool **detects
+that coverage and leaves them alone** to avoid double rotation.
+
+If that coverage is **absent**, Configure offers to include the instance's Nginx logs, rotating them with the
+modern Nginx-idiomatic method — `create 0640 www-data adm` + a `postrotate` that reopens Nginx via
+`kill -USR1 $(cat /run/nginx.pid)` (**not** `copytruncate`: Nginx reopens on signal, so no lines are lost).
+The Odoo log keeps `copytruncate` because Odoo has no log-reopen signal — the right method per service.
+
+**Query** reports who rotates the Nginx logs: the distribution's logrotate, this tool's policy, or neither.
 
 ## Related
 

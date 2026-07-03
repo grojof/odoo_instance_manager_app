@@ -54,6 +54,14 @@ class InstanceConfig:
         return f"/etc/logrotate.d/odoo-{self.instance}"
 
     @property
+    def nginx_access_log(self) -> str:
+        return f"/var/log/nginx/{self.instance}.access.log"
+
+    @property
+    def nginx_error_log(self) -> str:
+        return f"/var/log/nginx/{self.instance}.error.log"
+
+    @property
     def nginx_http_name(self) -> str:
         return f"{self.instance}-http.conf"
 
