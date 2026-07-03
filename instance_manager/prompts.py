@@ -4,7 +4,7 @@ import getpass
 import os
 from pathlib import Path
 
-from .i18n import t
+from .i18n import current_language, t, tf
 from .ui import level_text, prompt_label, style, title
 
 _last_selected_dir: Path | None = None
@@ -39,10 +39,10 @@ def _validate_selected_path_extension(
     print(
         level_text(
             "WARN",
-            f"La ruta seleccionada para {target} no coincide con extensiones esperadas: {expected}",
+            tf('The selected path for {} does not match the expected extensions: {}', target, expected),
         )
     )
-    return ask_bool("¿Usar igualmente este archivo?", False)
+    return ask_bool('Use this file anyway?', False)
 
 
 def ask_text(label: str, default: str | None = None, required: bool = False) -> str:
@@ -55,7 +55,7 @@ def ask_text(label: str, default: str | None = None, required: bool = False) -> 
             return default
         if not required:
             return ""
-        print(level_text("ERROR", "Valor obligatorio."))
+        print(level_text("ERROR", 'Value is required.'))
 
 
 def ask_int(label: str, default: int, min_value: int = 1, max_value: int = 65535) -> int:
@@ -64,11 +64,11 @@ def ask_int(label: str, default: int, min_value: int = 1, max_value: int = 65535
         try:
             value = int(raw)
         except ValueError:
-            print(level_text("ERROR", "Debe ser un número entero."))
+            print(level_text("ERROR", 'Must be an integer.'))
             continue
         if min_value <= value <= max_value:
             return value
-        print(level_text("ERROR", f"Valor fuera de rango ({min_value}-{max_value})."))
+        print(level_text("ERROR", tf('Value out of range ({}-{}).', min_value, max_value)))
 
 
 def ask_port(label: str, default: int) -> int:
@@ -83,11 +83,12 @@ def ask_secret(label: str, required: bool = True) -> str:
             return value
         if not required:
             return ""
-        print(level_text("ERROR", "Valor obligatorio."))
+        print(level_text("ERROR", 'Value is required.'))
 
 
 def ask_bool(label: str, default: bool = True) -> bool:
-    marker = "Y/n" if default else "y/N"
+    yes_letter = "S" if current_language() == "es" else "Y"
+    marker = f"{yes_letter}/n" if default else f"{yes_letter.lower()}/N"
     affirmative = {"y", "yes", "s", "si", "sí"}
     negative = {"n", "no"}
     while True:
@@ -98,7 +99,7 @@ def ask_bool(label: str, default: bool = True) -> bool:
             return True
         if raw in negative:
             return False
-        print(level_text("ERROR", "Responde 'sí'/'s' o 'no'/'n' (Enter = opción por defecto)."))
+        print(level_text("ERROR", "Answer 'yes'/'y' or 'no'/'n' (Enter = default)."))
 
 
 def choose(label: str, options: list[str], default_index: int | None = None) -> str:
@@ -111,9 +112,9 @@ def choose(label: str, options: list[str], default_index: int | None = None) -> 
     "cancelled".
     """
     print(title(label))
-    zero_candidates = ["Cancelar", "Volver", "Salir"]
+    zero_candidates = ['Cancel', 'Back', 'Exit']
     zero_option = next((item for item in zero_candidates if item in options), None)
-    zero_label = zero_option if zero_option is not None else "Cancelar"
+    zero_label = zero_option if zero_option is not None else 'Cancel'
 
     indexed_options = [option for option in options if option != zero_option]
 
@@ -131,23 +132,23 @@ def choose(label: str, options: list[str], default_index: int | None = None) -> 
         print(f"  {marker} {t(option)}{style(default_tag, 'dim')}")
 
     while True:
-        raw = input(f"{prompt_label('Selecciona opción')}: ").strip()
+        raw = input(f"{prompt_label('Select an option')}: ").strip()
         if raw == "0":
             return zero_option if zero_option is not None else ""
 
         if not raw:
             if default_index is not None:
                 return options[default_index]
-            print(level_text("INFO", "Sin selección (0 para cancelar)."))
+            print(level_text("INFO", 'No selection (0 to cancel).'))
             return ""
         try:
             selected = int(raw)
         except ValueError:
-            print(level_text("ERROR", "Introduce el número de opción."))
+            print(level_text("ERROR", 'Enter the option number.'))
             continue
         if 1 <= selected <= len(indexed_options):
             return indexed_options[selected - 1]
-        print(level_text("ERROR", "Opción fuera de rango."))
+        print(level_text("ERROR", 'Option out of range.'))
 
 
 def select_file_path(
@@ -162,26 +163,26 @@ def select_file_path(
 
     while True:
         if requested_label:
-            print(f"\n{title('Seleccionar archivo requerido')}: {requested_label}")
-        print(f"{title('Directorio actual')}: {current}")
+            print(f"\n{title('Select required file')}: {requested_label}")
+        print(f"{title('Current directory')}: {current}")
         if _last_selected_dir and _last_selected_dir.is_dir():
-            print(level_text("INFO", f"Última carpeta usada: {_last_selected_dir}"))
+            print(level_text("INFO", tf('Last folder used: {}', _last_selected_dir)))
         entries = sorted(
             current.iterdir(), key=lambda item: (item.is_file(), item.name.lower())
         )
-        print("  0) Elegir este directorio")
-        print("  ..) Subir nivel")
-        print("  q) Cancelar")
+        print(t('  0) Choose this directory'))
+        print(t('  ..) Up one level'))
+        print(t('  q) Cancel'))
         for index, entry in enumerate(entries, start=1):
             marker = "/" if entry.is_dir() else ""
             print(f"  {index}) {entry.name}{marker}")
 
-        raw = input(f"{prompt_label("Elige número, '..', 'q' o ruta manual")}: ").strip()
+        raw = input(f"{prompt_label("Choose a number, '..', 'q' or a manual path")}: ").strip()
         if raw.lower() in {"q", "cancelar"}:
             return ""
         if raw == "0":
             manual = input(
-                f"{prompt_label('Nombre de archivo en este directorio (o Enter para ruta manual)')}: "
+                f"{prompt_label('File name in this directory (or Enter for a manual path)')}: "
             ).strip()
             if manual:
                 candidate = current / manual
@@ -192,7 +193,7 @@ def select_file_path(
                     _remember_directory_from_path(candidate_text)
                     return candidate_text
                 continue
-            manual_path = input(f"{prompt_label('Ruta completa del archivo')}: ").strip()
+            manual_path = input(f"{prompt_label('Full file path')}: ").strip()
             if manual_path:
                 resolved = str(Path(manual_path).expanduser())
                 if _validate_selected_path_extension(
@@ -229,7 +230,7 @@ def select_file_path(
                 return resolved
             continue
 
-        print(level_text("ERROR", "Entrada no válida."))
+        print(level_text("ERROR", 'Invalid input.'))
 
 
 def clear_screen() -> None:
@@ -240,6 +241,6 @@ def clear_screen() -> None:
 def confirm_with_phrase(label: str, phrase: str) -> bool:
     print(title(label))
     value = input(
-        f"{prompt_label('Escribe exactamente')} {style(phrase, 'magenta', 'bold')} {prompt_label('para confirmar')}: "
+        f"{prompt_label('Type exactly')} {style(phrase, 'magenta', 'bold')} {prompt_label('to confirm')}: "
     ).strip()
     return value == phrase

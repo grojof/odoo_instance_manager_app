@@ -33,7 +33,7 @@ tool is for you. If you use Odoo's SaaS/Online or a managed host, you don't need
 - An **Ubuntu 24.04** server, run as **root** (`sudo`).
 - **Python 3.12+** (ships with 24.04). Nothing else.
 
-The interface is available in **Spanish** (default) or **English** — chosen at startup or via `OIM_LANG=en|es`
+The interface is available in **English** (default) or **Spanish** — chosen at startup or via `OIM_LANG=en|es`
 (see [Interface language](docs/language.md)).
 
 ## Quickstart

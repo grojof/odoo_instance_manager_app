@@ -107,12 +107,12 @@ class InstanceConfig:
 
         if not INSTANCE_NAME_RE.fullmatch(self.instance):
             errors.append(
-                "instance inválida. Usa formato: inicia con letra minúscula y solo [a-z0-9_] (máx 32)."
+                'invalid instance. Use the format: start with a lowercase letter and only [a-z0-9_] (max 32).'
             )
 
         if not POSTGRES_IDENTIFIER_RE.fullmatch(self.db_user):
             errors.append(
-                "db_user inválido para PostgreSQL. Usa formato: inicia con [a-z_] y solo [a-z0-9_] (máx 63)."
+                'invalid db_user for PostgreSQL. Use the format: start with [a-z_] and only [a-z0-9_] (max 63).'
             )
 
         if errors:

@@ -14,6 +14,7 @@ import shlex
 import socket
 from dataclasses import dataclass
 
+from ..i18n import tf
 from ..models import InstanceConfig
 from ..planners import _is_local_db_host, _sql_literal
 from ..prompts import ask_bool, ask_int, ask_text
@@ -46,16 +47,16 @@ def _collect_system_overview() -> list[list[str]]:
 
     rows = [
         ["Hostname", hostname],
-        ["SO", pretty_name or "no detectado"],
-        ["Kernel", _command_output("uname -r") or "no detectado"],
-        ["Arquitectura", _command_output("uname -m") or "no detectada"],
-        ["Virtualización", _command_output("systemd-detect-virt") or "no detectada"],
-        ["Uptime", _command_output("uptime -p") or "no detectado"],
-        ["IP(s)", _command_output("hostname -I") or "no detectadas"],
-        ["Python3 (sistema)", _command_output("python3 --version") or "no detectado"],
-        ["Python3 path", _command_output("command -v python3") or "no detectado"],
-        ["PostgreSQL client", _command_output("psql --version") or "no detectado"],
-        ["Nginx", _command_output("nginx -v 2>&1") or "no detectado"],
+        ["SO", pretty_name or 'not detected'],
+        ["Kernel", _command_output("uname -r") or 'not detected'],
+        ["Arquitectura", _command_output("uname -m") or 'not detected'],
+        ['Virtualization', _command_output("systemd-detect-virt") or 'not detected'],
+        ["Uptime", _command_output("uptime -p") or 'not detected'],
+        ["IP(s)", _command_output("hostname -I") or 'not detected'],
+        ['Python3 (system)', _command_output("python3 --version") or 'not detected'],
+        ["Python3 path", _command_output("command -v python3") or 'not detected'],
+        ["PostgreSQL client", _command_output("psql --version") or 'not detected'],
+        ["Nginx", _command_output("nginx -v 2>&1") or 'not detected'],
     ]
     return rows
 
@@ -439,7 +440,7 @@ def _certificate_expiry_status(cert_path: str, threshold_days: int) -> tuple[str
         check=False,
     )
     if result.returncode == 0:
-        return "OK", f"vigente > {threshold_days} días"
+        return "OK", tf("valid > {} days", threshold_days)
 
     enddate = run(
         f"openssl x509 -in {_quote(cert_path)} -noout -enddate",
@@ -450,8 +451,8 @@ def _certificate_expiry_status(cert_path: str, threshold_days: int) -> tuple[str
         expires_text = enddate.stdout.strip().split("=", 1)[1].strip()
 
     if expires_text:
-        return "WARN", f"caduca antes de {threshold_days} días ({expires_text})"
-    return "ERROR", "no se pudo validar expiración"
+        return "WARN", tf("expires in less than {} days ({})", threshold_days, expires_text)
+    return "ERROR", 'could not validate expiration'
 
 
 def _list_local_postgres_databases(instance: str, db_user: str) -> list[str]:
@@ -476,11 +477,11 @@ def _list_local_postgres_databases(instance: str, db_user: str) -> list[str]:
 
 def _detect_tls_cert_type(cert_path: str, key_path: str) -> str:
     if not cert_path and not key_path:
-        return "sin TLS"
+        return 'no TLS'
     if "/etc/letsencrypt/" in cert_path or "/etc/letsencrypt/" in key_path:
         return "Let's Encrypt"
     if cert_path and _is_self_signed_certificate(cert_path):
-        return "Autofirmado"
+        return 'Self-signed'
     if cert_path and key_path:
         return "Personalizado"
     return "TLS incompleto"
@@ -606,8 +607,8 @@ def _collect_external_instance_rows(
         config = InstanceConfig(instance=instance)
         config.normalize_defaults()
 
-        service_state = level_text("OK", "activo") if service_active(config.odoo_service) else level_text("MISSING", "detenido")
-        autostart_state = level_text("OK", "sí") if service_enabled(config.odoo_service) else level_text("INFO", "no")
+        service_state = level_text("OK", 'active') if service_active(config.odoo_service) else level_text("MISSING", 'stopped')
+        autostart_state = level_text("OK", "yes") if service_enabled(config.odoo_service) else level_text("INFO", "no")
 
         instance_conf_paths = [
             path
@@ -721,7 +722,7 @@ def _collect_external_instance_rows(
                 instance=instance,
                 service_state=service_state,
                 autostart_state=autostart_state,
-                odoo_version=odoo_version or "no detectada",
+                odoo_version=odoo_version or 'not detected',
                 http_port=http_port,
                 gevent_port=gevent_port,
                 db_host=db_host,
@@ -760,8 +761,8 @@ def _collect_odoo_services_rows(service_contexts: list[dict[str, str]]) -> list[
         rows.append(
             [
                 service_name,
-                level_text("OK", "activo") if service_active(service_name) else level_text("MISSING", "detenido"),
-                level_text("OK", "sí") if service_enabled(service_name) else level_text("INFO", "no"),
+                level_text("OK", 'active') if service_active(service_name) else level_text("MISSING", 'stopped'),
+                level_text("OK", "yes") if service_enabled(service_name) else level_text("INFO", "no"),
                 context.get("python_path", ""),
                 context.get("odoo_home", ""),
                 context.get("conf_hint", ""),
@@ -771,7 +772,7 @@ def _collect_odoo_services_rows(service_contexts: list[dict[str, str]]) -> list[
 
 
 def external_server_report() -> None:
-    print(f"\n{title('Informe para servidor externo')}")
+    print(f"\n{title('External server report')}")
 
     report_sections: list[str] = []
 
@@ -786,52 +787,52 @@ def external_server_report() -> None:
     system_rows = _collect_system_overview()
     system_rows.extend(
         [
-            ["PostgreSQL service", level_text("OK", "activo") if service_active("postgresql") else level_text("MISSING", "detenido")],
-            ["PostgreSQL autostart", level_text("OK", "sí") if service_enabled("postgresql") else level_text("INFO", "no")],
-            ["Nginx service", level_text("OK", "activo") if service_active("nginx") else level_text("MISSING", "detenido")],
-            ["Nginx autostart", level_text("OK", "sí") if service_enabled("nginx") else level_text("INFO", "no")],
-            ["Nginx test", _command_output("nginx -t 2>&1 | tail -n 1") or "no disponible"],
+            ["PostgreSQL service", level_text("OK", 'active') if service_active("postgresql") else level_text("MISSING", 'stopped')],
+            ["PostgreSQL autostart", level_text("OK", "yes") if service_enabled("postgresql") else level_text("INFO", "no")],
+            ["Nginx service", level_text("OK", 'active') if service_active("nginx") else level_text("MISSING", 'stopped')],
+            ["Nginx autostart", level_text("OK", "yes") if service_enabled("nginx") else level_text("INFO", "no")],
+            ["Nginx test", _command_output("nginx -t 2>&1 | tail -n 1") or 'unavailable'],
         ]
     )
-    system_table = render_table(["Campo", "Valor"], system_rows)
-    print(f"\n{title('Resumen del servidor')}\n{system_table}")
-    report_sections.append("Resumen del servidor\n" + strip_ansi(system_table))
+    system_table = render_table(['Field', 'Value'], system_rows)
+    print(f"\n{title('Server summary')}\n{system_table}")
+    report_sections.append('Server summary\n' + strip_ansi(system_table))
 
     services_rows = _collect_odoo_services_rows(service_contexts)
     services_table = render_table(
-        ["Servicio", "Estado", "Autoarranque", "Python path", "Odoo home", "Config hint"],
-        services_rows if services_rows else [["(sin servicios detectados)", "", "", "", "", ""]],
+        ['Service', 'State', 'Autostart', "Python path", "Odoo home", "Config hint"],
+        services_rows if services_rows else [['(no services detected)', "", "", "", "", ""]],
     )
-    print(f"\n{title('Servicios Odoo detectados')}\n{services_table}")
-    report_sections.append("Servicios Odoo detectados\n" + strip_ansi(services_table))
+    print(f"\n{title('Detected Odoo services')}\n{services_table}")
+    report_sections.append('Detected Odoo services\n' + strip_ansi(services_table))
 
     artifacts_table = render_table(
         ["Tipo", "Cantidad", "Muestra"],
         [
-            ["Dirs con 'odoo'", str(len(named_dirs)), ", ".join(named_dirs[:3]) or "-"],
+            ["Dirs with 'odoo'", str(len(named_dirs)), ", ".join(named_dirs[:3]) or "-"],
             ["Configs Odoo", str(len(conf_paths)), ", ".join(conf_paths[:3]) or "-"],
             ["Configs Nginx relacionadas", str(len(nginx_paths)), ", ".join(nginx_paths[:3]) or "-"],
             ["Filestore roots", str(len(filestore_roots)), ", ".join(filestore_roots[:3]) or "-"],
         ],
     )
-    print(f"\n{title('Artefactos detectados por búsqueda')}\n{artifacts_table}")
-    report_sections.append("Artefactos detectados por búsqueda\n" + strip_ansi(artifacts_table))
+    print(f"\n{title('Artifacts found by search')}\n{artifacts_table}")
+    report_sections.append('Artifacts detected by search\n' + strip_ansi(artifacts_table))
 
     if conf_paths:
         conf_table = render_table(
             ["#", "Config Odoo"],
             [[str(idx), path] for idx, path in enumerate(conf_paths, start=1)],
         )
-        print(f"\n{title('Archivos de configuración Odoo detectados')}\n{conf_table}")
-        report_sections.append("Archivos de configuración Odoo detectados\n" + strip_ansi(conf_table))
+        print(f"\n{title('Detected Odoo configuration files')}\n{conf_table}")
+        report_sections.append('Detected Odoo configuration files\n' + strip_ansi(conf_table))
 
     if nginx_paths:
         nginx_table = render_table(
             ["#", "Config Nginx"],
             [[str(idx), path] for idx, path in enumerate(nginx_paths, start=1)],
         )
-        print(f"\n{title('Configs Nginx relacionadas con Odoo')}\n{nginx_table}")
-        report_sections.append("Configs Nginx relacionadas con Odoo\n" + strip_ansi(nginx_table))
+        print(f"\n{title('Odoo-related Nginx configs')}\n{nginx_table}")
+        report_sections.append('Odoo-related Nginx configs\n' + strip_ansi(nginx_table))
 
     if filestore_roots:
         filestore_rows: list[list[str]] = []
@@ -849,8 +850,8 @@ def external_server_report() -> None:
                 db_count = 0
             filestore_rows.append([str(idx), root, str(db_count)])
         filestore_table = render_table(["#", "Filestore root", "DB dirs"], filestore_rows)
-        print(f"\n{title('Filestores detectados')}\n{filestore_table}")
-        report_sections.append("Filestores detectados\n" + strip_ansi(filestore_table))
+        print(f"\n{title('Detected filestores')}\n{filestore_table}")
+        report_sections.append('Detected filestores\n' + strip_ansi(filestore_table))
 
     instance_rows = _collect_external_instance_rows(
         service_contexts=service_contexts,
@@ -902,38 +903,38 @@ def external_server_report() -> None:
 
     odoo_table = render_table(
         [
-            "Instancia",
-            "Servicio",
-            "Autoarranque",
+            'Instance',
+            'Service',
+            'Autostart',
             "Odoo",
             "HTTP",
             "gevent",
-            "DB host",
-            "DB user",
-            "DB port",
+            'DB host',
+            'DB user',
+            'DB port',
             "Config Odoo",
             "Data dir",
             "Filestores",
             "DBs locales",
         ],
-        odoo_rows if odoo_rows else [["(sin instancias detectadas)", "", "", "", "", "", "", "", "", "", "", "", ""]],
+        odoo_rows if odoo_rows else [['(no instances detected)', "", "", "", "", "", "", "", "", "", "", "", ""]],
     )
-    print(f"\n{title('Instancias: Odoo / rutas / DB')}\n{odoo_table}")
-    report_sections.append("Instancias: Odoo / rutas / DB\n" + strip_ansi(odoo_table))
+    print(f"\n{title('Instances: Odoo / paths / DB')}\n{odoo_table}")
+    report_sections.append('Instances: Odoo / paths / DB\n' + strip_ansi(odoo_table))
 
     python_table = render_table(
-        ["Instancia", "Python", "Python path", "Workers", "Addons"],
-        python_rows if python_rows else [["(sin instancias detectadas)", "", "", "", ""]],
+        ['Instance', "Python", "Python path", "Workers", "Addons"],
+        python_rows if python_rows else [['(no instances detected)', "", "", "", ""]],
     )
-    print(f"\n{title('Instancias: Python')}\n{python_table}")
-    report_sections.append("Instancias: Python\n" + strip_ansi(python_table))
+    print(f"\n{title('Instances: Python')}\n{python_table}")
+    report_sections.append('Instances: Python\n' + strip_ansi(python_table))
 
     nginx_table_by_instance = render_table(
-        ["Instancia", "server_name", "HTTP", "gevent", "TLS tipo", "Nginx cfgs", "Filestore roots"],
-        nginx_rows if nginx_rows else [["(sin instancias detectadas)", "", "", "", "", "", ""]],
+        ['Instance', "server_name", "HTTP", "gevent", "TLS tipo", "Nginx cfgs", "Filestore roots"],
+        nginx_rows if nginx_rows else [['(no instances detected)', "", "", "", "", "", ""]],
     )
-    print(f"\n{title('Instancias: Nginx / puertos')}\n{nginx_table_by_instance}")
-    report_sections.append("Instancias: Nginx / puertos\n" + strip_ansi(nginx_table_by_instance))
+    print(f"\n{title('Instances: Nginx / ports')}\n{nginx_table_by_instance}")
+    report_sections.append('Instances: Nginx / ports\n' + strip_ansi(nginx_table_by_instance))
 
     cert_details_map: dict[str, dict[str, str | set[str]]] = {}
     for row in instance_rows:
@@ -996,21 +997,21 @@ def external_server_report() -> None:
                 "Issuer",
                 "Subject",
                 "Expira",
-                "Instancias",
+                'Instances',
                 "server_name",
             ],
             cert_rows,
         )
-        print(f"\n{title('Detalle de certificados TLS')}\n{cert_table}")
-        report_sections.append("Detalle de certificados TLS\n" + strip_ansi(cert_table))
+        print(f"\n{title('TLS certificate detail')}\n{cert_table}")
+        report_sections.append('TLS certificate details\n' + strip_ansi(cert_table))
 
     run_active_checks = ask_bool(
-        "¿Ejecutar comprobaciones activas de certificados TLS?",
+        'Run active TLS certificate checks?',
         True,
     )
     if run_active_checks:
         threshold_days = ask_int(
-            "Umbral de alerta para expiración TLS (días)",
+            'TLS expiry alert threshold (days)',
             120,
             min_value=1,
             max_value=3650,
@@ -1023,27 +1024,27 @@ def external_server_report() -> None:
                 status, detail = _certificate_expiry_status(cert_path, threshold_days)
                 check_rows.append([level_tag(status), cert_path, detail])
 
-            checks_table = render_table(["Estado", "Certificado", "Resultado"], check_rows)
-            print(f"\n{title('Comprobaciones activas TLS')}\n{checks_table}")
+            checks_table = render_table(['State', "Certificado", "Resultado"], check_rows)
+            print(f"\n{title('Active TLS checks')}\n{checks_table}")
             report_sections.append("Comprobaciones activas TLS\n" + strip_ansi(checks_table))
         else:
-            info_message = level_text("INFO", "No hay rutas de certificados TLS detectadas para comprobación activa.")
+            info_message = level_text("INFO", 'No TLS certificate paths detected for active checking.')
             print(info_message)
             report_sections.append("Comprobaciones activas TLS\n" + strip_ansi(info_message))
 
-    export_report = ask_bool("¿Quieres exportar el informe a archivo?", True)
+    export_report = ask_bool('Export the report to a file?', True)
     if not export_report:
-        print(level_text("INFO", "Exportación omitida por el usuario."))
+        print(level_text("INFO", 'Export skipped by the operator.'))
         return
 
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     host = socket.gethostname()
     default_path = f"./reports/{host}_{now}.txt"
-    export_path = ask_text("Ruta de exportación del informe", default_path, required=True)
+    export_path = ask_text('Report export path', default_path, required=True)
 
     export_dir = os.path.dirname(export_path) or "."
     os.makedirs(export_dir, exist_ok=True)
     with open(export_path, "w", encoding="utf-8") as file_handle:
         file_handle.write("\n\n".join(report_sections) + "\n")
 
-    print(level_text("OK", f"Informe exportado en: {export_path}"))
+    print(level_text("OK", tf('Report exported to: {}', export_path)))

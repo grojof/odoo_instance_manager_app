@@ -6,6 +6,7 @@ import os
 import shlex
 from dataclasses import dataclass
 
+from ..i18n import t, tf
 from ..models import InstanceConfig
 from ..planners import _sql_literal
 from ..prompts import (
@@ -46,8 +47,8 @@ class DbAdminSession:
 
 
 def _resolve_db_admin_access() -> DbAdminSession | None:
-    db_host = ask_text("DB server para eliminación total", "127.0.0.1", required=True)
-    db_port = ask_int("DB port", 5432)
+    db_host = ask_text('DB server for total removal', "127.0.0.1", required=True)
+    db_port = ask_int('DB port', 5432)
 
     if db_host in {"127.0.0.1", "localhost", "::1"}:
         local_probe = run(
@@ -55,13 +56,13 @@ def _resolve_db_admin_access() -> DbAdminSession | None:
             check=False,
         )
         if local_probe.returncode == 0 and "1" in local_probe.stdout:
-            print("[OK] Acceso admin local a PostgreSQL detectado (sudo -u postgres).")
+            print(t('[OK] Local PostgreSQL admin access detected (sudo -u postgres).'))
             return DbAdminSession("local", db_host, db_port, "", "")
-        print("[WARN] No fue posible usar sudo -u postgres en este servidor.")
+        print(t('[WARN] Could not use sudo -u postgres on this server.'))
 
-    print("[INFO] Intentaremos conexión admin con usuario/contraseña en el servidor DB.")
-    db_admin_user = ask_text("DB admin user", "postgres", required=True)
-    db_admin_password = ask_secret("DB admin password")
+    print(t('[INFO] We will attempt an admin connection with username/password on the DB server.'))
+    db_admin_user = ask_text('DB admin user', "postgres", required=True)
+    db_admin_password = ask_secret('DB admin password')
 
     probe_cmd = (
         f"PGPASSWORD={_quote(db_admin_password)} psql -h {_quote(db_host)} -p {db_port} "
@@ -69,13 +70,13 @@ def _resolve_db_admin_access() -> DbAdminSession | None:
     )
     probe = run(probe_cmd, check=False)
     if probe.returncode == 0 and "1" in probe.stdout:
-        print("[OK] Conexión admin remota validada.")
+        print(t('[OK] Remote admin connection validated.'))
         return DbAdminSession("remote", db_host, db_port, db_admin_user, db_admin_password)
 
-    detail = probe.stderr.strip() or probe.stdout.strip() or "sin detalle"
-    print(f"[ERROR] No se pudo conectar al servidor DB con credenciales admin: {detail}")
+    detail = probe.stderr.strip() or probe.stdout.strip() or 'no detail'
+    print(tf('[ERROR] Could not connect to the DB server with admin credentials: {}', detail))
     print(
-        "[INFO] Debes permitir la conexión al servidor PostgreSQL y usar un usuario con permisos completos (superuser/admin)."
+        t('[INFO] You must allow the connection to the PostgreSQL server and use a user with full privileges (superuser/admin).')
     )
     return None
 
@@ -118,7 +119,7 @@ def _list_instance_databases(
     query_cmd = _db_admin_psql_command(session, sql, psql_flags="-tA")
     result = run(query_cmd, check=False)
     if result.returncode != 0:
-        error_text = result.stderr.strip() or result.stdout.strip() or "Error desconocido"
+        error_text = result.stderr.strip() or result.stdout.strip() or "Unknown error"
         return [], error_text
 
     rows = [line.strip() for line in result.stdout.splitlines() if line.strip()]
@@ -143,7 +144,7 @@ def _list_filestore_databases(config: InstanceConfig) -> tuple[list[str], str]:
 def purge_instance_superuser() -> None:
     instance = _select_existing_instance()
     if not instance:
-        print("[INFO] Operación cancelada.")
+        print(t('[INFO] Operation cancelled.'))
         return
 
     config = _validate_instance_or_abort(instance)
@@ -159,17 +160,17 @@ def purge_instance_superuser() -> None:
     if session:
         dbs_by_prefix, db_error = _list_instance_databases(instance, session)
         if db_error:
-            print(f"[WARN] No se pudieron detectar DBs por prefijo '{instance}': {db_error}")
+            print(tf("[WARN] Could not detect DBs by prefix '{}': {}", instance, db_error))
         for db_name in dbs_by_prefix:
             if db_name not in db_names:
                 db_names.append(db_name)
     else:
         print(
-            "[WARN] Se continuará con limpieza local (servicio/config/store). El borrado de DB/roles se omite por falta de conexión admin al servidor DB."
+            t('[WARN] Local cleanup will continue (service/config/store). DB/role deletion is skipped due to a missing admin connection to the DB server.')
         )
 
     manual_dbs = ask_text(
-        "DBs extra a eliminar (coma, opcional)",
+        'Extra DBs to delete (comma-separated, optional)',
         "",
         required=False,
     )
@@ -179,49 +180,49 @@ def purge_instance_superuser() -> None:
                 db_names.append(item)
 
     if db_names:
-        print("\nDBs candidatas para eliminación:")
+        print(t('\nCandidate databases for deletion:'))
         for name in db_names:
             print(f"- {name}")
     else:
-        print("[INFO] No hay DBs detectadas/indicadas para eliminar.")
+        print(t('[INFO] No databases detected/specified for deletion.'))
 
     commands: list[Command] = [
         Command(
-            "Detener servicio Odoo",
+            'Stop the Odoo service',
             f"systemctl stop {_quote(config.odoo_service)} || true",
         ),
         Command(
-            "Deshabilitar servicio Odoo",
+            'Disable the Odoo service',
             f"systemctl disable {_quote(config.odoo_service)} || true",
         ),
         Command(
-            "Eliminar unit file",
+            'Remove unit file',
             f"rm -f {_quote(f'/etc/systemd/system/{config.odoo_service}.service')}",
         ),
-        Command("Recargar systemd", "systemctl daemon-reload"),
+        Command('Reload systemd', "systemctl daemon-reload"),
         Command(
-            "Eliminar configuración Odoo", f"rm -rf {_quote(config.odoo_conf_dir)}"
+            'Remove Odoo configuration', f"rm -rf {_quote(config.odoo_conf_dir)}"
         ),
-        Command("Eliminar home de instancia", f"rm -rf {_quote(config.odoo_home)}"),
+        Command('Remove instance home', f"rm -rf {_quote(config.odoo_home)}"),
         Command(
-            "Eliminar usuario Linux de instancia",
+            'Remove the instance Linux user',
             f"id -u {_quote(config.odoo_user)} >/dev/null 2>&1 && userdel -r {_quote(config.odoo_user)} || true",
         ),
         Command(
-            "Eliminar logs Odoo/Nginx de instancia",
+            'Remove the instance Odoo/Nginx logs',
             f"rm -f {_quote(f'/var/log/odoo/{config.instance}.log')} {_quote(f'/var/log/nginx/{config.instance}.access.log')} {_quote(f'/var/log/nginx/{config.instance}.error.log')}",
         ),
         Command(
-            "Eliminar Nginx HTTP",
+            'Remove Nginx HTTP',
             f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_http_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_http_name}')}",
         ),
         Command(
-            "Eliminar Nginx HTTPS",
+            'Remove Nginx HTTPS',
             f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_https_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_https_name}')}",
         ),
-        Command("Eliminar SSL de instancia", f"rm -rf {_quote(config.nginx_ssl_dir)}"),
-        Command("Eliminar raíz filestore de instancia", f"rm -rf {_quote(filestore_root)}"),
-        Command("Validar/recargar Nginx (best effort)", "nginx -t && systemctl reload nginx || true"),
+        Command('Remove instance SSL', f"rm -rf {_quote(config.nginx_ssl_dir)}"),
+        Command('Remove the instance filestore root', f"rm -rf {_quote(filestore_root)}"),
+        Command('Validate/reload Nginx (best effort)', "nginx -t && systemctl reload nginx || true"),
     ]
 
     if session:
@@ -234,13 +235,13 @@ def purge_instance_superuser() -> None:
             )
             commands.append(
                 Command(
-                    f"Cerrar conexiones activas de DB {db_name}",
+                    tf('Close active connections of DB {}', db_name),
                     _db_admin_psql_command(session, terminate_sql) + " || true",
                 )
             )
             commands.append(
                 Command(
-                    f"Eliminar DB {db_name}",
+                    tf('Delete DB {}', db_name),
                     _db_admin_dropdb_command(session, db_name),
                 )
             )
@@ -255,34 +256,34 @@ def purge_instance_superuser() -> None:
             drop_role_sql = f"DROP ROLE IF EXISTS {role};"
             commands.append(
                 Command(
-                    f"Eliminar rol PostgreSQL {role} (si existe)",
+                    tf('Delete PostgreSQL role {} (if it exists)', role),
                     _db_admin_psql_command(session, drop_role_sql) + " || true",
                 )
             )
 
-    print(f"\n{title('Resumen de eliminación total')}")
+    print(f"\n{title('Total-removal summary')}")
     summary_rows = [
-        ["Instancia", instance],
-        ["Servicio systemd detectado", "sí" if service_exists(config.odoo_service) else "no"],
-        ["Home de instancia detectado", "sí" if path_exists(config.odoo_home) else "no"],
-        ["Configuración detectada", "sí" if path_exists(config.odoo_conf_dir) else "no"],
-        ["Nginx HTTP detectado", "sí" if path_exists(f"/etc/nginx/sites-available/{config.nginx_http_name}") else "no"],
-        ["Nginx HTTPS detectado", "sí" if path_exists(f"/etc/nginx/sites-available/{config.nginx_https_name}") else "no"],
-        ["SSL detectado", "sí" if path_exists(config.nginx_ssl_dir) else "no"],
-        ["Filestore raíz detectado", f"{'sí' if path_exists(filestore_root) else 'no'} ({filestore_root})"],
-        ["DBs por filestore", ", ".join(filestore_dbs) if filestore_dbs else "(ninguna)"],
-        ["DBs por prefijo", ", ".join(dbs_by_prefix) if dbs_by_prefix else "(ninguna)"],
-        ["Acceso admin DB", session.mode if session else "no disponible (solo limpieza local)"],
-        ["DBs a eliminar", ", ".join(db_names) if db_names else "(ninguna detectada)"],
+        ['Instance', instance],
+        ['systemd service detected', "yes" if service_exists(config.odoo_service) else "no"],
+        ['Instance home detected', "yes" if path_exists(config.odoo_home) else "no"],
+        ['Configuration detected', "yes" if path_exists(config.odoo_conf_dir) else "no"],
+        ['Nginx HTTP detected', "yes" if path_exists(f"/etc/nginx/sites-available/{config.nginx_http_name}") else "no"],
+        ['Nginx HTTPS detected', "yes" if path_exists(f"/etc/nginx/sites-available/{config.nginx_https_name}") else "no"],
+        ['SSL detected', "yes" if path_exists(config.nginx_ssl_dir) else "no"],
+        ['Filestore root detected', f"{'yes' if path_exists(filestore_root) else 'no'} ({filestore_root})"],
+        ['DBs by filestore', ", ".join(filestore_dbs) if filestore_dbs else '(none)'],
+        ['DBs by prefix', ", ".join(dbs_by_prefix) if dbs_by_prefix else '(none)'],
+        ["Acceso admin DB", session.mode if session else 'unavailable (local cleanup only)'],
+        ['DBs to remove', ", ".join(db_names) if db_names else '(none detected)'],
         ["Comandos a ejecutar", str(len(commands))],
     ]
-    print(render_table(["Campo", "Valor"], summary_rows))
+    print(render_table(['Field', 'Value'], summary_rows))
 
     if not confirm_with_phrase(
-        "Acción SUPER destructiva detectada.",
-        f"ELIMINAR-TODO {instance}",
+        'SUPER destructive action detected.',
+        f"DELETE-ALL {instance}",
     ):
-        print("[INFO] Confirmación no válida. Operación cancelada.")
+        print(t('[INFO] Invalid confirmation. Operation cancelled.'))
         return
 
     _execute_plan(commands)

@@ -140,7 +140,7 @@ def render_table(
     headers: list[str], rows: list[list[str]], max_width: int | None = None
 ) -> str:
     safe_headers = [t(str(item)) for item in headers]
-    safe_rows = [[str(cell) for cell in row] for row in rows]
+    safe_rows = [[t(str(cell)) for cell in row] for row in rows]
     column_count = len(safe_headers)
     if column_count == 0:
         return ""

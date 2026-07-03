@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import re
 
+from ..i18n import tf
 from ..planners import (
     plan_fail2ban_base_setup,
     plan_fail2ban_enable_odoo_instance,
@@ -43,7 +44,7 @@ def _list_fail2ban_jails() -> list[str]:
 def _list_banned_ips_for_jail(jail_name: str) -> tuple[list[str], str | None]:
     result = run(f"fail2ban-client status {_quote(jail_name)}", check=False)
     if result.returncode != 0:
-        error_text = result.stderr.strip() or result.stdout.strip() or "No se pudo consultar el jail."
+        error_text = result.stderr.strip() or result.stdout.strip() or 'Could not query the jail.'
         return [], error_text
 
     for raw_line in result.stdout.splitlines():
@@ -83,11 +84,11 @@ def _valid_ipv4(value: str) -> str | None:
 
 def _assess_fail2ban_log_ip_quality(log_path: str) -> tuple[str, str]:
     if not path_exists(log_path):
-        return "unknown", f"No existe el log: {log_path}"
+        return "unknown", tf("Log does not exist: {}", log_path)
 
     sample = run(f"tail -n 300 {_quote(log_path)}", check=False)
     if sample.returncode != 0:
-        return "unknown", "No se pudo leer el log para evaluar IPs."
+        return "unknown", 'Could not read the log to evaluate IPs.'
 
     private_ips: set[str] = set()
     public_ips: set[str] = set()
@@ -104,21 +105,21 @@ def _assess_fail2ban_log_ip_quality(log_path: str) -> tuple[str, str]:
                 public_ips.add(ip_value)
 
     if not private_ips and not public_ips:
-        return "unknown", "No se detectaron IPs válidas en las últimas líneas del log."
+        return "unknown", 'No valid IPs detected in the last log lines.'
 
     if public_ips:
         sample_public = ", ".join(sorted(public_ips)[:3])
-        return "public-ok", f"IPs públicas detectadas en log (ej.: {sample_public})."
+        return "public-ok", tf("Public IPs detected in log (e.g.: {}).", sample_public)
 
     sample_private = ", ".join(sorted(private_ips)[:3])
     return (
         "private-only",
-        f"Solo se detectaron IPs internas/privadas en log (ej.: {sample_private}). Riesgo de banear gateway/proxy.",
+        f"Solo se detectaron IPs internas/privadas en log (ej.: {sample_private}). Risk of banning the gateway/proxy.",
     )
 
 
 def _show_fail2ban_status() -> None:
-    print(f"\n{title('Estado Fail2ban')}")
+    print(f"\n{title('Fail2ban status')}")
     service_state = run("systemctl is-active fail2ban", check=False)
     enabled_state = run("systemctl is-enabled fail2ban", check=False)
     ping_ready = run(
@@ -137,11 +138,11 @@ def _show_fail2ban_status() -> None:
         client_value = "WAIT"
 
     rows: list[list[str]] = [
-        ["Servicio activo", service_state.stdout.strip() if service_state.returncode == 0 else "inactivo/no instalado"],
-        ["Autoarranque", enabled_state.stdout.strip() if enabled_state.returncode == 0 else "desconocido"],
+        ['Active service', service_state.stdout.strip() if service_state.returncode == 0 else 'inactive/not installed'],
+        ['Autostart', enabled_state.stdout.strip() if enabled_state.returncode == 0 else "unknown"],
         ["Cliente fail2ban", client_value],
     ]
-    print(render_table(["Chequeo", "Valor"], rows))
+    print(render_table(['Check', 'Value'], rows))
 
     if client_status.returncode == 0 and client_status.stdout.strip():
         print("\n" + client_status.stdout.strip())
@@ -149,7 +150,7 @@ def _show_fail2ban_status() -> None:
         print(
             level_text(
                 "WARN",
-                "fail2ban está activo pero el socket aún no responde. Espera unos segundos y refresca estado.",
+                'fail2ban is active but the socket is not responding yet. Wait a few seconds and refresh.',
             )
         )
     elif client_status.stderr.strip():
@@ -161,26 +162,26 @@ def manage_fail2ban() -> None:
         _show_fail2ban_status()
 
         action = choose(
-            "Gestión de Fail2ban",
+            'Fail2ban management',
             [
-                "Instalar/config base segura",
-                "Activar protección Odoo por instancia",
-                "Verificar IP real en log Odoo",
-                "Ver estado y jails",
-                "Ver detalle de jail",
-                "Desbanear IP de jail",
-                "Probar regex Odoo",
-                "Volver",
+                'Install / configure secure baseline',
+                'Enable per-instance Odoo protection',
+                'Check the real IP in the Odoo log',
+                'Show status and jails',
+                'Show jail detail',
+                'Unban an IP from a jail',
+                'Test the Odoo regex',
+                'Back',
             ],
             default_index=None,
         )
 
-        if action in {"", "Volver"}:
+        if action in {"", 'Back'}:
             return
 
-        if action == "Instalar/config base segura":
+        if action == 'Install / configure secure baseline':
             extra_ignore = ask_text(
-                "IPs/redes admin a excluir (separa por espacio/coma)",
+                'Admin IPs/networks to exclude (space/comma separated)',
                 "",
                 required=False,
             )
@@ -190,10 +191,10 @@ def manage_fail2ban() -> None:
                 if token.strip()
             ]
             ignore_ips = " ".join(["127.0.0.1/8", "::1", *extra_tokens])
-            bantime = ask_text("bantime", "1h", required=True)
-            findtime = ask_text("findtime", "10m", required=True)
-            maxretry = ask_int("maxretry", 8, min_value=1, max_value=1000)
-            recidive_bantime = ask_text("recidive bantime", "24h", required=True)
+            bantime = ask_text('bantime', "1h", required=True)
+            findtime = ask_text('findtime', "10m", required=True)
+            maxretry = ask_int('maxretry', 8, min_value=1, max_value=1000)
+            recidive_bantime = ask_text('recidive bantime', "24h", required=True)
 
             commands = plan_fail2ban_base_setup(
                 ignore_ips=ignore_ips,
@@ -205,31 +206,31 @@ def manage_fail2ban() -> None:
             _execute_plan(commands)
             continue
 
-        if action == "Activar protección Odoo por instancia":
+        if action == 'Enable per-instance Odoo protection':
             instance = _select_existing_instance()
             if not instance:
-                print(level_text("INFO", "Operación cancelada."))
+                print(level_text("INFO", 'Operation cancelled.'))
                 continue
 
             default_log_path = f"/var/log/odoo/{instance}.log"
-            log_path = ask_text("Ruta log Odoo de la instancia", default_log_path, required=True)
+            log_path = ask_text('Instance Odoo log path', default_log_path, required=True)
             ip_quality, ip_message = _assess_fail2ban_log_ip_quality(log_path)
             if ip_quality == "private-only":
                 print(level_text("WARN", ip_message))
                 if not ask_bool(
-                    "¿Continuar igualmente con jail Odoo? (no recomendado)",
+                    'Continue with the Odoo jail anyway? (not recommended)',
                     False,
                 ):
-                    print(level_text("INFO", "Activación cancelada para evitar baneo de gateway/proxy."))
+                    print(level_text("INFO", 'Activation cancelled to avoid banning the gateway/proxy.'))
                     continue
             elif ip_quality == "public-ok":
                 print(level_text("OK", ip_message))
             else:
                 print(level_text("WARN", ip_message))
 
-            bantime = ask_text("bantime instancia", "1h", required=True)
-            findtime = ask_text("findtime instancia", "10m", required=True)
-            maxretry = ask_int("maxretry instancia", 8, min_value=1, max_value=1000)
+            bantime = ask_text('instance bantime', "1h", required=True)
+            findtime = ask_text('instance findtime', "10m", required=True)
+            maxretry = ask_int('instance maxretry', 8, min_value=1, max_value=1000)
 
             commands = plan_fail2ban_enable_odoo_instance(
                 instance=instance,
@@ -241,48 +242,48 @@ def manage_fail2ban() -> None:
             _execute_plan(commands)
             continue
 
-        if action == "Verificar IP real en log Odoo":
-            instance = ask_text("Instancia (para sugerir log)", "", required=False)
+        if action == 'Check the real IP in the Odoo log':
+            instance = ask_text('Instance (to suggest the log)', "", required=False)
             default_log_path = f"/var/log/odoo/{instance}.log" if instance else "/var/log/odoo/odoo.log"
-            log_path = ask_text("Ruta log Odoo", default_log_path, required=True)
+            log_path = ask_text('Odoo log path', default_log_path, required=True)
             ip_quality, ip_message = _assess_fail2ban_log_ip_quality(log_path)
             if ip_quality == "public-ok":
                 print(level_text("OK", ip_message))
             elif ip_quality == "private-only":
                 print(level_text("WARN", ip_message))
-                print(level_text("INFO", "Recomendación: NO activar jail Odoo hasta recibir IP cliente real."))
+                print(level_text("INFO", 'Recommendation: do NOT enable the Odoo jail until real client IPs arrive.'))
             else:
                 print(level_text("WARN", ip_message))
             continue
 
-        if action == "Ver estado y jails":
+        if action == 'Show status and jails':
             _show_fail2ban_status()
             continue
 
-        if action == "Ver detalle de jail":
+        if action == 'Show jail detail':
             jails = _list_fail2ban_jails()
             if jails:
                 jail_name = choose(
-                    "Selecciona jail",
-                    jails + ["Escribir jail", "Cancelar"],
+                    'Select a jail',
+                    jails + ['Type a jail', 'Cancel'],
                     default_index=None,
                 )
-                if jail_name in {"", "Cancelar"}:
+                if jail_name in {"", 'Cancel'}:
                     continue
-                if jail_name == "Escribir jail":
-                    jail_name = ask_text("Nombre jail", "", required=True)
+                if jail_name == 'Type a jail':
+                    jail_name = ask_text('Jail name', "", required=True)
             else:
-                jail_name = ask_text("Nombre jail", "", required=True)
+                jail_name = ask_text('Jail name', "", required=True)
 
             result = run(f"fail2ban-client status {_quote(jail_name)}", check=False)
             if result.returncode == 0:
-                print("\n" + (result.stdout.strip() or "(sin salida)"))
+                print("\n" + (result.stdout.strip() or '(no output)'))
             else:
-                print(level_text("ERROR", result.stderr.strip() or result.stdout.strip() or "No se pudo obtener estado del jail."))
+                print(level_text("ERROR", result.stderr.strip() or result.stdout.strip() or 'Could not get the jail status.'))
             continue
 
-        if action == "Desbanear IP de jail":
-            instance_hint = ask_text("Instancia (opcional, para sugerir jail)", "", required=False)
+        if action == 'Unban an IP from a jail':
+            instance_hint = ask_text('Instance (optional, to suggest the jail)', "", required=False)
             default_jail = _fail2ban_jail_name_for_instance(instance_hint) if instance_hint else ""
             jails = _list_fail2ban_jails()
             if jails:
@@ -290,18 +291,18 @@ def manage_fail2ban() -> None:
                 if default_jail and default_jail in jails:
                     suggested_index = jails.index(default_jail)
                 jail_pick = choose(
-                    "Selecciona jail para desbanear",
-                    jails + ["Escribir jail", "Cancelar"],
+                    'Select a jail to unban from',
+                    jails + ['Type a jail', 'Cancel'],
                     default_index=suggested_index,
                 )
-                if jail_pick in {"", "Cancelar"}:
+                if jail_pick in {"", 'Cancel'}:
                     continue
-                if jail_pick == "Escribir jail":
-                    jail_name = ask_text("Jail fail2ban", default_jail, required=True)
+                if jail_pick == 'Type a jail':
+                    jail_name = ask_text('Fail2ban jail', default_jail, required=True)
                 else:
                     jail_name = jail_pick
             else:
-                jail_name = ask_text("Jail fail2ban", default_jail, required=True)
+                jail_name = ask_text('Fail2ban jail', default_jail, required=True)
 
             banned_ips, banned_error = _list_banned_ips_for_jail(jail_name)
             if banned_error:
@@ -309,51 +310,51 @@ def manage_fail2ban() -> None:
 
             ip_value = ""
             if banned_ips:
-                print(f"\n{title('IPs actualmente baneadas en el jail')}" )
+                print(f"\n{title('IPs currently banned in the jail')}" )
                 print(render_table(["#", "IP"], [[str(index), ip] for index, ip in enumerate(banned_ips, start=1)]))
                 ip_pick = choose(
-                    "Selecciona IP a desbanear",
-                    banned_ips + ["Escribir IP manual", "Cancelar"],
+                    'Select an IP to unban',
+                    banned_ips + ['Type an IP manually', 'Cancel'],
                     default_index=None,
                 )
-                if ip_pick in {"", "Cancelar"}:
+                if ip_pick in {"", 'Cancel'}:
                     continue
-                if ip_pick == "Escribir IP manual":
-                    ip_value = ask_text("IP a desbanear", "", required=True)
+                if ip_pick == 'Type an IP manually':
+                    ip_value = ask_text('IP to unban', "", required=True)
                 else:
                     ip_value = ip_pick
             else:
-                print(level_text("INFO", "No hay IPs baneadas detectadas en ese jail o no se pudo listarlas."))
-                ip_value = ask_text("IP a desbanear", "", required=True)
+                print(level_text("INFO", 'No banned IPs detected in that jail or they could not be listed.'))
+                ip_value = ask_text('IP to unban', "", required=True)
 
             commands = [
                 Command(
-                    f"Desbanear {ip_value} en {jail_name}",
+                    tf('Unban {} in {}', ip_value, jail_name),
                     f"fail2ban-client set {_quote(jail_name)} unbanip {_quote(ip_value)}",
                 )
             ]
             _execute_plan(commands)
             continue
 
-        if action == "Probar regex Odoo":
-            instance = ask_text("Instancia (para sugerir log)", "", required=False)
+        if action == 'Test the Odoo regex':
+            instance = ask_text('Instance (to suggest the log)', "", required=False)
             default_log_path = f"/var/log/odoo/{instance}.log" if instance else "/var/log/odoo/odoo.log"
-            log_path = ask_text("Ruta log Odoo", default_log_path, required=True)
+            log_path = ask_text('Odoo log path', default_log_path, required=True)
             filter_path = ask_text(
-                "Ruta filtro fail2ban",
+                'Fail2ban filter path',
                 "/etc/fail2ban/filter.d/odoo-auth.conf",
                 required=True,
             )
             commands: list[Command] = [
-                Command("Validar archivo log", f"test -f {_quote(log_path)}"),
+                Command('Validate the log file', f"test -f {_quote(log_path)}"),
             ]
             if filter_path == "/etc/fail2ban/filter.d/odoo-auth.conf":
                 commands.extend(plan_fail2ban_ensure_odoo_filter())
             commands.extend(
                 [
-                    Command("Validar archivo filtro", f"test -f {_quote(filter_path)}"),
+                    Command('Validate the filter file', f"test -f {_quote(filter_path)}"),
                     Command(
-                        "Probar regex fail2ban",
+                        'Test the fail2ban regex',
                         f"fail2ban-regex {_quote(log_path)} {_quote(filter_path)}",
                     ),
                 ]

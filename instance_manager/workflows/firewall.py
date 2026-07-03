@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..i18n import tf
 from ..planners import plan_ufw_allow_port, plan_ufw_base_setup, plan_ufw_delete_rule
 from ..prompts import ask_bool, ask_int, ask_text, choose
 from ..system import Command, run
@@ -10,30 +11,29 @@ from .common import _execute_plan
 
 
 def _show_ufw_status() -> None:
-    print(f"\n{title('Estado UFW')}")
+    print(f"\n{title('UFW status')}")
     result = run("ufw status verbose 2>&1", check=False)
     text = result.stdout.strip()
     if "command not found" in text or result.returncode != 0 and not text:
-        print(level_text("INFO", "UFW no está instalado o no es accesible."))
+        print(level_text("INFO", 'UFW is not installed or not accessible.'))
         return
-    print(text or "(sin salida)")
+    print(text or '(no output)')
 
 
 def _configure_base(config_hint_ip: str = "") -> None:
-    print(f"\n{title('Configurar base segura de UFW')}")
+    print(f"\n{title('Configure a secure UFW baseline')}")
     print(
         level_text(
             "WARN",
-            "Asegúrate de que el puerto SSH es correcto antes de habilitar: una regla "
-            "errónea puede dejarte fuera del servidor.",
+            'Make sure the SSH port is correct before enabling: a wrong rule can lock you out of the server.',
         )
     )
-    ssh_port = ask_int("Puerto SSH a permitir", 22)
-    allow_http = ask_bool("¿Permitir HTTP (80)?", True)
-    allow_https = ask_bool("¿Permitir HTTPS (443)?", True)
+    ssh_port = ask_int('SSH port to allow', 22)
+    allow_http = ask_bool('Allow HTTP (80)?', True)
+    allow_https = ask_bool('Allow HTTPS (443)?', True)
     pg_from_ip = ""
-    if ask_bool("¿Permitir PostgreSQL (5432) desde una IP concreta (app server)?", False):
-        pg_from_ip = ask_text("IP autorizada para PostgreSQL", config_hint_ip or "", required=True)
+    if ask_bool('Allow PostgreSQL (5432) from a specific IP (app server)?', False):
+        pg_from_ip = ask_text('IP allowed for PostgreSQL', config_hint_ip or "", required=True)
 
     commands = plan_ufw_base_setup(
         ssh_port=ssh_port,
@@ -45,52 +45,52 @@ def _configure_base(config_hint_ip: str = "") -> None:
 
 
 def _allow_port() -> None:
-    port = ask_int("Puerto a permitir", 8069)
-    proto = choose("Protocolo", ["tcp", "udp", "Volver"], default_index=0)
-    if proto in {"", "Volver"}:
+    port = ask_int('Port to allow', 8069)
+    proto = choose('Protocol', ["tcp", "udp", 'Back'], default_index=0)
+    if proto in {"", 'Back'}:
         return
     _execute_plan(plan_ufw_allow_port(port, proto))
 
 
 def _delete_rule() -> None:
     result = run("ufw status numbered 2>&1", check=False)
-    print(f"\n{title('Reglas UFW')}\n{result.stdout.strip() or '(sin reglas)'}")
+    print(f"\n{title('UFW rules')}\n{result.stdout.strip() or '(no rules)'}")
     if result.returncode != 0:
-        print(level_text("INFO", "No se pudieron listar las reglas (¿UFW instalado/activo?)."))
+        print(level_text("INFO", 'Could not list the rules (is UFW installed/active?).'))
         return
-    number = ask_int("Número de regla a eliminar", 1)
+    number = ask_int('Rule number to delete', 1)
     _execute_plan(plan_ufw_delete_rule(number))
 
 
 def _toggle(enable: bool) -> None:
     verb = "enable" if enable else "disable"
-    _execute_plan([Command(f"UFW {verb}", f"ufw --force {verb}")])
+    _execute_plan([Command(tf('UFW {}', verb), f"ufw --force {verb}")])
 
 
 def manage_firewall() -> None:
     while True:
         _show_ufw_status()
         action = choose(
-            "Firewall (UFW)",
+            'Firewall (UFW)',
             [
-                "Instalar/config base segura",
-                "Permitir puerto",
-                "Eliminar regla (por número)",
-                "Habilitar UFW",
-                "Deshabilitar UFW",
-                "Volver",
+                'Install / configure secure baseline',
+                'Allow a port',
+                'Delete a rule (by number)',
+                'Enable UFW',
+                'Disable UFW',
+                'Back',
             ],
             default_index=None,
         )
-        if action in {"", "Volver"}:
+        if action in {"", 'Back'}:
             return
-        if action == "Instalar/config base segura":
+        if action == 'Install / configure secure baseline':
             _configure_base()
-        elif action == "Permitir puerto":
+        elif action == 'Allow a port':
             _allow_port()
-        elif action == "Eliminar regla (por número)":
+        elif action == 'Delete a rule (by number)':
             _delete_rule()
-        elif action == "Habilitar UFW":
+        elif action == 'Enable UFW':
             _toggle(True)
-        elif action == "Deshabilitar UFW":
+        elif action == 'Disable UFW':
             _toggle(False)

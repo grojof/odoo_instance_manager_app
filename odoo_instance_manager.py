@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
-from instance_manager.i18n import set_language, t
+from instance_manager.i18n import set_language, t, tf
 from instance_manager.prompts import choose, clear_screen
 from instance_manager.workflows import (
     external_server_report,
@@ -28,23 +28,23 @@ def _configure_utf8_console() -> None:
 def _installation_menu() -> None:
     while True:
         action = choose(
-            "\nMenú de instalación",
+            '\nInstallation menu',
             [
-                "Instalar instancia Odoo",
-                "Instalar PostgreSQL (sin Odoo)",
-                "Instalar instancia Odoo + PostgreSQL",
-                "Volver",
+                'Install Odoo instance',
+                'Install PostgreSQL (without Odoo)',
+                'Install Odoo instance + PostgreSQL',
+                'Back',
             ],
             default_index=None,
         )
 
-        if action in {"", "Volver"}:
+        if action in {"", 'Back'}:
             return
-        if action == "Instalar instancia Odoo":
+        if action == 'Install Odoo instance':
             install_odoo_only()
-        elif action == "Instalar PostgreSQL (sin Odoo)":
+        elif action == 'Install PostgreSQL (without Odoo)':
             install_db_only()
-        elif action == "Instalar instancia Odoo + PostgreSQL":
+        elif action == 'Install Odoo instance + PostgreSQL':
             install_odoo_and_db()
 
 
@@ -53,7 +53,7 @@ def _select_language() -> None:
     if env in {"en", "es"}:
         set_language(env)
         return
-    lang = choose("Idioma / Language", ["Español", "English"], default_index=0)
+    lang = choose('Idioma / Language', ["Español", "English"], default_index=0)
     set_language("en" if lang == "English" else "es")
 
 
@@ -61,69 +61,69 @@ def main() -> int:
     _configure_utf8_console()
 
     if os.geteuid() != 0:
-        print("Este gestor requiere permisos de administración.")
-        print("Ejecuta con: sudo python3 odoo_instance_manager.py")
+        print(t('This manager requires administrative privileges.'))
+        print(t('Run with: sudo python3 odoo_instance_manager.py'))
         return 1
 
     clear_screen()
     _select_language()
     print(t("Odoo Instance Manager"))
-    print(t("- Instalación interactiva por instancia"))
-    print(t("- Soporta instancia Odoo + usuario de PostgreSQL, PosgreSQL o ambos"))
-    print(t("- Muestra el listado de comandos a ejecutar para cada acción"))
+    print(t('- Interactive per-instance installation'))
+    print(t('- Supports an Odoo instance + PostgreSQL user, PostgreSQL, or both'))
+    print(t('- Shows the list of commands to run for each action'))
 
     while True:
         try:
             action = choose(
-                "\n¿Qué quieres hacer?",
+                '\nWhat do you want to do?',
                 [
-                    "Servicios instancias",
-                    "Gestionar instancias",
-                    "Seguridad Fail2ban",
-                    "Firewall (UFW)",
-                    "Menú de instalación",
-                    "Eliminar instancias (Incluye configs, servicios, logs, etc.)",
-                    "Informe para servidor externo",
-                    "Salir",
+                    'Instance services',
+                    'Manage instances',
+                    'Fail2ban security',
+                    'Firewall (UFW)',
+                    'Installation menu',
+                    'Remove instances (configs, services, logs, …)',
+                    'External server report',
+                    'Exit',
                 ],
                 default_index=None,
             )
         except (KeyboardInterrupt, EOFError):
-            print("\nSaliendo.")
+            print(t('\nExiting.'))
             return 0
 
         if not action:
             continue
 
         try:
-            if action == "Servicios instancias":
+            if action == 'Instance services':
                 manage_instance_services()
-            elif action == "Gestionar instancias":
+            elif action == 'Manage instances':
                 manage_existing_instance()
-            elif action == "Seguridad Fail2ban":
+            elif action == 'Fail2ban security':
                 manage_fail2ban()
-            elif action == "Firewall (UFW)":
+            elif action == 'Firewall (UFW)':
                 manage_firewall()
-            elif action == "Menú de instalación":
+            elif action == 'Installation menu':
                 _installation_menu()
-            elif action == "Eliminar instancias (Incluye configs, servicios, logs, etc.)":
+            elif action == 'Remove instances (configs, services, logs, …)':
                 purge_instance_superuser()
-            elif action == "Informe para servidor externo":
+            elif action == 'External server report':
                 external_server_report()
-            elif action == "Salir":
+            elif action == 'Exit':
                 return 0
             else:
                 continue
         except KeyboardInterrupt:
-            print("\nOperación interrumpida. Volviendo al menú.")
+            print(t('\nOperation interrupted. Returning to the menu.'))
             continue
         except EOFError:
-            print("\nEntrada cerrada. Saliendo.")
+            print(t('\nInput closed. Exiting.'))
             return 0
         except RuntimeError as error:
             # A command in a plan failed (already reported by apply_commands):
             # surface it and return to the menu instead of crashing the CLI.
-            print(f"\n[ERROR] La operación no se completó: {error}")
+            print(tf('\n[ERROR] The operation did not complete: {}', error))
             continue
 
 

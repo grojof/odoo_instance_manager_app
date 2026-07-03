@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 
+from .i18n import tf
 from .models import InstanceConfig
 from .system import Command
 
@@ -34,7 +35,7 @@ def _db_role_create_if_missing_sql(config: InstanceConfig) -> str:
         f"CREATE ROLE {config.db_user} WITH LOGIN CREATEDB PASSWORD '{db_password_literal}'; "
         "ELSE "
         f"ALTER ROLE {config.db_user} WITH LOGIN CREATEDB; "
-        f"RAISE NOTICE 'Role {db_user_literal} ya existe; se reutiliza sin cambiar contraseña.'; "
+        f"RAISE NOTICE 'Role {db_user_literal} already exists; reusing it without changing the password.'; "
         "END IF; "
         "END "
         "$$;"
@@ -212,11 +213,11 @@ def write_text_file_command(
 ) -> list[Command]:
     return [
         Command(
-            description=f"Escribir {target_path}",
+            description=tf("Write {}", target_path),
             command=f"cat > '{target_path}' <<'EOF'\n{content}\nEOF",
         ),
         Command(
-            description=f"Permisos {mode} en {target_path}",
+            description=tf('Permissions {} on {}', mode, target_path),
             command=f"chmod {mode} '{target_path}'",
         ),
     ]
@@ -299,7 +300,7 @@ def plan_logrotate_config(
 
     commands: list[Command] = [
         Command(
-            "Asegurar logrotate instalado",
+            'Ensure logrotate is installed',
             "command -v logrotate >/dev/null 2>&1 || (apt-get update && apt-get -y install logrotate)",
         ),
     ]
@@ -308,14 +309,14 @@ def plan_logrotate_config(
     )
     commands.append(
         Command(
-            "Validar configuración logrotate (dry-run)",
+            'Validate logrotate configuration (dry-run)',
             f"logrotate -d {shlex.quote(config.logrotate_config_file)}",
         )
     )
     if remove_obsolete_odoo_key:
         commands.append(
             Command(
-                "Eliminar clave 'logrotate' obsoleta del odoo.conf (Odoo ≥13 la ignora)",
+                "Remove obsolete 'logrotate' key from odoo.conf (Odoo ≥13 ignores it)",
                 f"test -f {shlex.quote(config.odoo_conf_file)} && "
                 f"sed -ri '/^[[:space:]]*logrotate[[:space:]]*=/d' "
                 f"{shlex.quote(config.odoo_conf_file)} || true",
@@ -401,9 +402,9 @@ def plan_fail2ban_base_setup(
 ) -> list[Command]:
     jail_base_path = "/etc/fail2ban/jail.d/odoo-instance-manager.local"
     commands: list[Command] = [
-        Command("Actualizar paquetes", "apt-get update"),
-        Command("Instalar fail2ban", "apt-get -y install fail2ban"),
-        Command("Crear /etc/fail2ban/jail.d", "mkdir -p /etc/fail2ban/jail.d"),
+        Command('Update packages', "apt-get update"),
+        Command('Install fail2ban', "apt-get -y install fail2ban"),
+        Command('Create /etc/fail2ban/jail.d', "mkdir -p /etc/fail2ban/jail.d"),
     ]
     commands.extend(
         write_text_file_command(
@@ -420,14 +421,12 @@ def plan_fail2ban_base_setup(
     )
     commands.extend(
         [
-            Command("Validar configuración fail2ban", "fail2ban-client -t"),
-            Command("Habilitar y arrancar fail2ban", "systemctl enable --now fail2ban"),
-            Command("Reiniciar fail2ban", "systemctl restart fail2ban"),
+            Command('Validate fail2ban configuration', "fail2ban-client -t"),
+            Command('Enable and start fail2ban', "systemctl enable --now fail2ban"),
+            Command('Restart fail2ban', "systemctl restart fail2ban"),
             Command(
-                "Esperar socket fail2ban listo",
-                "for i in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; "
-                "echo '[ERROR] fail2ban activo pero socket no disponible tras espera.'; "
-                "systemctl status fail2ban --no-pager -n 50 || true; exit 1",
+                'Wait for the fail2ban socket to be ready',
+                "for i in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo '[ERROR] fail2ban is active but its socket is unavailable after waiting.'; systemctl status fail2ban --no-pager -n 50 || true; exit 1",
             ),
         ]
     )
@@ -447,8 +446,8 @@ def plan_fail2ban_enable_odoo_instance(
     jail_path = f"/etc/fail2ban/jail.d/{jail_name}.local"
 
     commands: list[Command] = [
-        Command("Asegurar fail2ban instalado", "apt-get update && apt-get -y install fail2ban"),
-        Command("Crear directorios fail2ban", "mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d"),
+        Command('Ensure fail2ban is installed', "apt-get update && apt-get -y install fail2ban"),
+        Command('Create fail2ban directories', "mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d"),
     ]
     commands.extend(
         write_text_file_command(
@@ -472,19 +471,17 @@ def plan_fail2ban_enable_odoo_instance(
     )
     commands.extend(
         [
-            Command("Validar log de instancia", f"test -f {shlex.quote(log_path)}"),
+            Command('Validate instance log', f"test -f {shlex.quote(log_path)}"),
             Command(
-                "Probar regex fail2ban con log Odoo",
+                'Test fail2ban regex against the Odoo log',
                 f"fail2ban-regex {shlex.quote(log_path)} {shlex.quote(filter_path)}",
             ),
-            Command("Validar configuración fail2ban", "fail2ban-client -t"),
-            Command("Habilitar y arrancar fail2ban", "systemctl enable --now fail2ban"),
-            Command("Reiniciar fail2ban", "systemctl restart fail2ban"),
+            Command('Validate fail2ban configuration', "fail2ban-client -t"),
+            Command('Enable and start fail2ban', "systemctl enable --now fail2ban"),
+            Command('Restart fail2ban', "systemctl restart fail2ban"),
             Command(
-                "Esperar socket fail2ban listo",
-                "for i in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; "
-                "echo '[ERROR] fail2ban activo pero socket no disponible tras espera.'; "
-                "systemctl status fail2ban --no-pager -n 50 || true; exit 1",
+                'Wait for the fail2ban socket to be ready',
+                "for i in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo '[ERROR] fail2ban is active but its socket is unavailable after waiting.'; systemctl status fail2ban --no-pager -n 50 || true; exit 1",
             ),
         ]
     )
@@ -495,7 +492,7 @@ def plan_fail2ban_ensure_odoo_filter() -> list[Command]:
     filter_path = "/etc/fail2ban/filter.d/odoo-auth.conf"
 
     commands: list[Command] = [
-        Command("Crear directorio filtros fail2ban", "mkdir -p /etc/fail2ban/filter.d"),
+        Command('Create fail2ban filters directory', "mkdir -p /etc/fail2ban/filter.d"),
     ]
     commands.extend(
         write_text_file_command(
@@ -511,33 +508,33 @@ def plan_odoo_base_setup(config: InstanceConfig, service_autostart: bool = True)
     config.normalize_defaults()
     config.validate_identifiers()
     commands: list[Command] = [
-        Command("Actualizar paquetes", "apt-get update"),
+        Command('Update packages', "apt-get update"),
         Command(
-            "Instalar dependencias base Odoo",
+            'Install Odoo base dependencies',
             "apt-get -y install git build-essential pkg-config python3 python3-venv python3-dev python3-pip "
             "libpq-dev libldap2-dev libsasl2-dev libssl-dev libffi-dev libxml2-dev libxslt1-dev "
             "libjpeg-dev zlib1g-dev libtiff-dev libopenjp2-7-dev liblcms2-dev libwebp-dev "
             "libharfbuzz-dev libfribidi-dev fontconfig postgresql-client xfonts-75dpi xfonts-base",
         ),
         Command(
-            "Crear usuario de sistema (si falta)",
+            'Create system user (if missing)',
             f"id -u '{config.odoo_user}' >/dev/null 2>&1 || adduser --system --home '{config.odoo_home}' --group '{config.odoo_user}'",
         ),
         Command(
-            "Crear directorios instancia",
+            'Create instance directories',
             f"mkdir -p '{config.odoo_home}/odoo' '{config.odoo_home}/addons-oca' '{config.odoo_home}/addons-custom' '{config.odoo_conf_dir}' /var/log/odoo",
         ),
         Command(
-            "Ajustar ownership base",
+            'Adjust base ownership',
             f"chown -R '{config.odoo_user}:{config.odoo_user}' '{config.odoo_home}' /var/log/odoo",
         ),
-        Command("Permisos carpeta config", f"chmod 750 '{config.odoo_conf_dir}'"),
+        Command('Permissions on config folder', f"chmod 750 '{config.odoo_conf_dir}'"),
         Command(
-            "Clonar repo Odoo si falta",
+            'Clone Odoo repo if missing',
             f"sudo -u '{config.odoo_user}' bash -lc \"test -d '{config.odoo_home}/odoo/.git' || git clone --depth 1 --branch '{config.repo_branch}' https://github.com/odoo/odoo.git '{config.odoo_home}/odoo'\"",
         ),
         Command(
-            "Crear/actualizar venv e instalar requirements",
+            'Create/update venv and install requirements',
             f"sudo -u '{config.odoo_user}' bash -lc \"python3 -m venv '{config.odoo_home}/venv' && source '{config.odoo_home}/venv/bin/activate' && pip install --upgrade pip wheel setuptools && pip install -r '{config.odoo_home}/odoo/requirements.txt'\"",
         ),
     ]
@@ -564,11 +561,11 @@ def plan_odoo_base_setup(config: InstanceConfig, service_autostart: bool = True)
     commands.extend(
         write_text_file_command(service_path, _systemd_content(config), "644")
     )
-    commands.append(Command("Recargar systemd", "systemctl daemon-reload"))
+    commands.append(Command('Reload systemd', "systemctl daemon-reload"))
     if service_autostart:
         commands.append(
             Command(
-                "Habilitar y arrancar servicio Odoo",
+                'Enable and start the Odoo service',
                 f"systemctl enable --now '{config.odoo_service}'",
             )
         )
@@ -576,11 +573,11 @@ def plan_odoo_base_setup(config: InstanceConfig, service_autostart: bool = True)
         commands.extend(
             [
                 Command(
-                    "Deshabilitar autoarranque de servicio Odoo",
+                    'Disable Odoo service autostart',
                     f"systemctl disable '{config.odoo_service}' || true",
                 ),
                 Command(
-                    "Arrancar servicio Odoo (sin autoarranque)",
+                    'Start the Odoo service (without autostart)',
                     f"systemctl start '{config.odoo_service}'",
                 ),
             ]
@@ -597,15 +594,15 @@ def plan_db_setup(
 
     commands: list[Command] = [
         Command(
-            "Instalar PostgreSQL", "apt-get update && apt-get -y install postgresql"
+            'Install PostgreSQL', "apt-get update && apt-get -y install postgresql"
         ),
-        Command("Habilitar y arrancar PostgreSQL", "systemctl enable --now postgresql"),
+        Command('Enable and start PostgreSQL', "systemctl enable --now postgresql"),
         Command(
-            "Asegurar rol PostgreSQL (crear si falta)",
+            'Ensure PostgreSQL role (create if missing)',
             f"sudo -u postgres psql -v ON_ERROR_STOP=1 -c {shlex.quote(role_sql)}",
         ),
         Command(
-            "Validar login del usuario DB",
+            'Validate DB user login',
             _db_connectivity_check_command(config),
         ),
     ]
@@ -614,14 +611,14 @@ def plan_db_setup(
         commands.extend(
             [
                 Command(
-                    "Permitir listen_addresses='*'",
+                    "Allow listen_addresses='*'",
                     'PG_CONF=$(sudo -u postgres psql -t -P format=unaligned -c "SHOW config_file;") && sed -ri "s/^#?\\s*listen_addresses\\s*=.*/listen_addresses = \'*\'/" "$PG_CONF"',
                 ),
                 Command(
-                    "Añadir regla pg_hba por IP app server",
+                    'Add pg_hba rule for the app-server IP',
                     f'PG_HBA=$(sudo -u postgres psql -t -P format=unaligned -c "SHOW hba_file;") && grep -q "host    all     {config.db_user}     {config.app_server_ip}/32     scram-sha-256" "$PG_HBA" || echo "host    all     {config.db_user}     {config.app_server_ip}/32     scram-sha-256" | sudo tee -a "$PG_HBA" >/dev/null',
                 ),
-                Command("Reiniciar PostgreSQL", "systemctl restart postgresql"),
+                Command('Restart PostgreSQL', "systemctl restart postgresql"),
             ]
         )
 
@@ -637,21 +634,21 @@ def plan_ensure_db_role(config: InstanceConfig) -> list[Command]:
         role_sql = _db_role_create_if_missing_sql(config)
         commands.append(
             Command(
-                "Asegurar rol PostgreSQL local (crear si falta)",
+                'Ensure local PostgreSQL role (create if missing)',
                 f"sudo -u postgres psql -v ON_ERROR_STOP=1 -c {shlex.quote(role_sql)}",
             )
         )
     else:
         commands.append(
             Command(
-                "Info rol DB remoto",
-                "echo '[INFO] DB host remoto: se omite creación de rol sin credenciales admin remotas; se validará login del usuario indicado.'",
+                'Remote DB role info',
+                "echo '[INFO] Remote DB host: role creation is skipped without remote admin credentials; the given user login will be validated.'",
             )
         )
 
     commands.append(
         Command(
-            "Validar login del usuario DB",
+            'Validate DB user login',
             _db_connectivity_check_command(config),
         )
     )
@@ -664,8 +661,8 @@ def plan_nginx_http(config: InstanceConfig) -> list[Command]:
     site_enabled_https = f"/etc/nginx/sites-enabled/{config.nginx_https_name}"
 
     commands: list[Command] = [
-        Command("Instalar Nginx", "apt-get update && apt-get -y install nginx"),
-        Command("Habilitar Nginx", "systemctl enable --now nginx"),
+        Command('Install Nginx', "apt-get update && apt-get -y install nginx"),
+        Command('Enable Nginx', "systemctl enable --now nginx"),
     ]
     commands.extend(
         write_text_file_command(site_available, _nginx_http_content(config), "644")
@@ -673,15 +670,15 @@ def plan_nginx_http(config: InstanceConfig) -> list[Command]:
     commands.extend(
         [
             Command(
-                "Desactivar vhost HTTPS de la instancia",
+                'Disable the instance HTTPS vhost',
                 f"rm -f '{site_enabled_https}'",
             ),
             Command(
-                "Activar vhost HTTP de la instancia",
+                'Enable the instance HTTP vhost',
                 f"ln -sf '{site_available}' '{site_enabled_http}'",
             ),
-            Command("Validar Nginx", "nginx -t"),
-            Command("Recargar Nginx", "systemctl reload nginx"),
+            Command('Validate Nginx', "nginx -t"),
+            Command('Reload Nginx', "systemctl reload nginx"),
         ]
     )
     return commands
@@ -693,8 +690,8 @@ def plan_nginx_https(config: InstanceConfig) -> list[Command]:
     site_enabled_https = f"/etc/nginx/sites-enabled/{config.nginx_https_name}"
 
     commands: list[Command] = [
-        Command("Instalar Nginx", "apt-get update && apt-get -y install nginx"),
-        Command("Habilitar Nginx", "systemctl enable --now nginx"),
+        Command('Install Nginx', "apt-get update && apt-get -y install nginx"),
+        Command('Enable Nginx', "systemctl enable --now nginx"),
     ]
     commands.extend(
         write_text_file_command(site_available, _nginx_https_content(config), "644")
@@ -702,14 +699,14 @@ def plan_nginx_https(config: InstanceConfig) -> list[Command]:
     commands.extend(
         [
             Command(
-                "Desactivar vhost HTTP de la instancia", f"rm -f '{site_enabled_http}'"
+                'Disable the instance HTTP vhost', f"rm -f '{site_enabled_http}'"
             ),
             Command(
-                "Activar vhost HTTPS de la instancia",
+                'Enable the instance HTTPS vhost',
                 f"ln -sf '{site_available}' '{site_enabled_https}'",
             ),
-            Command("Validar Nginx", "nginx -t"),
-            Command("Recargar Nginx", "systemctl reload nginx"),
+            Command('Validate Nginx', "nginx -t"),
+            Command('Reload Nginx', "systemctl reload nginx"),
         ]
     )
     return commands
@@ -723,15 +720,15 @@ def plan_copy_custom_certs(
 ) -> list[Command]:
     commands: list[Command] = [
         Command(
-            "Crear directorio SSL dedicado",
+            'Create dedicated SSL directory',
             f"install -d -m 750 -o root -g www-data '{config.nginx_ssl_dir}'",
         ),
         Command(
-            "Copiar server.crt",
+            'Copy server.crt',
             f"install -m 644 -o root -g www-data '{cert_src}' '{config.ssl_cert_file}'",
         ),
         Command(
-            "Copiar server.key",
+            'Copy server.key',
             f"install -m 640 -o root -g www-data '{key_src}' '{config.ssl_key_file}'",
         ),
     ]
@@ -739,13 +736,13 @@ def plan_copy_custom_certs(
     if intermediate_src:
         commands.append(
             Command(
-                "Copiar intermediate.crt",
+                'Copy intermediate.crt',
                 f"install -m 644 -o root -g www-data '{intermediate_src}' '{config.ssl_intermediate_file}'",
             )
         )
         commands.append(
             Command(
-                "Construir fullchain (cert + intermediate)",
+                'Build fullchain (cert + intermediate)',
                 "{ "
                 + "awk 'BEGIN{in_cert=0} /-----BEGIN CERTIFICATE-----/{in_cert=1} in_cert{gsub(/\\r$/,\"\"); print} /-----END CERTIFICATE-----/{in_cert=0; print \"\"}' "
                 + f"'{config.ssl_cert_file}'; "
@@ -757,7 +754,7 @@ def plan_copy_custom_certs(
     else:
         commands.append(
             Command(
-                "Usar server.crt como fullchain",
+                'Use server.crt as fullchain',
                 f"cp '{config.ssl_cert_file}' '{config.ssl_fullchain_file}'",
             )
         )
@@ -765,15 +762,15 @@ def plan_copy_custom_certs(
     commands.extend(
         [
             Command(
-                "Validar clave privada TLS",
+                'Validate TLS private key',
                 f"openssl pkey -in '{config.ssl_key_file}' -noout >/dev/null",
             ),
             Command(
-                "Validar certificado principal TLS",
+                'Validate main TLS certificate',
                 f"openssl x509 -in '{config.ssl_cert_file}' -noout >/dev/null",
             ),
             Command(
-                "Validar correspondencia KEY/CRT",
+                'Validate KEY/CRT match',
                 "CERT_FP=$(openssl x509 -in '"
                 + config.ssl_cert_file
                 + "' -pubkey -noout | openssl pkey -pubin -outform PEM 2>/dev/null | sha256sum | awk '{print $1}') && "
@@ -781,10 +778,10 @@ def plan_copy_custom_certs(
                 + config.ssl_key_file
                 + "' -pubout -outform PEM 2>/dev/null | sha256sum | awk '{print $1}') && "
                 + "test -n \"$CERT_FP\" -a -n \"$KEY_FP\" -a \"$CERT_FP\" = \"$KEY_FP\" "
-                + "|| (echo '[ERROR] La clave privada no corresponde con el certificado público seleccionado.' && exit 1)",
+                + "|| (echo '[ERROR] The private key does not match the selected public certificate.' && exit 1)",
             ),
             Command(
-                "Validar fullchain TLS",
+                'Validate TLS fullchain',
                 f"openssl x509 -in '{config.ssl_fullchain_file}' -noout >/dev/null",
             ),
         ]
@@ -795,7 +792,7 @@ def plan_copy_custom_certs(
             Command(
                 "Owner fullchain", f"chown root:www-data '{config.ssl_fullchain_file}'"
             ),
-            Command("Permisos fullchain", f"chmod 644 '{config.ssl_fullchain_file}'"),
+            Command('Permissions on fullchain', f"chmod 644 '{config.ssl_fullchain_file}'"),
         ]
     )
     return commands
@@ -804,17 +801,17 @@ def plan_copy_custom_certs(
 def plan_ensure_self_signed_certs(config: InstanceConfig) -> list[Command]:
     return [
         Command(
-            "Asegurar directorio SSL dedicado",
+            'Ensure dedicated SSL directory',
             f"install -d -m 750 -o root -g www-data '{config.nginx_ssl_dir}'",
         ),
         Command(
-            "Generar autofirmado si falta (server.key/fullchain)",
+            'Generate self-signed if missing (server.key/fullchain)',
             "if [ -s '"
             + config.ssl_key_file
             + "' ] && [ -s '"
             + config.ssl_fullchain_file
             + "' ]; then "
-            + "echo '[INFO] Certificado autofirmado existente, se reutiliza.'; "
+            + "echo '[INFO] Existing self-signed certificate, reusing it.'; "
             + "else "
             + "command -v openssl >/dev/null 2>&1 || (apt-get update && apt-get -y install openssl); "
             + "openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 825 "
@@ -835,7 +832,7 @@ def plan_ensure_self_signed_certs(config: InstanceConfig) -> list[Command]:
             + "fi",
         ),
         Command(
-            "Ajustar permisos de certificados autofirmados",
+            'Adjust self-signed certificate permissions',
             f"chown root:www-data '{config.ssl_key_file}' '{config.ssl_cert_file}' '{config.ssl_fullchain_file}' && chmod 640 '{config.ssl_key_file}' && chmod 644 '{config.ssl_cert_file}' '{config.ssl_fullchain_file}'",
         ),
     ]
@@ -849,12 +846,12 @@ def plan_backup_retention(
     qdir = shlex.quote(backup_dir)
     commands: list[Command] = []
     for pattern, label in (
-        (f"{config.instance}_*.dump", "dumps de DB"),
-        (f"{config.instance}_*.filestore.tar.gz", "archivos de filestore"),
+        (f"{config.instance}_*.dump", 'DB dumps'),
+        (f"{config.instance}_*.filestore.tar.gz", 'filestore archives'),
     ):
         commands.append(
             Command(
-                f"Eliminar {label} antiguos (conservar {keep} más recientes)",
+                tf('Delete old {} (keep the {} most recent)', label, keep),
                 f"ls -1t {qdir}/{pattern} 2>/dev/null | tail -n +{keep + 1} | xargs -r rm -f",
             )
         )
@@ -893,7 +890,7 @@ ls -1t "$BACKUP_DIR/{inst}"_*.dump 2>/dev/null | tail -n +$(({keep}+1)) | xargs 
 
 def _scheduled_backup_service(name: str, script_path: str, instance: str) -> str:
     return f'''[Unit]
-Description=Backup programado de Odoo ({instance})
+Description=Scheduled Odoo backup ({instance})
 After=postgresql.service
 
 [Service]
@@ -904,7 +901,7 @@ ExecStart={script_path}
 
 def _scheduled_backup_timer(name: str, oncalendar: str, instance: str) -> str:
     return f'''[Unit]
-Description=Timer de backup de Odoo ({instance})
+Description=Odoo backup timer ({instance})
 
 [Timer]
 OnCalendar={oncalendar}
@@ -947,9 +944,9 @@ def plan_scheduled_backup(
     commands.extend(
         write_text_file_command(timer_path, _scheduled_backup_timer(name, oncalendar, config.instance), "644")
     )
-    commands.append(Command("Recargar systemd", "systemctl daemon-reload"))
+    commands.append(Command('Reload systemd', "systemctl daemon-reload"))
     commands.append(
-        Command("Habilitar y arrancar timer de backup", f"systemctl enable --now {name}.timer")
+        Command('Enable and start backup timer', f"systemctl enable --now {name}.timer")
     )
     return commands
 
@@ -957,13 +954,13 @@ def plan_scheduled_backup(
 def plan_remove_scheduled_backup(config: InstanceConfig) -> list[Command]:
     name = f"odoo-backup-{config.instance}"
     return [
-        Command("Detener y deshabilitar timer", f"systemctl disable --now {name}.timer || true"),
+        Command('Stop and disable timer', f"systemctl disable --now {name}.timer || true"),
         Command(
-            "Eliminar units y script de backup",
+            'Remove backup units and script',
             f"rm -f /etc/systemd/system/{name}.timer /etc/systemd/system/{name}.service "
             f"/usr/local/sbin/{name}.sh",
         ),
-        Command("Recargar systemd", "systemctl daemon-reload"),
+        Command('Reload systemd', "systemctl daemon-reload"),
     ]
 
 
@@ -979,37 +976,37 @@ def plan_ufw_base_setup(
     PostgreSQL from a single app-server IP; then enable UFW."""
     commands: list[Command] = [
         Command(
-            "Asegurar UFW instalado",
+            'Ensure UFW is installed',
             "command -v ufw >/dev/null 2>&1 || (apt-get update && apt-get -y install ufw)",
         ),
-        Command("Política por defecto: denegar entrante", "ufw default deny incoming"),
-        Command("Política por defecto: permitir saliente", "ufw default allow outgoing"),
-        Command(f"Permitir SSH (puerto {ssh_port})", f"ufw allow {int(ssh_port)}/tcp"),
+        Command('Default policy: deny incoming', "ufw default deny incoming"),
+        Command('Default policy: allow outgoing', "ufw default allow outgoing"),
+        Command(tf('Allow SSH (port {})', ssh_port), f"ufw allow {int(ssh_port)}/tcp"),
     ]
     if allow_http:
-        commands.append(Command("Permitir HTTP (80)", "ufw allow 80/tcp"))
+        commands.append(Command('Allow HTTP (80)', "ufw allow 80/tcp"))
     if allow_https:
-        commands.append(Command("Permitir HTTPS (443)", "ufw allow 443/tcp"))
+        commands.append(Command('Allow HTTPS (443)', "ufw allow 443/tcp"))
     if pg_from_ip:
         commands.append(
             Command(
-                f"Permitir PostgreSQL (5432) desde {pg_from_ip}",
+                tf('Allow PostgreSQL (5432) from {}', pg_from_ip),
                 f"ufw allow from {shlex.quote(pg_from_ip)} to any port 5432 proto tcp",
             )
         )
-    commands.append(Command("Habilitar UFW", "ufw --force enable"))
+    commands.append(Command('Enable UFW', "ufw --force enable"))
     return commands
 
 
 def plan_ufw_allow_port(port: int, proto: str) -> list[Command]:
     proto = "udp" if proto == "udp" else "tcp"
-    return [Command(f"Permitir {int(port)}/{proto}", f"ufw allow {int(port)}/{proto}")]
+    return [Command(tf('Allow {}/{}', int(port), proto), f"ufw allow {int(port)}/{proto}")]
 
 
 def plan_ufw_delete_rule(number: int) -> list[Command]:
     return [
         Command(
-            f"Eliminar regla UFW #{int(number)}",
+            tf('Delete UFW rule #{}', int(number)),
             f"ufw --force delete {int(number)}",
         )
     ]
@@ -1025,6 +1022,6 @@ def pretty_paths(config: InstanceConfig) -> list[tuple[str, str]]:
         ("Nginx HTTP conf", f"/etc/nginx/sites-available/{config.nginx_http_name}"),
         ("Nginx HTTPS conf", f"/etc/nginx/sites-available/{config.nginx_https_name}"),
         ("SSL dir", config.nginx_ssl_dir),
-        ("DB user", config.db_user),
+        ('DB user', config.db_user),
         ("DB name", config.db_name),
     ]

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from .i18n import t
+from .i18n import t, tf
 from .ui import level_text, style, title, wrap_plain_block
 
 
@@ -64,7 +64,7 @@ def run_streaming(command: str) -> subprocess.CompletedProcess[str]:
 
 def require_root_for_apply() -> None:
     if os.geteuid() != 0:
-        raise RuntimeError("Para aplicar cambios en sistema ejecuta como root (sudo).")
+        raise RuntimeError('To apply system changes, run as root (sudo).')
 
 
 def command_ok(command: str) -> bool:
@@ -110,7 +110,7 @@ def preview_commands(commands: list[Command]) -> None:
     terminal width — long or multi-line commands (e.g. a heredoc that writes a
     config file) stay legible instead of overflowing a table column.
     """
-    print(f"\n{title('Plan de ejecución')}")
+    print(f"\n{title('Execution plan')}")
     indent = "     "
     body_width = max(20, shutil.get_terminal_size((100, 24)).columns - len(indent))
     for index, item in enumerate(commands, start=1):
@@ -121,13 +121,13 @@ def preview_commands(commands: list[Command]) -> None:
 
 def apply_commands(commands: list[Command], stop_on_error: bool = True) -> None:
     for index, item in enumerate(commands, start=1):
-        print(f"\n{style(f'[{index}/{len(commands)}]', 'blue', 'bold')} {item.description}")
+        print(f"\n{style(f'[{index}/{len(commands)}]', 'blue', 'bold')} {t(item.description)}")
         # Stream output live so long steps (apt/pip/pg_restore) aren't silent.
         result = run_streaming(item.command)
         if result.returncode != 0:
-            print(level_text("ERROR", f"Comando terminó con código {result.returncode}."))
+            print(level_text("ERROR", tf('Command finished with code {}.', result.returncode)))
             if stop_on_error:
-                raise RuntimeError(f"Fallo ejecutando: {item.command}")
+                raise RuntimeError(f"Failed running: {item.command}")
 
 
 def list_dirs(base_path: str) -> list[str]:
@@ -188,7 +188,7 @@ def list_databases(
         error_text = (
             result.stderr.strip()
             or result.stdout.strip()
-            or "Error desconocido al listar bases de datos."
+            or "Unknown error while listing databases."
         )
         return [], error_text
 

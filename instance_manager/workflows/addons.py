@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 
+from ..i18n import tf
 from ..models import InstanceConfig
 from ..prompts import ask_bool, ask_text
 from ..system import read_odoo_conf, run
@@ -88,7 +89,7 @@ def _installed_modules(creds: DbCredentials, db_name: str) -> dict[str, tuple[st
 
 
 def show_addon_inventory(config: InstanceConfig) -> None:
-    print(f"\n{title(f'Inventario de addons: {config.instance}')}")
+    print(f"\n{title(tf('Addon inventory: {}', config.instance))}")
     roots = _addon_roots(config)
 
     grouped: dict[str, list[tuple[str, str, str]]] = {}
@@ -98,16 +99,16 @@ def show_addon_inventory(config: InstanceConfig) -> None:
             grouped.setdefault(group, []).append((name, version, root))
 
     if not grouped:
-        print(level_text("WARN", "No se encontraron módulos en las rutas de addons."))
+        print(level_text("WARN", 'No modules found in the addons paths.'))
         return
 
     installed: dict[str, tuple[str, str]] = {}
-    if ask_bool("¿Comprobar qué módulos están instalados en una base de datos?", False):
-        db_name = ask_text("Base de datos a inspeccionar", config.db_name or config.instance, required=True)
+    if ask_bool('Check which modules are installed in a database?', False):
+        db_name = ask_text('Database to inspect', config.db_name or config.instance, required=True)
         creds = _ask_db_credentials(config.instance, None)
         installed = _installed_modules(creds, db_name)
         if not installed:
-            print(level_text("WARN", "No se pudo leer ir_module_module (conexión/BD); se muestra solo lo disponible."))
+            print(level_text("WARN", "Could not read ir_module_module (connection/DB); showing only what's available."))
 
     # Odoo core first, then OCA, Custom, then the rest — each its own table.
     order = ["Odoo core", "OCA", "Custom"]
@@ -118,5 +119,5 @@ def show_addon_inventory(config: InstanceConfig) -> None:
         for name, version in entries:
             state, inst_version = installed.get(name, ("", ""))
             rows.append([name, version, state or "-", inst_version or "-"])
-        print(f"\n{title(f'{group} — {len(rows)} módulo(s)')}")
-        print(render_table(["Módulo", "Versión (manifest)", "Estado", "Versión instalada"], rows))
+        print(f"\n{title(tf('{} — {} module(s)', group, len(rows)))}")
+        print(render_table(['Module', 'Version (manifest)', 'State', 'Installed version'], rows))
