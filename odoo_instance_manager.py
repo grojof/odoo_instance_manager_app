@@ -61,39 +61,50 @@ def main() -> int:
     print("- Muestra el listado de comandos a ejecutar para cada acción")
 
     while True:
-        action = choose(
-            "\n¿Qué quieres hacer?",
-            [
-                "Servicios instancias",
-                "Gestionar instancias",
-                "Seguridad Fail2ban",
-                "Menú de instalación",
-                "Eliminar instancias (Incluye configs, servicios, logs, etc.)",
-                "Informe para servidor externo",
-                "Salir",
-            ],
-            default_index=None,
-        )
+        try:
+            action = choose(
+                "\n¿Qué quieres hacer?",
+                [
+                    "Servicios instancias",
+                    "Gestionar instancias",
+                    "Seguridad Fail2ban",
+                    "Menú de instalación",
+                    "Eliminar instancias (Incluye configs, servicios, logs, etc.)",
+                    "Informe para servidor externo",
+                    "Salir",
+                ],
+                default_index=None,
+            )
+        except (KeyboardInterrupt, EOFError):
+            print("\nSaliendo.")
+            return 0
 
         if not action:
             continue
 
-        if action == "Servicios instancias":
-            manage_instance_services()
-        elif action == "Gestionar instancias":
-            manage_existing_instance()
-        elif action == "Seguridad Fail2ban":
-            manage_fail2ban()
-        elif action == "Menú de instalación":
-            _installation_menu()
-        elif action == "Eliminar instancias (Incluye configs, servicios, logs, etc.)":
-            purge_instance_superuser()
-        elif action == "Informe para servidor externo":
-            external_server_report()
-        elif action == "Salir":
-            return 0
-        else:
+        try:
+            if action == "Servicios instancias":
+                manage_instance_services()
+            elif action == "Gestionar instancias":
+                manage_existing_instance()
+            elif action == "Seguridad Fail2ban":
+                manage_fail2ban()
+            elif action == "Menú de instalación":
+                _installation_menu()
+            elif action == "Eliminar instancias (Incluye configs, servicios, logs, etc.)":
+                purge_instance_superuser()
+            elif action == "Informe para servidor externo":
+                external_server_report()
+            elif action == "Salir":
+                return 0
+            else:
+                continue
+        except KeyboardInterrupt:
+            print("\nOperación interrumpida. Volviendo al menú.")
             continue
+        except EOFError:
+            print("\nEntrada cerrada. Saliendo.")
+            return 0
 
 
 if __name__ == "__main__":
