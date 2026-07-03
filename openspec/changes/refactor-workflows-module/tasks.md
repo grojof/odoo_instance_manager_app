@@ -31,8 +31,8 @@
 
 ## Phase 5 — backup_restore.py + purge.py (PR 5)
 
-- [ ] 5.1 Extract backup/restore/duplicate into `workflows/backup_restore.py`.
-- [ ] 5.2 Extract purge into `workflows/purge.py`; introduce a `DbAdminSession` dataclass.
+- [x] 5.1 Extract backup/restore/duplicate into `workflows/backup_restore.py`.
+- [x] 5.2 Extract purge into `workflows/purge.py` (DbAdminSession dataclass deferred to a cleanup PR).
 
 ## Phase 6 — install.py + manage.py (PR 6)
 
