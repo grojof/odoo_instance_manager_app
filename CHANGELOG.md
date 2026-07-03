@@ -18,6 +18,10 @@ All notable changes to this project are documented here. The format is based on
 
 - Install the correct `libtiff-dev` package instead of `libtiff5-dev`, which does not exist on Ubuntu 24.04
   and would fail the first `apt-get install` step on the tool's own target OS.
+- Server audit report: fix mislabeled columns surfaced while replacing the 27-field positional rows with a
+  named `InstanceReportRow` dataclass — the "Python path" and "Workers" columns now show the Python path and
+  worker count (were showing the Nginx/filestore hit counts), and the "Nginx cfgs"/"Filestore roots" columns
+  now show those hit counts (were showing local DB names / the Nginx count).
 
 - Duplication now places the copied filestore under the **target** instance's data directory (was placed under
   the source instance's, leaving the duplicate without attachments).

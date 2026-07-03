@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from dataclasses import dataclass
 
 from ..models import InstanceConfig
 from ..planners import _sql_literal
@@ -28,7 +29,22 @@ from .common import (
 )
 
 
-def _resolve_db_admin_access() -> tuple[str, str, int, str, str] | None:
+@dataclass(frozen=True)
+class DbAdminSession:
+    """An authenticated PostgreSQL admin session for the purge flow.
+
+    ``mode`` is ``"local"`` (via ``sudo -u postgres``, no credentials) or
+    ``"remote"`` (host/port/user/password).
+    """
+
+    mode: str
+    db_host: str
+    db_port: int
+    admin_user: str
+    admin_password: str
+
+
+def _resolve_db_admin_access() -> DbAdminSession | None:
     db_host = ask_text("DB server para eliminación total", "127.0.0.1", required=True)
     db_port = ask_int("DB port", 5432)
 
@@ -39,7 +55,7 @@ def _resolve_db_admin_access() -> tuple[str, str, int, str, str] | None:
         )
         if local_probe.returncode == 0 and "1" in local_probe.stdout:
             print("[OK] Acceso admin local a PostgreSQL detectado (sudo -u postgres).")
-            return ("local", db_host, db_port, "", "")
+            return DbAdminSession("local", db_host, db_port, "", "")
         print("[WARN] No fue posible usar sudo -u postgres en este servidor.")
 
     print("[INFO] Intentaremos conexión admin con usuario/contraseña en el servidor DB.")
@@ -53,7 +69,7 @@ def _resolve_db_admin_access() -> tuple[str, str, int, str, str] | None:
     probe = run(probe_cmd, check=False)
     if probe.returncode == 0 and "1" in probe.stdout:
         print("[OK] Conexión admin remota validada.")
-        return ("remote", db_host, db_port, db_admin_user, db_admin_password)
+        return DbAdminSession("remote", db_host, db_port, db_admin_user, db_admin_password)
 
     detail = probe.stderr.strip() or probe.stdout.strip() or "sin detalle"
     print(f"[ERROR] No se pudo conectar al servidor DB con credenciales admin: {detail}")
@@ -63,34 +79,32 @@ def _resolve_db_admin_access() -> tuple[str, str, int, str, str] | None:
     return None
 
 
-def _db_admin_psql_command(
-    session: tuple[str, str, int, str, str], sql: str, psql_flags: str = ""
-) -> str:
-    mode, db_host, db_port, db_admin_user, db_admin_password = session
+def _db_admin_psql_command(session: DbAdminSession, sql: str, psql_flags: str = "") -> str:
     flags = f"{psql_flags} " if psql_flags else ""
-    if mode == "local":
+    if session.mode == "local":
         return f"sudo -u postgres psql -v ON_ERROR_STOP=1 -d postgres {flags}-c {shlex.quote(sql)}"
 
     return (
-        f"PGPASSWORD={_quote(db_admin_password)} psql -v ON_ERROR_STOP=1 -h {_quote(db_host)} -p {db_port} "
-        f"-U {_quote(db_admin_user)} -d postgres {flags}-c {shlex.quote(sql)}"
+        f"PGPASSWORD={_quote(session.admin_password)} psql -v ON_ERROR_STOP=1 "
+        f"-h {_quote(session.db_host)} -p {session.db_port} "
+        f"-U {_quote(session.admin_user)} -d postgres {flags}-c {shlex.quote(sql)}"
     )
 
 
-def _db_admin_dropdb_command(session: tuple[str, str, int, str, str], db_name: str) -> str:
-    mode, db_host, db_port, db_admin_user, db_admin_password = session
-    if mode == "local":
+def _db_admin_dropdb_command(session: DbAdminSession, db_name: str) -> str:
+    if session.mode == "local":
         return f"sudo -u postgres dropdb --if-exists {_quote(db_name)}"
 
     return (
-        f"PGPASSWORD={_quote(db_admin_password)} dropdb --if-exists -h {_quote(db_host)} -p {db_port} "
-        f"-U {_quote(db_admin_user)} {_quote(db_name)}"
+        f"PGPASSWORD={_quote(session.admin_password)} dropdb --if-exists "
+        f"-h {_quote(session.db_host)} -p {session.db_port} "
+        f"-U {_quote(session.admin_user)} {_quote(db_name)}"
     )
 
 
 def _list_instance_databases(
     instance: str,
-    session: tuple[str, str, int, str, str],
+    session: DbAdminSession,
 ) -> tuple[list[str], str | None]:
     instance_literal = _sql_literal(instance)
     sql = (
@@ -257,7 +271,7 @@ def purge_instance_superuser() -> None:
         ["Filestore raíz detectado", f"{'sí' if path_exists(filestore_root) else 'no'} ({filestore_root})"],
         ["DBs por filestore", ", ".join(filestore_dbs) if filestore_dbs else "(ninguna)"],
         ["DBs por prefijo", ", ".join(dbs_by_prefix) if dbs_by_prefix else "(ninguna)"],
-        ["Acceso admin DB", session[0] if session else "no disponible (solo limpieza local)"],
+        ["Acceso admin DB", session.mode if session else "no disponible (solo limpieza local)"],
         ["DBs a eliminar", ", ".join(db_names) if db_names else "(ninguna detectada)"],
         ["Comandos a ejecutar", str(len(commands))],
     ]
