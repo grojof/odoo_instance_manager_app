@@ -10,6 +10,7 @@ from ..models import InstanceConfig
 from ..planners import _sql_literal
 from ..prompts import (
     ask_int,
+    ask_secret,
     ask_text,
     confirm_with_phrase,
 )
@@ -60,7 +61,7 @@ def _resolve_db_admin_access() -> DbAdminSession | None:
 
     print("[INFO] Intentaremos conexión admin con usuario/contraseña en el servidor DB.")
     db_admin_user = ask_text("DB admin user", "postgres", required=True)
-    db_admin_password = ask_text("DB admin password", None, required=True)
+    db_admin_password = ask_secret("DB admin password")
 
     probe_cmd = (
         f"PGPASSWORD={_quote(db_admin_password)} psql -h {_quote(db_host)} -p {db_port} "

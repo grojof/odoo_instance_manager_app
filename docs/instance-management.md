@@ -45,6 +45,10 @@ directory:
 - Database → `pg_dump -Fc` → `<instance>_<timestamp>.dump`
 - Filestore → gzipped tar → `<instance>_<timestamp>.filestore.tar.gz`
 
+> **Credentials are collected once per session:** the first data action (backup / restore / duplicate /
+> delete) that needs a database connection prompts for host/port/user/password; subsequent actions offer to
+> reuse them. Passwords are read without echo.
+
 ## Restore and duplicate — copied vs moved
 
 Both **Restaurar backup** and **Duplicar instancia** apply Odoo's migration semantics and require an exact

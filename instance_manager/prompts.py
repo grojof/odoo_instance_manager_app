@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import os
 from pathlib import Path
 
@@ -56,7 +57,7 @@ def ask_text(label: str, default: str | None = None, required: bool = False) -> 
         print(level_text("ERROR", "Valor obligatorio."))
 
 
-def ask_int(label: str, default: int) -> int:
+def ask_int(label: str, default: int, min_value: int = 1, max_value: int = 65535) -> int:
     while True:
         raw = ask_text(label, str(default), required=True)
         try:
@@ -64,9 +65,24 @@ def ask_int(label: str, default: int) -> int:
         except ValueError:
             print(level_text("ERROR", "Debe ser un número entero."))
             continue
-        if 1 <= value <= 65535:
+        if min_value <= value <= max_value:
             return value
-        print(level_text("ERROR", "Puerto fuera de rango (1-65535)."))
+        print(level_text("ERROR", f"Valor fuera de rango ({min_value}-{max_value})."))
+
+
+def ask_port(label: str, default: int) -> int:
+    return ask_int(label, default, min_value=1, max_value=65535)
+
+
+def ask_secret(label: str, required: bool = True) -> str:
+    """Prompt for a secret without echoing it to the screen (via getpass)."""
+    while True:
+        value = getpass.getpass(f"{prompt_label(label)}: ").strip()
+        if value:
+            return value
+        if not required:
+            return ""
+        print(level_text("ERROR", "Valor obligatorio."))
 
 
 def ask_bool(label: str, default: bool = True) -> bool:
@@ -145,11 +161,14 @@ def select_file_path(
         )
         print("  0) Elegir este directorio")
         print("  ..) Subir nivel")
+        print("  q) Cancelar")
         for index, entry in enumerate(entries, start=1):
             marker = "/" if entry.is_dir() else ""
             print(f"  {index}) {entry.name}{marker}")
 
-        raw = input(f"{prompt_label("Elige número, '..' o ruta manual")}: ").strip()
+        raw = input(f"{prompt_label("Elige número, '..', 'q' o ruta manual")}: ").strip()
+        if raw.lower() in {"q", "cancelar"}:
+            return ""
         if raw == "0":
             manual = input(
                 f"{prompt_label('Nombre de archivo en este directorio (o Enter para ruta manual)')}: "
