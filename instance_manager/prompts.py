@@ -101,15 +101,22 @@ def ask_bool(label: str, default: bool = True) -> bool:
 
 
 def choose(label: str, options: list[str], default_index: int | None = None) -> str:
+    """Render a numbered menu with a consistent ``0)`` cancel entry.
+
+    If ``options`` already contains a cancel-like entry (``Cancelar``/``Volver``/
+    ``Salir``), that is the ``0`` option and selecting it returns that string.
+    Otherwise a synthetic ``0) Cancelar`` is shown and selecting it (or pressing
+    Enter with no default) returns ``""`` — the sentinel every caller treats as
+    "cancelled".
+    """
     print(title(label))
     zero_candidates = ["Cancelar", "Volver", "Salir"]
     zero_option = next((item for item in zero_candidates if item in options), None)
+    zero_label = zero_option if zero_option is not None else "Cancelar"
 
     indexed_options = [option for option in options if option != zero_option]
 
-    if zero_option is not None:
-        marker = style("0)", "blue", "bold")
-        print(f"  {marker} {zero_option}")
+    print(f"  {style('0)', 'blue', 'bold')} {zero_label}")
 
     for index, option in enumerate(indexed_options, start=1):
         default_tag = (
@@ -122,13 +129,13 @@ def choose(label: str, options: list[str], default_index: int | None = None) -> 
 
     while True:
         raw = input(f"{prompt_label('Selecciona opción')}: ").strip()
-        if raw == "0" and zero_option is not None:
-            return zero_option
+        if raw == "0":
+            return zero_option if zero_option is not None else ""
 
         if not raw:
             if default_index is not None:
                 return options[default_index]
-            print(level_text("WARN", "Sin selección, no se ejecuta ninguna acción."))
+            print(level_text("INFO", "Sin selección (0 para cancelar)."))
             return ""
         try:
             selected = int(raw)

@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format is based on
   restore / duplicate / delete (with a reuse prompt); passwords are read without echo (`getpass`); the file
   picker can be cancelled; and numeric prompts report the correct range (fixing the "Puerto fuera de rango"
   message on `maxretry`).
+- Every menu now shows a consistent `0) Cancelar` entry (unifying the previous three cancel conventions).
 
 ### Changed
 
