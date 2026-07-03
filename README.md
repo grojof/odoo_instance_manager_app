@@ -1,58 +1,77 @@
 # Odoo Instance Manager
 
-Gestor interactivo para instancias Odoo con ejecución segura y planificación de comandos.
+Interactive, **root-run** Python CLI to **install, maintain, and audit multi-instance Odoo Community
+servers** on Ubuntu 24.04. It never mutates the host blindly: every action builds a command **plan**,
+previews it, and applies it only after you confirm — with an extra typed phrase for anything destructive.
 
-## Menú principal
+- **Multi-instance** — many isolated Odoo instances per host, each with its own service, ports, config, and
+  database, all derived from the instance name.
+- **Safe by construction** — pure planners build the plan; you see every command before it runs; installs
+  self-clean on failure. See [ADR 0001](docs/decisions/0001-plan-preview-apply-safety.md).
+- **Batteries included** — provisioning (Odoo/PostgreSQL/both), Nginx + TLS, service control, backup /
+  restore / duplicate, Fail2ban hardening, and a read-only server audit.
+- **No runtime dependencies** — Python 3 standard library only.
 
-1. Gestionar instancias
-2. Seguridad Fail2ban
-3. Menú de instalación
-4. Salir
+## At a glance
 
-## Gestión de instancias
+```mermaid
+flowchart LR
+    op["Operator (root)"] --> menu["Main menu"]
+    menu --> install["Install / provision"]
+    menu --> manage["Manage instances"]
+    menu --> services["Service control"]
+    menu --> f2b["Fail2ban security"]
+    menu --> purge["Total purge"]
+    menu --> audit["Server audit (read-only)"]
+    install & manage & services & f2b & purge --> plan["Plan → preview → confirm → apply"]
+    plan --> host["Ubuntu host"]
+    audit -. "read-only" .-> host
+```
 
-- Descubre instancias en `/opt/odoo`.
-- Configura cada instancia en `/etc/odoo/<instancia>/<instancia>.conf`.
-- Muestra resumen completo de rutas y estado técnico de la instancia.
-- Permite consulta opcional a PostgreSQL para listar bases disponibles.
-- Incluye acciones seguras:
-	- Ver estado completo
-	- Consultar ubicaciones y configuración
-	- Actualizar configuración existente
-	- Reparar logs Nginx de instancia
-	- Realizar backup
-	- Restaurar backup
-	- Duplicar instancia
-	- Eliminar instancia
-
-## Menú de instalación
-
-- Instalar SOLO Odoo
-- Instalar SOLO DB
-- Instalar Odoo + DB
-
-## Seguridad Fail2ban
-
-- Instala y configura base segura (`sshd`, `nginx-http-auth`, `nginx-botsearch`, `recidive`) con `banaction=ufw`.
-- Permite activar protección por instancia Odoo con jail dedicado y filtro de intentos fallidos.
-- Incluye verificación de IP real en logs Odoo para evitar baneos cuando solo llega IP interna/gateway.
-- Incluye acciones de operación: ver estado/jails, ver detalle por jail, desbanear IP (con listado de IPs baneadas) y probar regex con `fail2ban-regex`.
-
-## Requisitos
-
-- Python 3
-- Ejecución como root
-
-## Ejecución
+## Quickstart
 
 ```bash
-cd WSL_new_doc/odoo_instance_manager_app
+# On the Ubuntu 24.04 server, as root:
 sudo python3 odoo_instance_manager.py
 ```
 
-## Comportamiento operativo
+Then pick an action from the main menu:
 
-- El gestor exige ejecución con `sudo` desde el inicio.
-- Cada acción genera plan de comandos antes de aplicar.
-- Las operaciones sensibles requieren confirmación explícita por frase.
-- Si una instalación falla durante la aplicación, se ejecuta una limpieza automática de residuos de la instancia (servicio, archivos de Odoo/Nginx/SSL y rol DB de la instancia cuando aplica) para permitir reintentos limpios.
+- **Menú de instalación** → provision an Odoo instance, PostgreSQL, or both.
+- **Gestionar instancias** → status, config updates, backup/restore, duplicate, delete.
+- **Servicios instancias** → start/stop/restart/enable/disable instance services.
+- **Seguridad Fail2ban** → base hardening and per-instance Odoo jails.
+- **Informe para servidor externo** → a read-only audit report.
+
+Every action shows its full command plan and waits for your confirmation before touching the system.
+
+## Documentation
+
+**Get things done**
+
+- [Installing and provisioning instances](docs/installation.md) — install modes, ports, Nginx, TLS.
+- [Managing existing instances](docs/instance-management.md) — status, updates, services, backup/restore,
+  duplicate, removal.
+- [Fail2ban protection](docs/security-fail2ban.md) — base hardening, per-instance jails, real-IP checks.
+- [Auditing a server](docs/server-audit.md) — the read-only external report.
+
+**Understand & reference**
+
+- [Architecture](docs/architecture.md) — the layered design and the plan → preview → apply flow.
+- [Configuration reference](docs/configuration-reference.md) — `InstanceConfig` fields, defaults, and derived
+  paths.
+- [Glossary](docs/glossary.md) — domain vocabulary (instance, filestore, jail, neutralize, …).
+- [Safe controls](docs/safe-controls.md) — runtime guardrails and the permissions baseline.
+
+**Behavior specs** live under [`openspec/specs/`](openspec/specs/) — nine capabilities validated with
+`openspec validate --specs`. **Decisions** are recorded in [`docs/decisions/`](docs/decisions/).
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md). Non-trivial changes are spec-first via the
+OpenSpec flow (`/opsx:propose → /opsx:apply → /opsx:archive`); keep planners pure and never weaken a safety
+control. Security policy: [SECURITY.md](SECURITY.md).
+
+## License
+
+See [LICENSE](LICENSE).
