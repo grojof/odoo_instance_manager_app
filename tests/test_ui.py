@@ -4,7 +4,25 @@ from __future__ import annotations
 
 import unittest
 
-from instance_manager.ui import _visible_len, render_table, strip_ansi
+from instance_manager.ui import (
+    _visible_len,
+    render_table,
+    strip_ansi,
+    wrap_plain_block,
+)
+
+
+class WrapPlainBlockTests(unittest.TestCase):
+    def test_wraps_each_line_within_width(self) -> None:
+        text = "short line\n" + "x" * 50 + "\nanother"
+        out = wrap_plain_block(text, 20)
+        for line in out:
+            self.assertLessEqual(len(line), 20)
+        self.assertIn("short line", out)
+        self.assertIn("another", out)
+
+    def test_preserves_blank_and_boundaries(self) -> None:
+        self.assertEqual(wrap_plain_block("", 10), [""])
 
 
 class RenderTableTests(unittest.TestCase):
@@ -45,6 +63,16 @@ class RenderTableTests(unittest.TestCase):
 
     def test_empty_headers_returns_empty(self) -> None:
         self.assertEqual(render_table([], [], max_width=80), "")
+
+    def test_long_styled_cell_wraps_and_keeps_ansi(self) -> None:
+        # A dim-wrapped long command (as the plan preview used to build): it must
+        # wrap to fit AND keep its escape sequences intact (not skipped, not split).
+        dim_long = "\033[2m" + ("/opt/odoo/addons,/opt/odoo/oca " * 4).strip() + "\033[0m"
+        table = render_table(["Comando"], [[dim_long]], max_width=40)
+        for line in self._lines(table):
+            self.assertLessEqual(_visible_len(line), 40, f"line too wide: {line!r}")
+        self.assertIn("\033[2m", table)
+        self.assertIn("/opt/odoo/addons", strip_ansi(table))
 
 
 if __name__ == "__main__":

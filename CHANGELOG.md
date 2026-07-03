@@ -27,6 +27,8 @@ All notable changes to this project are documented here. The format is based on
   (apt/pip/git/pg_restore) are no longer silent. No new dependency — the tool remains standard-library only.
 - Tables now fit the terminal width and wrap long values (paths, addons lists, certificate subjects) instead
   of overflowing and misaligning, so status and report tables stay readable.
+- The plan preview is now a wrapped, indented list instead of a table, so long and multi-line commands (e.g.
+  the `odoo.conf` heredoc) stay legible; table wrapping is also ANSI-robust so styled long cells wrap too.
 
 ### Changed
 
