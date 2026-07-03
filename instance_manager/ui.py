@@ -44,10 +44,6 @@ def style(text: str, *tokens: str) -> str:
     return f"{prefix}{text}{_RESET}"
 
 
-def status_tag(ok: bool) -> str:
-    return style("[OK]", "green", "bold") if ok else style("[MISSING]", "yellow", "bold")
-
-
 def level_text(level: str, message: str) -> str:
     token_map = {
         "INFO": ("blue",),
