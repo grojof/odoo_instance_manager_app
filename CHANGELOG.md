@@ -6,12 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-04
+
+First stable, publicly released version. The interactive manager is feature-complete for installing,
+maintaining, and auditing multi-instance Odoo Community servers on Ubuntu 24.04, with the plan → preview →
+apply safety model throughout and a fully bilingual (English/Spanish) interface. Standard library only.
+
 ### Added
 
-- **Interface language (Spanish / English)**: choose the UI language at startup or via `OIM_LANG`.
-  A modular `i18n` catalog translates menus, prompts, titles, table headers, and the plan preview at display
-  chokepoints (no call-site changes), returning the original option value so behavior is language-independent;
-  untranslated strings fall back to Spanish. stdlib only.
+- **Interface language (English / Spanish)**: choose the UI language at startup or via `OIM_LANG`, defaulting
+  to **English**. English is the canonical source language (the strings live in English in the code) and
+  Spanish is a full translation applied on demand at a few display/input chokepoints (no call-site changes),
+  returning the original option value so behavior is language-independent. Coverage is complete — menus,
+  prompts, titles, table headers **and string cells**, command/plan descriptions, interpolated status
+  messages, and one-off prints all translate — and the yes/no shortcut localizes (`Y/n` / `S/n`). Anything
+  without a Spanish translation falls back to its English source. stdlib only.
 
 - **Scheduled backups** (instance management → "Backups programados"): unattended backups on a systemd timer
   (Diario/Semanal/Mensual) — atomic `sudo -u postgres pg_dump` of a chosen DB (local peer auth, no stored
@@ -119,3 +128,6 @@ All notable changes to this project are documented here. The format is based on
 This entry records the documentation and spec scaffolding added when the project was onboarded to eunomai +
 OpenSpec. The manager's runtime behavior (installation, management, security, and audit menus) predates this
 changelog and is captured as the baseline specs above.
+
+[Unreleased]: https://github.com/grojof/odoo_instance_manager_app/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/grojof/odoo_instance_manager_app/releases/tag/v1.0.0

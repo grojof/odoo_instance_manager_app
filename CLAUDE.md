@@ -47,6 +47,11 @@ agents working *on* this project.
   system without a plan. (See `docs/decisions/0001-plan-preview-apply-safety.md`.)
 - **Keep docs honest.** When behavior changes, update the affected `docs/` page and the README map in the
   same change.
+- **Keep the changelog and version in lockstep.** User-facing changes go under `## [Unreleased]` in
+  `CHANGELOG.md` (Keep a Changelog format) as they land. To cut a release, follow **SemVer**: rename
+  `[Unreleased]` to `[<version>] - <YYYY-MM-DD>` (leave a fresh empty `[Unreleased]` on top), bump `version`
+  in `pyproject.toml` to match, add the `[<version>]` compare/tag link at the bottom, then tag `v<version>`
+  and publish a GitHub release. The tag, the `pyproject` version, and the changelog heading must always agree.
 - **Secure by default.** Validate input at boundaries, never hardcode secrets, and quote everything that
   reaches a shell or SQL. The tool runs as root — assume every input is attacker-controlled.
 - **Add dependencies deliberately.** This project is standard-library-only by design; introducing a runtime

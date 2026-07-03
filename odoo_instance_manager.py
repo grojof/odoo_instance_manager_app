@@ -53,8 +53,8 @@ def _select_language() -> None:
     if env in {"en", "es"}:
         set_language(env)
         return
-    lang = choose('Idioma / Language', ["Español", "English"], default_index=0)
-    set_language("en" if lang == "English" else "es")
+    lang = choose('Idioma / Language', ["English", "Español"], default_index=0)
+    set_language("es" if lang == "Español" else "en")
 
 
 def main() -> int:
