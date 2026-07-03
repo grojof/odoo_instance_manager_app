@@ -16,10 +16,14 @@ agents working *on* this project.
   - `system.py` — execution primitives, existence probes, `preview_commands`/`apply_commands`.
   - `prompts.py` — interactive input, file picker, `confirm_with_phrase`.
   - `ui.py` — terminal tables and styling.
-  - `workflows.py` — menus, plan assembly, discovery, and the read-only server audit.
-- `openspec/specs/` — the **behavior source of truth**: nine capability specs. Changes live in
+  - `workflows/` — a package split by capability (install, manage, backup_restore, fail2ban, firewall,
+    services, purge, report, health, diskusage, addons, logrotate, scheduled_backup, …) over a shared
+    `common.py`; menus, plan assembly, discovery, and the read-only audit.
+- `openspec/specs/` — the **behavior source of truth** (one spec per capability). Changes live in
   `openspec/changes/`.
-- `docs/` — user/operator docs (flat `docs/*.md`, each with frontmatter); `docs/decisions/` holds ADRs.
+- `docs/` — user/operator docs, each with frontmatter. Grown surfaces are grouped into folders
+  (`docs/operations/`, `docs/security/`); setup/reference/audit pages stay flat at `docs/`; `docs/decisions/`
+  holds ADRs. The README is the routable map.
 - Operator-facing strings are **Spanish** (matching the current UI); docs and specs are **English**.
 
 ## Conventions
@@ -49,7 +53,7 @@ agents working *on* this project.
   dependency is itself a decision worth an ADR — pin it, scan for known CVEs, and justify it.
 - **Some actions are irreversible or sensitive** — force-push, history rewrite, secret access, deleting
   instances/databases: pause and confirm first. Safe-controls hooks enforce a floor when installed (see
-  `docs/safe-controls.md`).
+  `docs/security/safe-controls.md`).
 
 ## Safe controls
 
@@ -57,7 +61,7 @@ agents working *on* this project.
   force-push / `rm -rf` / secret access; deny on AI-attribution commit trailers). Fail-open, a floor-raiser,
   not a security boundary.
 - Static path rules use the native `permissions` baseline in `.claude/settings.json` — see
-  `docs/safe-controls.md`.
+  `docs/security/safe-controls.md`.
 
 ## Checks
 

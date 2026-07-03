@@ -32,4 +32,4 @@ only the available modules.
 ## Related
 
 - [Managing existing instances](instance-management.md)
-- [Installing and provisioning instances](installation.md) — the `addons_path` layout.
+- [Installing and provisioning instances](../installation.md) — the `addons_path` layout.

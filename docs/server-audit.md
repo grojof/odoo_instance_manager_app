@@ -48,5 +48,5 @@ Two operator-initiated extras are the only things it may write or actively probe
 
 ## Related
 
-- [Instance management](instance-management.md)
+- [Instance management](operations/instance-management.md)
 - [Configuration reference](configuration-reference.md)

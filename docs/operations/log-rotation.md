@@ -60,5 +60,5 @@ The Odoo log keeps `copytruncate` because Odoo has no log-reopen signal — the 
 ## Related
 
 - [Managing existing instances](instance-management.md)
-- [Configuration reference](configuration-reference.md) — the `logfile` config key.
-- [Log-rotation spec](../openspec/specs/log-rotation/spec.md) — the behavior contract.
+- [Configuration reference](../configuration-reference.md) — the `logfile` config key.
+- [Log-rotation spec](../../openspec/specs/log-rotation/spec.md) — the behavior contract.

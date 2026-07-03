@@ -40,4 +40,4 @@ is installed and active — this menu is how you make that true.
 ## Related
 
 - [Fail2ban protection](security-fail2ban.md)
-- [Installation & provisioning](installation.md)
+- [Installation & provisioning](../installation.md)

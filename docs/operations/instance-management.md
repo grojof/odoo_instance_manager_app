@@ -101,10 +101,10 @@ Two levels, both phrase-gated:
 
 The total purge discovers databases from the filestore and (with admin DB access) by name prefix, shows a
 summary of what it detected, and — without admin DB access — performs local cleanup only (skipping DB/role
-deletion). See the [removal spec](../openspec/specs/instance-removal/spec.md) for the full contract.
+deletion). See the [removal spec](../../openspec/specs/instance-removal/spec.md) for the full contract.
 
 ## Related
 
-- [Installation & provisioning](installation.md)
-- [Fail2ban security](security-fail2ban.md)
-- [Configuration reference](configuration-reference.md)
+- [Installation & provisioning](../installation.md)
+- [Fail2ban security](../security/security-fail2ban.md)
+- [Configuration reference](../configuration-reference.md)

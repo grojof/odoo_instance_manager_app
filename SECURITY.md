@@ -35,7 +35,7 @@ A reproduction against a disposable VM is ideal.
 - Database and admin passwords are entered interactively and passed to `psql`/`pg_dump` via `PGPASSWORD` in
   the generated commands. Treat shell history and process listings on the host as sensitive.
 - Do not commit real credentials, dumps, or filestore archives to the repository.
-- The recommended permissions baseline in [`docs/safe-controls.md`](docs/safe-controls.md) denies reads of
+- The recommended permissions baseline in [`docs/security/safe-controls.md`](docs/security/safe-controls.md) denies reads of
   common secret files (`.env`, `*.pem`, SSH keys).
 
 ## Supported versions

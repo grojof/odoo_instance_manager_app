@@ -56,5 +56,5 @@ Run this check on its own with **Verificar IP real en log Odoo**.
 
 ## Related
 
-- [Instance management](instance-management.md)
-- [Fail2ban spec](../openspec/specs/fail2ban-protection/spec.md) — the full behavior contract.
+- [Instance management](../operations/instance-management.md)
+- [Fail2ban spec](../../openspec/specs/fail2ban-protection/spec.md) — the full behavior contract.

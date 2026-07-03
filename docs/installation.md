@@ -80,4 +80,4 @@ can retry cleanly. The original error is then re-raised.
 ## Related
 
 - [Configuration reference](configuration-reference.md) — every field and derived path.
-- [Instance management](instance-management.md) — day-2 operations once an instance exists.
+- [Instance management](operations/instance-management.md) — day-2 operations once an instance exists.
