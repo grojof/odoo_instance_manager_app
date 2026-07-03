@@ -31,6 +31,7 @@ from ..system import (
     user_exists,
 )
 from ..ui import level_tag, level_text, render_table, title
+from .addons import show_addon_inventory
 from .backup_restore import _backup_instance, _duplicate_instance, _restore_backup
 from .common import (
     DbCredentials,
@@ -491,6 +492,7 @@ def manage_existing_instance() -> None:
                 "Rotación de logs",
                 "Uso de disco y limpieza",
                 "Instalar paquetes Python en venv",
+                "Inventario de addons",
                 "Realizar backup",
                 "Restaurar backup",
                 "Duplicar instancia",
@@ -522,6 +524,8 @@ def manage_existing_instance() -> None:
             manage_disk_usage(config)
         elif action == "Instalar paquetes Python en venv":
             _install_python_packages_in_instance_venv(config)
+        elif action == "Inventario de addons":
+            show_addon_inventory(config)
         elif action == "Realizar backup":
             db_creds = _backup_instance(config, db_creds)
         elif action == "Restaurar backup":

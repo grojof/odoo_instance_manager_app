@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Addon inventory** (instance management → "Inventario de addons"): list an instance's modules by origin
+  (Odoo core / OCA / custom) with their manifest versions, and optionally mark which are installed in a chosen
+  database (from `ir_module_module`).
 - **Disk usage & backup retention** (instance management → "Uso de disco y limpieza"): a read-only
   footprint report (home, data dir, logs, backups; free space) and a retention cleanup that keeps the N newest
   backups of each kind (dumps + filestore archives).
