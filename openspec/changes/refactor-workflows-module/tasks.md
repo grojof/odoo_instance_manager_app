@@ -36,6 +36,6 @@
 
 ## Phase 6 — install.py + manage.py (PR 6)
 
-- [ ] 6.1 Extract install flows (+ port suggestion, cleanup) into `workflows/install.py`.
-- [ ] 6.2 Extract manage flows into `workflows/manage.py`; leave `__init__` a thin re-export.
+- [x] 6.1 Extract install flows (+ port suggestion, cleanup) into `workflows/install.py`.
+- [x] 6.2 Extract manage flows into `workflows/manage.py`; leave `__init__` a thin re-export.
 - [ ] 6.3 Consider enabling `E501` on the new modules.
