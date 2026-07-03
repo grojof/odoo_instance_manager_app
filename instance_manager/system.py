@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+from .i18n import t
 from .ui import level_text, style, title, wrap_plain_block
 
 
@@ -113,7 +114,7 @@ def preview_commands(commands: list[Command]) -> None:
     indent = "     "
     body_width = max(20, shutil.get_terminal_size((100, 24)).columns - len(indent))
     for index, item in enumerate(commands, start=1):
-        print(f"\n{style(f'[{index:02d}]', 'blue', 'bold')} {item.description}")
+        print(f"\n{style(f'[{index:02d}]', 'blue', 'bold')} {t(item.description)}")
         for chunk in wrap_plain_block(item.command, body_width):
             print(style(f"{indent}{chunk}", "dim"))
 

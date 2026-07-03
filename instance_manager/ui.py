@@ -6,6 +6,8 @@ import shutil
 import sys
 import textwrap
 
+from .i18n import t
+
 _RESET = "\033[0m"
 _STYLES = {
     "bold": "\033[1m",
@@ -47,6 +49,7 @@ def style(text: str, *tokens: str) -> str:
 
 
 def level_text(level: str, message: str) -> str:
+    message = t(message)
     token_map = {
         "INFO": ("blue",),
         "WARN": ("yellow", "bold"),
@@ -64,11 +67,11 @@ def level_tag(level: str) -> str:
 
 
 def prompt_label(label: str) -> str:
-    return style(label, "cyan")
+    return style(t(label), "cyan")
 
 
 def title(text: str) -> str:
-    return style(text, "bold")
+    return style(t(text), "bold")
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -136,7 +139,7 @@ def _wrap_cell(cell: str, cap: int) -> list[str]:
 def render_table(
     headers: list[str], rows: list[list[str]], max_width: int | None = None
 ) -> str:
-    safe_headers = [str(item) for item in headers]
+    safe_headers = [t(str(item)) for item in headers]
     safe_rows = [[str(cell) for cell in row] for row in rows]
     column_count = len(safe_headers)
     if column_count == 0:
