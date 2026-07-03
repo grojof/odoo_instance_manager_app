@@ -22,21 +22,26 @@ def _nginx_logs_covered_by_system() -> bool:
 def _query_log_rotation(config: InstanceConfig) -> None:
     lr_file = config.logrotate_config_file
     lr_present = path_exists(lr_file)
+    policy_content = _read_text_file(lr_file) if lr_present else ""
+    odoo_active = lr_present and config.odoo_log_file in policy_content
     conf_values = read_odoo_conf(config.odoo_conf_file)
-    odoo_flag = conf_values.get("logrotate", "(no definido)")
+    obsolete_key = "logrotate" in conf_values
 
     print(f"\n{title('Rotación de logs de la instancia')}")
     rows = [
         ["Log de Odoo", config.odoo_log_file],
-        ["logrotate.d (sistema)", lr_file if lr_present else f"{lr_file} (no configurado)"],
-        ["Odoo logrotate (conf)", odoo_flag],
+        [
+            "Rotación log Odoo",
+            level_text("OK", "ACTIVA (system logrotate)")
+            if odoo_active
+            else level_text("MISSING", "INACTIVA"),
+        ],
+        ["Política logrotate.d", lr_file if lr_present else f"{lr_file} (no configurada)"],
     ]
     print(render_table(["Elemento", "Valor"], rows))
 
-    policy_content = ""
     if lr_present:
         print(f"\n{title('Política logrotate actual')}")
-        policy_content = _read_text_file(lr_file)
         print(policy_content.strip() or "(vacío)")
         print(f"\n{title('Previsualización (logrotate -d)')}")
         dry = run(f"logrotate -d {_quote(lr_file)}", check=False)
@@ -59,12 +64,12 @@ def _query_log_rotation(config: InstanceConfig) -> None:
                 "Logs de Nginx: sin cobertura de rotación detectada; considera incluirlos al configurar.",
             )
         )
-    if odoo_flag.strip().lower() == "true" and lr_present:
+    if obsolete_key:
         print(
             level_text(
-                "WARN",
-                "Odoo tiene logrotate=True y además hay logrotate del sistema: posible doble "
-                "rotación. Considera desactivar el interno al configurar.",
+                "INFO",
+                "El odoo.conf contiene la clave 'logrotate' (obsoleta desde Odoo 13, ignorada); "
+                "puedes limpiarla al configurar.",
             )
         )
 
@@ -87,17 +92,15 @@ def _configure_log_rotation(config: InstanceConfig) -> None:
         maxsize = ask_text("Tamaño máximo (p. ej. 50M, 1G)", "50M", required=True)
 
     conf_values = read_odoo_conf(config.odoo_conf_file)
-    disable_odoo_internal = False
-    if conf_values.get("logrotate", "").strip().lower() == "true":
+    remove_obsolete = False
+    if "logrotate" in conf_values:
         print(
             level_text(
-                "WARN",
-                "El odoo.conf tiene logrotate=True; con logrotate del sistema habría doble rotación.",
+                "INFO",
+                "El odoo.conf tiene la clave 'logrotate' (obsoleta desde Odoo 13; Odoo la ignora).",
             )
         )
-        disable_odoo_internal = ask_bool(
-            "¿Poner logrotate=False en el odoo.conf? (requiere reiniciar Odoo)", True
-        )
+        remove_obsolete = ask_bool("¿Eliminarla del odoo.conf?", True)
 
     include_nginx = False
     if _nginx_logs_covered_by_system():
@@ -126,18 +129,10 @@ def _configure_log_rotation(config: InstanceConfig) -> None:
         rotate_count=rotate_count,
         compress=compress,
         maxsize=maxsize,
-        disable_odoo_internal=disable_odoo_internal,
+        remove_obsolete_odoo_key=remove_obsolete,
         include_nginx=include_nginx,
     )
     _execute_plan(commands)
-    if disable_odoo_internal:
-        print(
-            level_text(
-                "INFO",
-                "Reinicia el servicio Odoo para aplicar logrotate=False "
-                "(menú 'Servicios instancias' → Reiniciar).",
-            )
-        )
 
 
 def manage_log_rotation(config: InstanceConfig) -> None:

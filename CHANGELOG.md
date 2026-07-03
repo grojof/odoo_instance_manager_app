@@ -36,6 +36,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Stop writing the obsolete `logrotate` option in the generated `odoo.conf` (removed from Odoo in v13, ignored
+  since). Log rotation is offered **at install time** (default on), the rotation **Query** now clearly reports
+  whether the Odoo log rotation is ACTIVA/INACTIVA, and Configure offers to delete a stale `logrotate` key from
+  an existing conf.
 - Install the correct `libtiff-dev` package instead of `libtiff5-dev`, which does not exist on Ubuntu 24.04
   and would fail the first `apt-get install` step on the tool's own target OS.
 - Server audit report: fix mislabeled columns surfaced while replacing the 27-field positional rows with a

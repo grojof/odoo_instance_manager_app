@@ -65,7 +65,6 @@ gevent_port = {config.gevent_port}
 proxy_mode = True
 
 logfile = {config.odoo_log_file}
-logrotate = True
 
 workers = 4
 max_cron_threads = 2
@@ -283,15 +282,16 @@ def plan_logrotate_config(
     rotate_count: int = 14,
     compress: bool = True,
     maxsize: str = "",
-    disable_odoo_internal: bool = False,
+    remove_obsolete_odoo_key: bool = False,
     include_nginx: bool = False,
 ) -> list[Command]:
     """Build a system-logrotate policy for the instance's logs.
 
     The Odoo log uses ``copytruncate`` (Odoo does not reopen its log on a signal);
     the Nginx logs, when included, use ``create`` + a ``postrotate`` SIGUSR1 reopen
-    (the modern Nginx-idiomatic method). Optionally disables Odoo's own
-    ``logrotate`` conf flag to avoid rotating the Odoo log twice.
+    (the modern Nginx-idiomatic method). Optionally strips a stale ``logrotate``
+    key from the ``odoo.conf`` (Odoo's built-in log rotation was removed in Odoo 13,
+    so the key is an ignored no-op that is cleaner to delete).
     """
     content = _logrotate_content(config, frequency, rotate_count, compress, maxsize)
     if include_nginx:
@@ -312,12 +312,12 @@ def plan_logrotate_config(
             f"logrotate -d {shlex.quote(config.logrotate_config_file)}",
         )
     )
-    if disable_odoo_internal:
+    if remove_obsolete_odoo_key:
         commands.append(
             Command(
-                "Desactivar logrotate interno de Odoo (evita doble rotación)",
+                "Eliminar clave 'logrotate' obsoleta del odoo.conf (Odoo ≥13 la ignora)",
                 f"test -f {shlex.quote(config.odoo_conf_file)} && "
-                f"sed -ri 's/^[[:space:]]*logrotate[[:space:]]*=[[:space:]]*True/logrotate = False/' "
+                f"sed -ri '/^[[:space:]]*logrotate[[:space:]]*=/d' "
                 f"{shlex.quote(config.odoo_conf_file)} || true",
             )
         )

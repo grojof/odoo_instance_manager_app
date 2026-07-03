@@ -70,7 +70,7 @@ For an instance named `<instance>` with domain `<domain>`:
 `planners._odoo_conf_content` writes (among others): `admin_passwd` (defaults to the instance name),
 `list_db = True` (the database manager is reachable — restrict it at the proxy or change this on public
 deployments), `proxy_mode = True`, `http_interface = 127.0.0.1`, `workers = 4`, `max_cron_threads = 2`,
-memory/time limits, `logfile = /var/log/odoo/<instance>.log`, `logrotate = True`, and an `addons_path` of
+memory/time limits, `logfile = /var/log/odoo/<instance>.log`, and an `addons_path` of
 `<home>/odoo/addons,<home>/addons-oca,<home>/addons-custom`.
 
 > **Security note:** `list_db = True` combined with an `admin_passwd` that defaults to the instance name means

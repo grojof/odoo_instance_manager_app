@@ -21,34 +21,24 @@ optional size threshold, using `copytruncate` so the running service is not rest
 - **WHEN** the operator opts to also rotate on a size threshold
 - **THEN** the generated policy includes a `maxsize` directive with the chosen value
 
-### Requirement: Avoid double rotation with Odoo's built-in logrotate
-
-When the instance's `odoo.conf` still enables Odoo's own `logrotate`, the tool SHALL warn about double
-rotation and offer to set `logrotate = False` in the config.
-
-#### Scenario: Built-in logrotate is disabled on request
-
-- **WHEN** the config has `logrotate = True` and the operator accepts disabling it
-- **THEN** the plan sets `logrotate = False` in the `odoo.conf` and the tool notes that an Odoo restart applies
-  the change
-
-#### Scenario: Built-in logrotate is left untouched when declined
-
-- **WHEN** the operator declines disabling the built-in logrotate
-- **THEN** the config is not modified and only the system logrotate policy is written
-
 ### Requirement: Query log rotation state
 
-The tool SHALL report an instance's log-rotation state read-only: the Odoo log path, whether a system
-logrotate policy exists (and its content), a dry-run preview, current log file sizes, the state of Odoo's
-built-in `logrotate` flag, and who rotates the instance's Nginx logs.
+The tool SHALL report an instance's log-rotation state read-only: whether rotation of the Odoo log is active,
+the Odoo log path, whether a system logrotate policy exists (and its content), a dry-run preview, current log
+file sizes, and who rotates the instance's Nginx logs.
+
+#### Scenario: Odoo log rotation status is reported as active or inactive
+
+- **WHEN** the operator queries log rotation for an instance
+- **THEN** the tool clearly reports whether rotation of the Odoo log is **active** (a system logrotate policy
+  exists covering `/var/log/odoo/<instance>.log`) or **inactive**
 
 #### Scenario: Query reports the current state without changes
 
 - **WHEN** the operator queries log rotation for an instance
 - **THEN** the tool shows the Odoo log path, the system logrotate policy (or that none exists), a
-  `logrotate -d` dry-run preview when a policy exists, the current log file sizes, and Odoo's built-in
-  `logrotate` value, without producing or applying any mutating command
+  `logrotate -d` dry-run preview when a policy exists, and the current log file sizes, without producing or
+  applying any mutating command
 
 #### Scenario: Nginx rotation coverage is reported
 
@@ -74,4 +64,19 @@ than `copytruncate`.
 
 - **WHEN** the distribution's Nginx logrotate already covers `/var/log/nginx/*.log`
 - **THEN** the tool does not add a second Nginx policy and reports that the system already rotates them
+
+### Requirement: Clean up the obsolete Odoo logrotate key
+
+The tool SHALL NOT write Odoo's built-in `logrotate` option in the generated `odoo.conf` (it was removed in
+Odoo 13), and SHALL offer to delete a stale `logrotate` key from an existing conf when one is present.
+
+#### Scenario: Stale logrotate key is removed on request
+
+- **WHEN** the instance's `odoo.conf` contains a `logrotate` key and the operator accepts removing it
+- **THEN** the plan deletes the `logrotate` line from the config
+
+#### Scenario: No stale key means nothing to clean
+
+- **WHEN** the `odoo.conf` has no `logrotate` key
+- **THEN** no config edit is offered or performed
 
