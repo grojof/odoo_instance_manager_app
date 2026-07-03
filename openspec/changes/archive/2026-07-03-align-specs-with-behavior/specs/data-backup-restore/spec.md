@@ -1,36 +1,4 @@
-# data-backup-restore Specification
-
-## Purpose
-
-Move instance data safely: back up an instance's database and/or filestore,
-restore a dump and/or filestore into a target, and duplicate an instance's
-database (and optionally filestore) from a template. Data operations honor
-Odoo's copied-vs-moved semantics (UUID regeneration) and optional neutralization
-of the target.
-## Requirements
-### Requirement: Backup
-
-The tool SHALL back up an instance's database (as a compressed custom-format dump) and/or its filestore (as a
-gzipped tar) into the chosen backup directory, using a **single timestamp for the whole operation** and
-writing each artifact **atomically** (a temporary file promoted only on success).
-
-#### Scenario: Database backup produces an atomic timestamped custom dump
-
-- **WHEN** the operator selects a backup that includes the database
-- **THEN** the plan runs `pg_dump -Fc` to a temporary file and renames it to
-  `<backup_dir>/<instance>_<timestamp>.dump` only on success, removing the temporary file and failing the step
-  otherwise
-
-#### Scenario: Filestore backup archives the resolved filestore path atomically
-
-- **WHEN** the operator selects a backup that includes the filestore
-- **THEN** the plan tars the resolved filestore directory to a temporary file and renames it to
-  `<backup_dir>/<instance>_<timestamp>.filestore.tar.gz` only on success
-
-#### Scenario: DB dump and filestore archive share one timestamp
-
-- **WHEN** the operator selects a "DB + Filestore" backup
-- **THEN** the `.dump` and `.filestore.tar.gz` names carry the **same** timestamp so the pair can be matched
+## MODIFIED Requirements
 
 ### Requirement: Restore
 
@@ -91,31 +59,3 @@ or system user.
 - **WHEN** duplication completes
 - **THEN** only the database and (optionally) filestore exist for the target; provisioning its service, config,
   and user remains a separate install step
-
-### Requirement: Copied vs moved database semantics
-
-Restore and duplication SHALL apply Odoo migration semantics: in "copied" mode
-regenerate the target's `database.uuid`; when neutralization is requested,
-deactivate crons, outgoing mail servers, and fetchmail servers in the target.
-
-#### Scenario: Copied mode regenerates the database UUID
-
-- **WHEN** the operator selects the copied mode
-- **THEN** the plan upserts a fresh `database.uuid` into `ir_config_parameter` on the target database
-
-#### Scenario: Neutralization deactivates automation in the target
-
-- **WHEN** the operator opts to neutralize the target
-- **THEN** the plan deactivates `ir_cron`, `ir_mail_server`, and `fetchmail_server` rows (tolerating tables that do not exist)
-
-### Requirement: Database name path safety
-
-An operator-entered database name SHALL be validated as a safe single path component before it is interpolated
-into a filestore path that is created, archived, or deleted.
-
-#### Scenario: Traversal in a database name is refused
-
-- **WHEN** a database name used for backup, restore, or filestore deletion contains a path separator or a
-  `.`/`..` traversal component
-- **THEN** the operation is refused with a descriptive error and no filestore command is built or executed
-

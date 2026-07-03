@@ -1,13 +1,5 @@
-# server-audit Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Produce a read-only audit report of an Ubuntu server hosting Odoo, intended to
-hand off to an external server. The report discovers Odoo instances from systemd
-units, configs, Nginx vhosts, and filestores, and summarizes system facts, per
--instance technical detail, TLS posture, and detected Odoo release versions —
-without changing anything.
-## Requirements
 ### Requirement: System overview
 
 The report SHALL summarize host facts: hostname, OS pretty name, kernel, architecture, virtualization, uptime,
@@ -45,27 +37,6 @@ filestore roots, deriving each instance's home, config, and Python from the serv
 - **THEN** it is treated as an Odoo config only if it is not backup-like and contains at least two expected Odoo
   keys
 
-### Requirement: TLS posture reporting
-
-The report SHALL classify each instance's TLS material (self-signed, Let's
-Encrypt, custom, incomplete, or none) and report certificate metadata and
-expiry status against a threshold.
-
-#### Scenario: Certificate expiry is classified against a threshold
-
-- **WHEN** an instance vhost references a certificate
-- **THEN** the report classifies the certificate type and marks it OK, WARN (expiring within the threshold), MISSING, or ERROR based on `openssl` checks
-
-### Requirement: Odoo version detection
-
-The report SHALL detect each instance's Odoo release version from the checked-out
-source `release.py` when available.
-
-#### Scenario: Release version is read from source
-
-- **WHEN** an instance's Odoo home is known
-- **THEN** the report reads `version_info` from `<home>/odoo/odoo/release.py` and reports the major.minor version, or blank when unavailable
-
 ### Requirement: Read-only guarantee
 
 The audit SHALL be read-only with respect to server configuration: it runs discovery and inspection commands
@@ -88,4 +59,3 @@ request, write a single report file and run active (read-only) TLS certificate c
 
 - **WHEN** the operator opts into active TLS checks with an expiry threshold
 - **THEN** the tool runs read-only `openssl` certificate checks and does not modify any certificate or service
-

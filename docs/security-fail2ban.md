@@ -21,6 +21,10 @@ IPs/networks to ignore (loopback is always ignored) and tune `bantime`, `findtim
 recidive bantime. The plan validates with `fail2ban-client -t`, enables/restarts the service, and waits for
 the socket to be ready.
 
+> **UFW prerequisite:** the ban action is `ufw`, so bans only take effect if **UFW is installed and active**.
+> The tool does not install UFW — set it up separately (`apt-get install ufw && ufw enable`) or the jails will
+> run but never actually block traffic.
+
 ## Per-instance Odoo jail
 
 **Activar protección Odoo por instancia** installs the shared `odoo-auth` filter and writes a dedicated
@@ -30,12 +34,15 @@ log with `fail2ban-regex`.
 ### Real-client-IP check (important behind a proxy)
 
 Odoo sits behind Nginx, so its log may record the **proxy/gateway** IP instead of the real client. Banning
-those would lock out your own infrastructure. The tool assesses the last lines of the log:
+those would lock out your own infrastructure. The tool assesses the **last 300 lines** of the log and matches
+**IPv4 addresses only**:
 
 - **Public IPs present** → reported OK; activation proceeds.
 - **Only private/loopback IPs** → warns of the risk and **requires explicit confirmation** before enabling the
   jail. Recommendation: fix forwarded headers (`proxy_mode`, `X-Forwarded-For`) so Odoo logs the real client
   IP first.
+- **Unknown** (log missing/unreadable or no parseable IPv4) → warns, but does not by itself block enabling the
+  jail.
 
 Run this check on its own with **Verificar IP real en log Odoo**.
 

@@ -101,13 +101,20 @@ configs, or existing Nginx vhosts.
 
 When a provisioning run fails **or is interrupted** while applying, the tool SHALL run a best-effort cleanup of
 that instance's residues so the operation can be retried cleanly, and SHALL return control to the menu rather
-than terminating the program.
+than terminating the program. Whether the cleanup drops the instance DB role is determined by the **install
+mode**, not by whether the role was newly created.
 
 #### Scenario: Failed install triggers cleanup
 
 - **WHEN** applying an install plan raises an error partway through
 - **THEN** the tool runs cleanup commands (stop/disable/remove service, remove config, home, Nginx vhosts, SSL
-  dir, and — when the run created it — the instance DB role) with stop-on-error disabled
+  dir, and — in the PostgreSQL-install modes — the instance DB role, even if it pre-existed) with stop-on-error
+  disabled
+
+#### Scenario: Odoo-only install never drops the DB role on cleanup
+
+- **WHEN** an Odoo-only install (no PostgreSQL) fails and cleanup runs
+- **THEN** the cleanup does not drop the instance DB role, since that mode does not own it
 
 #### Scenario: Interrupted install triggers cleanup
 

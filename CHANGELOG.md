@@ -6,7 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Aligned the specs and docs with actual behavior (config update replays the full base setup; audit read-only
+  is qualified to an optional operator-initiated report file + active TLS checks; UFW is a documented runtime
+  prerequisite for Fail2ban banning; cleanup drops the DB role by install mode; `list_db = True` security
+  note; Python 3.12+ stated as the floor).
+- Reworded the app-server-IP prompt to drop a non-existent UFW reference (only a `pg_hba` rule is added).
+
 ### Fixed
+
+- Install the correct `libtiff-dev` package instead of `libtiff5-dev`, which does not exist on Ubuntu 24.04
+  and would fail the first `apt-get install` step on the tool's own target OS.
 
 - Duplication now places the copied filestore under the **target** instance's data directory (was placed under
   the source instance's, leaving the duplicate without attachments).

@@ -15,7 +15,7 @@ plan before applying — see [Architecture](architecture.md).
 ## Prerequisites
 
 - Ubuntu 24.04 server.
-- Python 3 available as `python3`.
+- Python 3.12+ available as `python3` (the tool uses 3.12 syntax).
 - Run as root: the tool refuses to start otherwise.
 
 ```bash
