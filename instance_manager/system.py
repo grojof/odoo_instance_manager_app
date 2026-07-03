@@ -32,6 +32,34 @@ def run(command: str, check: bool = False) -> subprocess.CompletedProcess[str]:
     return result
 
 
+def run_streaming(command: str) -> subprocess.CompletedProcess[str]:
+    """Run a command, forwarding its output live while also capturing it.
+
+    stdlib-only (``subprocess.Popen``): stderr is merged into stdout so combined
+    output appears in real time — useful for long steps (apt/pip/pg_restore) that
+    would otherwise sit silent. stdin is closed so a command never blocks waiting
+    for input. Returns a ``CompletedProcess`` with the accumulated output.
+    """
+    process = subprocess.Popen(
+        ["bash", "-lc", command],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    captured: list[str] = []
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line, end="", flush=True)
+        captured.append(line)
+    process.stdout.close()
+    returncode = process.wait()
+    return subprocess.CompletedProcess(process.args, returncode, "".join(captured), "")
+
+
 def require_root_for_apply() -> None:
     if os.geteuid() != 0:
         raise RuntimeError("Para aplicar cambios en sistema ejecuta como root (sudo).")
@@ -88,12 +116,10 @@ def preview_commands(commands: list[Command]) -> None:
 def apply_commands(commands: list[Command], stop_on_error: bool = True) -> None:
     for index, item in enumerate(commands, start=1):
         print(f"\n{style(f'[{index}/{len(commands)}]', 'blue', 'bold')} {item.description}")
-        result = run(item.command, check=False)
-        if result.stdout.strip():
-            print(result.stdout.strip())
+        # Stream output live so long steps (apt/pip/pg_restore) aren't silent.
+        result = run_streaming(item.command)
         if result.returncode != 0:
-            if result.stderr.strip():
-                print(level_text("ERROR", result.stderr.strip()))
+            print(level_text("ERROR", f"Comando terminó con código {result.returncode}."))
             if stop_on_error:
                 raise RuntimeError(f"Fallo ejecutando: {item.command}")
 

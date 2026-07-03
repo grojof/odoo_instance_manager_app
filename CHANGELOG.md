@@ -13,6 +13,8 @@ All notable changes to this project are documented here. The format is based on
   picker can be cancelled; and numeric prompts report the correct range (fixing the "Puerto fuera de rango"
   message on `maxretry`).
 - Every menu now shows a consistent `0) Cancelar` entry (unifying the previous three cancel conventions).
+- Command output is now streamed live while a plan is applied (via stdlib `subprocess.Popen`), so long steps
+  (apt/pip/git/pg_restore) are no longer silent. No new dependency — the tool remains standard-library only.
 
 ### Changed
 
