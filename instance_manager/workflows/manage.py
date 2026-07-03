@@ -51,6 +51,7 @@ from .diskusage import manage_disk_usage
 from .health import run_health_check
 from .install import _maybe_plan_certs
 from .logrotate import manage_log_rotation
+from .scheduled_backup import manage_scheduled_backup
 
 
 def _read_nginx_https_ssl_paths(config: InstanceConfig) -> tuple[str, str]:
@@ -494,6 +495,7 @@ def manage_existing_instance() -> None:
                 "Instalar paquetes Python en venv",
                 "Inventario de addons",
                 "Realizar backup",
+                "Backups programados",
                 "Restaurar backup",
                 "Duplicar instancia",
                 "Eliminar instancia",
@@ -528,6 +530,8 @@ def manage_existing_instance() -> None:
             show_addon_inventory(config)
         elif action == "Realizar backup":
             db_creds = _backup_instance(config, db_creds)
+        elif action == "Backups programados":
+            manage_scheduled_backup(config)
         elif action == "Restaurar backup":
             db_creds = _restore_backup(config, db_creds)
         elif action == "Duplicar instancia":

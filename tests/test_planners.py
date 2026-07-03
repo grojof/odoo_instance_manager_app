@@ -11,9 +11,43 @@ from instance_manager.planners import (
     _odoo_conf_content,
     plan_backup_retention,
     plan_logrotate_config,
+    plan_remove_scheduled_backup,
+    plan_scheduled_backup,
     plan_ufw_allow_port,
     plan_ufw_base_setup,
 )
+
+
+class ScheduledBackupTests(unittest.TestCase):
+    def _plan_text(self, **kw: object) -> str:
+        defaults = dict(
+            db_name="acme",
+            backup_dir="/var/backups/odoo18",
+            filestore_dir="/opt/odoo/odoo18/.local/share/Odoo/filestore/acme",
+            oncalendar="*-*-* 02:30:00",
+            keep=7,
+            include_filestore=True,
+        )
+        defaults.update(kw)
+        cmds = plan_scheduled_backup(_config(), **defaults)  # type: ignore[arg-type]
+        return "\n".join(f"{c.description}\n{c.command}" for c in cmds)
+
+    def test_writes_script_service_timer_and_enables(self) -> None:
+        text = self._plan_text()
+        self.assertIn("/usr/local/sbin/odoo-backup-odoo18.sh", text)
+        self.assertIn("/etc/systemd/system/odoo-backup-odoo18.service", text)
+        self.assertIn("/etc/systemd/system/odoo-backup-odoo18.timer", text)
+        self.assertIn("OnCalendar=*-*-* 02:30:00", text)
+        self.assertIn("sudo -u postgres pg_dump -Fc acme", text)
+        self.assertIn("systemctl enable --now odoo-backup-odoo18.timer", text)
+
+    def test_filestore_excluded_when_declined(self) -> None:
+        self.assertNotIn("filestore.tar.gz", self._plan_text(include_filestore=False))
+
+    def test_remove_disables_and_deletes(self) -> None:
+        text = "\n".join(c.command for c in plan_remove_scheduled_backup(_config()))
+        self.assertIn("systemctl disable --now odoo-backup-odoo18.timer", text)
+        self.assertIn("rm -f /etc/systemd/system/odoo-backup-odoo18.timer", text)
 
 
 class UfwPlanTests(unittest.TestCase):

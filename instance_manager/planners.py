@@ -861,6 +861,112 @@ def plan_backup_retention(
     return commands
 
 
+def _scheduled_backup_script(
+    config: InstanceConfig,
+    db_name: str,
+    backup_dir: str,
+    filestore_dir: str,
+    keep: int,
+    include_filestore: bool,
+) -> str:
+    inst = config.instance
+    filestore_block = ""
+    if include_filestore:
+        filestore_block = f'''
+if [ -d "$FILESTORE" ]; then
+  TMPF="$BACKUP_DIR/{inst}_${{TS}}.filestore.tar.gz.partial"
+  tar -czf "$TMPF" -C "$FILESTORE" . && mv "$TMPF" "$BACKUP_DIR/{inst}_${{TS}}.filestore.tar.gz"
+fi
+ls -1t "$BACKUP_DIR/{inst}"_*.filestore.tar.gz 2>/dev/null | tail -n +$(({keep}+1)) | xargs -r rm -f
+'''
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+BACKUP_DIR="{backup_dir}"
+FILESTORE="{filestore_dir}"
+TS=$(date +%Y%m%d_%H%M%S)
+mkdir -p "$BACKUP_DIR"
+TMP="$BACKUP_DIR/{inst}_${{TS}}.dump.partial"
+sudo -u postgres pg_dump -Fc {shlex.quote(db_name)} > "$TMP" && mv "$TMP" "$BACKUP_DIR/{inst}_${{TS}}.dump"
+ls -1t "$BACKUP_DIR/{inst}"_*.dump 2>/dev/null | tail -n +$(({keep}+1)) | xargs -r rm -f
+{filestore_block}'''
+
+
+def _scheduled_backup_service(name: str, script_path: str, instance: str) -> str:
+    return f'''[Unit]
+Description=Backup programado de Odoo ({instance})
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart={script_path}
+'''
+
+
+def _scheduled_backup_timer(name: str, oncalendar: str, instance: str) -> str:
+    return f'''[Unit]
+Description=Timer de backup de Odoo ({instance})
+
+[Timer]
+OnCalendar={oncalendar}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+'''
+
+
+def plan_scheduled_backup(
+    config: InstanceConfig,
+    *,
+    db_name: str,
+    backup_dir: str,
+    filestore_dir: str,
+    oncalendar: str,
+    keep: int,
+    include_filestore: bool,
+) -> list[Command]:
+    """Install a systemd service + timer that backs up the instance's DB (via
+    local ``sudo -u postgres pg_dump``) and, optionally, its filestore, with
+    retention, on the given ``OnCalendar`` schedule."""
+    name = f"odoo-backup-{config.instance}"
+    script_path = f"/usr/local/sbin/{name}.sh"
+    service_path = f"/etc/systemd/system/{name}.service"
+    timer_path = f"/etc/systemd/system/{name}.timer"
+
+    commands: list[Command] = []
+    commands.extend(
+        write_text_file_command(
+            script_path,
+            _scheduled_backup_script(config, db_name, backup_dir, filestore_dir, keep, include_filestore),
+            "750",
+        )
+    )
+    commands.extend(
+        write_text_file_command(service_path, _scheduled_backup_service(name, script_path, config.instance), "644")
+    )
+    commands.extend(
+        write_text_file_command(timer_path, _scheduled_backup_timer(name, oncalendar, config.instance), "644")
+    )
+    commands.append(Command("Recargar systemd", "systemctl daemon-reload"))
+    commands.append(
+        Command("Habilitar y arrancar timer de backup", f"systemctl enable --now {name}.timer")
+    )
+    return commands
+
+
+def plan_remove_scheduled_backup(config: InstanceConfig) -> list[Command]:
+    name = f"odoo-backup-{config.instance}"
+    return [
+        Command("Detener y deshabilitar timer", f"systemctl disable --now {name}.timer || true"),
+        Command(
+            "Eliminar units y script de backup",
+            f"rm -f /etc/systemd/system/{name}.timer /etc/systemd/system/{name}.service "
+            f"/usr/local/sbin/{name}.sh",
+        ),
+        Command("Recargar systemd", "systemctl daemon-reload"),
+    ]
+
+
 def plan_ufw_base_setup(
     *,
     ssh_port: int = 22,
