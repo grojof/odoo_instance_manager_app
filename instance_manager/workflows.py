@@ -133,7 +133,7 @@ def _build_partial_install_cleanup(
         ),
         Command(
             "[Cleanup] Eliminar unit file",
-            f"rm -f /etc/systemd/system/{config.odoo_service}.service",
+            f"rm -f {_quote(f'/etc/systemd/system/{config.odoo_service}.service')}",
         ),
         Command("[Cleanup] Recargar systemd", "systemctl daemon-reload"),
         Command(
@@ -145,11 +145,11 @@ def _build_partial_install_cleanup(
         ),
         Command(
             "[Cleanup] Eliminar Nginx HTTP",
-            f"rm -f /etc/nginx/sites-available/{config.nginx_http_name} /etc/nginx/sites-enabled/{config.nginx_http_name}",
+            f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_http_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_http_name}')}",
         ),
         Command(
             "[Cleanup] Eliminar Nginx HTTPS",
-            f"rm -f /etc/nginx/sites-available/{config.nginx_https_name} /etc/nginx/sites-enabled/{config.nginx_https_name}",
+            f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_https_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_https_name}')}",
         ),
         Command(
             "[Cleanup] Eliminar SSL de instancia",
@@ -440,6 +440,24 @@ def _select_existing_instance() -> str:
             return selected
 
     return ask_text("Nombre de instancia", "", required=False)
+
+
+def _validate_instance_or_abort(instance: str) -> InstanceConfig | None:
+    """Build and validate a config for a destructive flow.
+
+    Returns a normalized, validated ``InstanceConfig`` or ``None`` when the
+    instance identifier is unsafe (printing a descriptive error). Callers must
+    treat ``None`` as "abort back to the menu" and never build a plan from an
+    unvalidated name.
+    """
+    config = InstanceConfig(instance=instance)
+    config.normalize_defaults()
+    try:
+        config.validate_identifiers()
+    except ValueError as error:
+        print(level_text("ERROR", str(error)))
+        return None
+    return config
 
 
 def _probe_databases_for_management(instance: str) -> tuple[str, str | None, list[str]]:
@@ -1503,6 +1521,12 @@ def _duplicate_instance(config: InstanceConfig) -> None:
     target_db = ask_text("Nueva DB destino", target_instance, required=True)
 
     target_config = InstanceConfig(instance=target_instance)
+    target_config.db_user = target_db
+    try:
+        target_config.validate_identifiers()
+    except ValueError as error:
+        print(level_text("ERROR", str(error)))
+        return
     if path_exists(target_config.odoo_home):
         print(f"[ERROR] Ya existe {target_config.odoo_home}")
         return
@@ -1607,7 +1631,7 @@ def _delete_instance(config: InstanceConfig) -> None:
         ),
         Command(
             "Eliminar unit file",
-            f"rm -f /etc/systemd/system/{config.odoo_service}.service",
+            f"rm -f {_quote(f'/etc/systemd/system/{config.odoo_service}.service')}",
         ),
         Command("Recargar systemd", "systemctl daemon-reload"),
         Command(
@@ -1616,11 +1640,11 @@ def _delete_instance(config: InstanceConfig) -> None:
         Command("Eliminar home de instancia", f"rm -rf {_quote(config.odoo_home)}"),
         Command(
             "Eliminar Nginx HTTP",
-            f"rm -f /etc/nginx/sites-available/{config.nginx_http_name} /etc/nginx/sites-enabled/{config.nginx_http_name}",
+            f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_http_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_http_name}')}",
         ),
         Command(
             "Eliminar Nginx HTTPS",
-            f"rm -f /etc/nginx/sites-available/{config.nginx_https_name} /etc/nginx/sites-enabled/{config.nginx_https_name}",
+            f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_https_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_https_name}')}",
         ),
         Command("Eliminar SSL de instancia", f"rm -rf {_quote(config.nginx_ssl_dir)}"),
         Command("Validar Nginx", "nginx -t"),
@@ -1760,8 +1784,9 @@ def purge_instance_superuser() -> None:
         print("[INFO] Operación cancelada.")
         return
 
-    config = InstanceConfig(instance=instance)
-    config.normalize_defaults()
+    config = _validate_instance_or_abort(instance)
+    if config is None:
+        return
 
     filestore_dbs, filestore_root = _list_filestore_databases(config)
 
@@ -1809,7 +1834,7 @@ def purge_instance_superuser() -> None:
         ),
         Command(
             "Eliminar unit file",
-            f"rm -f /etc/systemd/system/{config.odoo_service}.service",
+            f"rm -f {_quote(f'/etc/systemd/system/{config.odoo_service}.service')}",
         ),
         Command("Recargar systemd", "systemctl daemon-reload"),
         Command(
@@ -1822,15 +1847,15 @@ def purge_instance_superuser() -> None:
         ),
         Command(
             "Eliminar logs Odoo/Nginx de instancia",
-            f"rm -f /var/log/odoo/{config.instance}.log /var/log/nginx/{config.instance}.access.log /var/log/nginx/{config.instance}.error.log",
+            f"rm -f {_quote(f'/var/log/odoo/{config.instance}.log')} {_quote(f'/var/log/nginx/{config.instance}.access.log')} {_quote(f'/var/log/nginx/{config.instance}.error.log')}",
         ),
         Command(
             "Eliminar Nginx HTTP",
-            f"rm -f /etc/nginx/sites-available/{config.nginx_http_name} /etc/nginx/sites-enabled/{config.nginx_http_name}",
+            f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_http_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_http_name}')}",
         ),
         Command(
             "Eliminar Nginx HTTPS",
-            f"rm -f /etc/nginx/sites-available/{config.nginx_https_name} /etc/nginx/sites-enabled/{config.nginx_https_name}",
+            f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_https_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_https_name}')}",
         ),
         Command("Eliminar SSL de instancia", f"rm -rf {_quote(config.nginx_ssl_dir)}"),
         Command("Eliminar raíz filestore de instancia", f"rm -rf {_quote(filestore_root)}"),
@@ -1907,9 +1932,11 @@ def manage_existing_instance() -> None:
         print("[INFO] Operación cancelada.")
         return
 
-    config = InstanceConfig(instance=instance)
+    config = _validate_instance_or_abort(instance)
+    if config is None:
+        return
+
     config.db_name, db_error, listed_dbs = _probe_databases_for_management(instance)
-    config.normalize_defaults()
 
     while True:
         print("\nEstado completo de la instancia:")

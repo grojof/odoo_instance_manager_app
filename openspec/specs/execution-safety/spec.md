@@ -6,9 +6,7 @@ Cross-cutting safety controls that every system-mutating action in the manager
 MUST pass through: privilege enforcement, a preview-before-apply gate, explicit
 confirmation for sensitive operations, strict identifier validation, automatic
 port allocation, and best-effort cleanup when a provisioning run fails partway.
-
 ## Requirements
-
 ### Requirement: Root privilege enforcement
 
 The tool SHALL require root privileges to run, and SHALL re-check for root
@@ -61,8 +59,10 @@ confirmation phrase that names the operation and target instance.
 
 ### Requirement: Identifier validation
 
-Instance and PostgreSQL identifiers SHALL be validated against safe patterns
-before they are used to build any command or configuration.
+Instance and PostgreSQL identifiers SHALL be validated against safe patterns before they are used to build any
+command or configuration. This applies to **every** flow that acts on an instance — provisioning,
+configuration, removal, purge, and duplication — including instances selected or typed manually and
+duplication target names.
 
 #### Scenario: Invalid instance name is rejected
 
@@ -73,6 +73,18 @@ before they are used to build any command or configuration.
 
 - **WHEN** a database user does not match the PostgreSQL identifier pattern `[a-z_][a-z0-9_]{0,62}`
 - **THEN** validation fails with a descriptive error before any plan is built
+
+#### Scenario: Manually selected instance is validated before any destructive plan
+
+- **WHEN** an instance name is typed or selected for the manage, delete, or total-purge flows
+- **THEN** the name is validated against the instance pattern before any command or SQL is built, and an
+  invalid name is refused with a descriptive error and no plan is executed
+
+#### Scenario: Duplication target name is validated
+
+- **WHEN** a target instance and database name are entered for duplication
+- **THEN** both are validated against the instance/PostgreSQL patterns before any command or SQL is built, and
+  an invalid target is refused with a descriptive error
 
 ### Requirement: Automatic port allocation
 
@@ -94,3 +106,4 @@ cleanup of that instance's residues so the operation can be retried cleanly.
 
 - **WHEN** applying an install plan raises an error partway through
 - **THEN** the tool runs cleanup commands (stop/disable/remove service, remove config, home, Nginx vhosts, SSL dir, and — when the run created it — the instance DB role) with stop-on-error disabled, then re-raises the failure
+
