@@ -1,12 +1,5 @@
-# fail2ban-protection Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Install and operate Fail2ban to protect the server and individual Odoo
-instances: a secure base configuration, per-instance Odoo auth jails, assessment
-of whether the Odoo log carries the real client IP, and operational actions
-(status, jail detail, unban, regex testing).
-## Requirements
 ### Requirement: Secure base setup
 
 The tool SHALL install Fail2ban and write a base jail configuration enabling `sshd`, `nginx-http-auth`,
@@ -26,17 +19,6 @@ does not install UFW.
 - **WHEN** the base setup completes on a host without UFW
 - **THEN** the jails validate and run, but bans do not take effect until UFW is installed and active (a
   documented prerequisite, not installed by the tool)
-
-### Requirement: Per-instance Odoo jail
-
-The tool SHALL enable a dedicated `odoo-auth-<instance>` jail bound to the
-instance log, installing the shared Odoo auth filter and testing the filter
-against the log before activation.
-
-#### Scenario: Instance jail is created and filter-tested
-
-- **WHEN** the operator activates protection for an instance and supplies its log path
-- **THEN** the plan installs the `odoo-auth` filter, writes the `odoo-auth-<instance>` jail for that log, verifies the log exists, runs `fail2ban-regex` against it, validates the config, and (re)starts Fail2ban
 
 ### Requirement: Real-client-IP assessment
 
@@ -59,24 +41,3 @@ inspects the last 300 log lines and matches IPv4 addresses only.
 
 - **WHEN** the log is missing, unreadable, or contains no parseable IPv4 address
 - **THEN** the tool reports an unknown result and warns, but does not by itself block enabling the jail
-
-### Requirement: Fail2ban operations
-
-The tool SHALL provide operational actions over jails: show status/jails, show a
-jail's detail, unban an IP, and test the Odoo regex against a log.
-
-#### Scenario: Unban lists banned IPs then removes the chosen one
-
-- **WHEN** the operator unbans an IP for a jail
-- **THEN** the currently banned IPs are listed for selection (or manual entry), and the plan runs `fail2ban-client set <jail> unbanip <ip>`
-
-#### Scenario: Regex test ensures the filter then runs fail2ban-regex
-
-- **WHEN** the operator tests the Odoo regex against a log
-- **THEN** the plan ensures the default `odoo-auth` filter exists when targeted, validates the log and filter files, and runs `fail2ban-regex`
-
-#### Scenario: Status tolerates a not-yet-ready socket
-
-- **WHEN** the service is active but the socket has not yet come up
-- **THEN** the status view reports a waiting state rather than an error
-

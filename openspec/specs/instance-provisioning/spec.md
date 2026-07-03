@@ -6,9 +6,7 @@ Install and provision Odoo Community instances and their PostgreSQL backing on
 an Ubuntu server: an Odoo-only instance, a PostgreSQL-only setup, or both
 together. Provisioning is idempotent where possible (create-if-missing) and
 always renders a plan before applying.
-
 ## Requirements
-
 ### Requirement: Install modes
 
 The tool SHALL offer three provisioning modes: Odoo only, PostgreSQL only, and
@@ -31,30 +29,34 @@ Odoo + PostgreSQL together.
 
 ### Requirement: Odoo base setup
 
-The Odoo base setup SHALL install OS dependencies, create the instance system
-user and directory layout, clone the Odoo repository at the requested branch,
-build a virtualenv with requirements, write the instance config and systemd
-unit, and register the service.
+The Odoo base setup SHALL install OS dependencies, create the instance system user and directory layout, clone
+the Odoo repository at the requested branch, build a virtualenv with requirements, write the instance config
+and systemd unit, and register the service.
 
 #### Scenario: Instance directories and user are created
 
 - **WHEN** the base setup runs for a new instance
-- **THEN** it creates the system user (if missing), the `/opt/odoo/<instance>` home with `odoo`, `addons-oca`, `addons-custom` subdirs, the `/etc/odoo/<instance>` config dir, and `/var/log/odoo`, with correct ownership and a `750` config dir
+- **THEN** it creates the system user (if missing), the `/opt/odoo/<instance>` home with `odoo`, `addons-oca`,
+  `addons-custom` subdirs, the `/etc/odoo/<instance>` config dir, and `/var/log/odoo`, with correct ownership
+  and a `750` config dir
 
 #### Scenario: Odoo repo and venv are prepared
 
 - **WHEN** the base setup runs
-- **THEN** it clones `odoo` at the requested branch only if absent, and creates/updates the venv installing `requirements.txt`
+- **THEN** it clones `odoo` at the requested branch only if absent, and creates/updates the venv installing
+  `requirements.txt`
 
 #### Scenario: Config and unit files are written with restrictive permissions
 
 - **WHEN** the base setup writes the instance config and systemd unit
-- **THEN** `<instance>.conf` is written mode `640` owned `root:<instance>`, and the systemd unit is written mode `644`, followed by a systemd daemon-reload
+- **THEN** `<instance>.conf` is written mode `640` owned `root:<instance>`, and the systemd unit is written
+  mode `644`, followed by a systemd daemon-reload
 
 #### Scenario: Service autostart is operator-controlled
 
 - **WHEN** the operator opts into service autostart
-- **THEN** the plan enables and starts the service; otherwise it starts the service without enabling it at boot
+- **THEN** the plan enables and starts the service; otherwise it explicitly disables autostart and then starts
+  the service (running now but not enabled at boot)
 
 ### Requirement: Database role provisioning
 
@@ -98,3 +100,4 @@ any plan.
 
 - **WHEN** the operator leaves DB user, DB password, or admin password empty
 - **THEN** each blank value is set to the instance name during normalization
+

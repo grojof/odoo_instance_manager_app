@@ -16,15 +16,20 @@ handle day-2 operations. Instances are discovered automatically; you may also ty
 
 **Gestión segura de instancia** opens on a status view that shows the instance's expected paths and a
 detected-state table: Linux user, home, config file, systemd service (present + active), DB role, data dir,
-and TLS certificate mode (self-signed / custom-CA / external / Let's Encrypt / not configured). Optionally
-connect to PostgreSQL to list databases for validation.
+and TLS certificate mode (self-signed / custom-CA / external / Let's Encrypt / incomplete / not configured).
+Optionally connect to PostgreSQL to list databases for validation.
 
 ## Updating configuration
 
 **Actualizar configuración existente** regenerates the instance config, systemd unit, and (optionally) the
-Nginx vhost with new values — but first it **backs up** the current config, unit, and vhosts into a
+Nginx vhost with new values — but first it **backs up** the current config, unit, and vhosts into one
 timestamped directory under `/var/backups/<instance>/config_preupdate/`. The service's autostart state is
 preserved.
+
+> **Note:** this update **replays the full Odoo base setup** — it re-runs the package install, ensures the
+> user/directories, clones the repo if absent, and rebuilds the venv (`pip install -r requirements.txt`) — not
+> just a config rewrite. The prompts currently default to class defaults, so review every value before
+> confirming to avoid overwriting a working config (e.g. `db_password`).
 
 ## Service control
 
@@ -51,9 +56,14 @@ confirmation phrase (`RESTORE <instance>` / `DUPLICAR <instance>`):
 - **Neutralizar** (optional, recommended) — deactivates `ir_cron`, outgoing mail servers (`ir_mail_server`),
   and `fetchmail_server` in the target so a copy can't send mail or run jobs meant for production.
 
-Guardrails: restore refuses to overwrite an existing target **database**; an existing target **filestore**
-requires an explicit overwrite confirmation. Duplication refuses if the target home, service, database, or
-filestore already exists, and copies the DB via `createdb -T <source>`.
+Guardrails: restore refuses to overwrite an existing target **database** (the existence check runs against the
+**local** server, so a remote target collision is caught by `createdb` failing rather than the pre-check); an
+existing target **filestore** requires an explicit overwrite confirmation. Duplication refuses if the target
+home, service, database, or filestore already exists, and copies the DB via `createdb -T <source>`.
+
+> **Duplication scope:** *Duplicar instancia* copies the database and (optionally) the filestore only — the
+> duplicated filestore lands under the **target** instance's data directory. It does **not** provision the
+> target instance's service, config, or system user; run an install for that separately.
 
 ## Repairing Nginx logs & venv packages
 

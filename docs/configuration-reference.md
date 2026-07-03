@@ -27,7 +27,7 @@ the instance name, so a single name determines the whole layout.
 | `db_user` | `""` → `instance` | DB role; defaults to the instance name if blank. |
 | `db_password` | `""` → `instance` | DB password; defaults to the instance name if blank. |
 | `db_name` | `""` | Optional, used for validations only. |
-| `app_server_ip` | `127.0.0.1` | IP allowed in `pg_hba` / firewall for remote DB access. |
+| `app_server_ip` | `127.0.0.1` | IP allowed in the `pg_hba` rule for remote DB access (no firewall/UFW rule is added). |
 | `odoo_admin_passwd` | `""` → `instance` | Odoo master password; defaults to the instance name if blank. |
 | `base_instances_dir` | `/opt/odoo` | Class-level base directory for all instances. |
 
@@ -67,10 +67,15 @@ For an instance named `<instance>` with domain `<domain>`:
 
 ## Generated instance config (excerpt)
 
-`planners._odoo_conf_content` writes (among others): `proxy_mode = True`, `http_interface = 127.0.0.1`,
-`workers = 4`, `max_cron_threads = 2`, memory/time limits, `logfile = /var/log/odoo/<instance>.log`,
-`logrotate = True`, and an `addons_path` of
+`planners._odoo_conf_content` writes (among others): `admin_passwd` (defaults to the instance name),
+`list_db = True` (the database manager is reachable — restrict it at the proxy or change this on public
+deployments), `proxy_mode = True`, `http_interface = 127.0.0.1`, `workers = 4`, `max_cron_threads = 2`,
+memory/time limits, `logfile = /var/log/odoo/<instance>.log`, `logrotate = True`, and an `addons_path` of
 `<home>/odoo/addons,<home>/addons-oca,<home>/addons-custom`.
+
+> **Security note:** `list_db = True` combined with an `admin_passwd` that defaults to the instance name means
+> the DB manager is exposed with a guessable master password. Set a strong `admin_passwd` and consider
+> `list_db = False` for internet-facing instances.
 
 ## Related
 

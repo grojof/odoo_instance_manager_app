@@ -43,7 +43,7 @@ flowchart TD
 | Layer | Module | Responsibility | Side effects |
 |-------|--------|----------------|--------------|
 | Entry | `odoo_instance_manager.py` | Enforce root, configure UTF-8, main menu loop | Reads UID, prints |
-| Orchestration | `instance_manager/workflows.py` | Collect input, assemble plans, run discovery and the read-only audit | Via `system.py` only |
+| Orchestration | `instance_manager/workflows.py` | Collect input, assemble plans, run discovery and the read-only audit | Mostly via `system.py`; also reads files and writes the optional audit report |
 | Model | `instance_manager/models.py` | `InstanceConfig`, identifier validation, path derivation | None (pure) |
 | Planning | `instance_manager/planners.py` | Build `list[Command]` for every action | **None (pure)** |
 | Execution | `instance_manager/system.py` | `run()`, existence checks, `preview_commands`, `apply_commands` | Runs shell |

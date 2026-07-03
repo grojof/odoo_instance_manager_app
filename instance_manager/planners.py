@@ -415,7 +415,7 @@ def plan_odoo_base_setup(config: InstanceConfig, service_autostart: bool = True)
             "Instalar dependencias base Odoo",
             "apt-get -y install git build-essential pkg-config python3 python3-venv python3-dev python3-pip "
             "libpq-dev libldap2-dev libsasl2-dev libssl-dev libffi-dev libxml2-dev libxslt1-dev "
-            "libjpeg-dev zlib1g-dev libtiff5-dev libopenjp2-7-dev liblcms2-dev libwebp-dev "
+            "libjpeg-dev zlib1g-dev libtiff-dev libopenjp2-7-dev liblcms2-dev libwebp-dev "
             "libharfbuzz-dev libfribidi-dev fontconfig postgresql-client xfonts-75dpi xfonts-base",
         ),
         Command(

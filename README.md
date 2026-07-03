@@ -10,7 +10,7 @@ previews it, and applies it only after you confirm — with an extra typed phras
   self-clean on failure. See [ADR 0001](docs/decisions/0001-plan-preview-apply-safety.md).
 - **Batteries included** — provisioning (Odoo/PostgreSQL/both), Nginx + TLS, service control, backup /
   restore / duplicate, Fail2ban hardening, and a read-only server audit.
-- **No runtime dependencies** — Python 3 standard library only.
+- **No runtime dependencies** — Python 3.12+ standard library only.
 
 ## At a glance
 

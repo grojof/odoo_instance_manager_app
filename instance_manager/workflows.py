@@ -80,7 +80,7 @@ def _collect_instance_config() -> InstanceConfig:
             "DB nombre (opcional para validaciones)", "", required=False
         )
         config.app_server_ip = ask_text(
-            "IP servidor app para pg_hba/UFW", config.app_server_ip, required=True
+            "IP servidor app para regla pg_hba", config.app_server_ip, required=True
         )
         config.odoo_admin_passwd = ask_text(
             "admin_passwd Odoo", config.instance, required=True
