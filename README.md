@@ -52,6 +52,7 @@ Every action shows its full command plan and waits for your confirmation before 
 - [Installing and provisioning instances](docs/installation.md) — install modes, ports, Nginx, TLS.
 - [Managing existing instances](docs/instance-management.md) — status, updates, services, backup/restore,
   duplicate, removal.
+- [Log rotation](docs/log-rotation.md) — configure and query system logrotate for an instance's Odoo log.
 - [Fail2ban protection](docs/security-fail2ban.md) — base hardening, per-instance jails, real-IP checks.
 - [Auditing a server](docs/server-audit.md) — the read-only external report.
 

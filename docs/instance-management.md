@@ -73,6 +73,8 @@ home, service, database, or filestore already exists, and copies the DB via `cre
 
 - **Reparar logs Nginx de instancia** recreates the per-instance access/error logs with correct ownership
   (`www-data:adm`, mode `640`) and reopens Nginx logs.
+- **Rotación de logs** configures and queries a system `logrotate` policy for the instance's Odoo log — see
+  [Log rotation](log-rotation.md).
 - **Instalar paquetes Python en venv** installs into the instance virtualenv from a selected requirements
   file or an inline package list, running pip as the instance user.
 

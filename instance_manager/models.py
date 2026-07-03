@@ -50,6 +50,10 @@ class InstanceConfig:
         return f"/var/log/odoo/{self.instance}.log"
 
     @property
+    def logrotate_config_file(self) -> str:
+        return f"/etc/logrotate.d/odoo-{self.instance}"
+
+    @property
     def nginx_http_name(self) -> str:
         return f"{self.instance}-http.conf"
 
