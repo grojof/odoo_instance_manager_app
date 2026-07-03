@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
+import textwrap
 
 _RESET = "\033[0m"
 _STYLES = {
@@ -80,7 +82,39 @@ def _visible_len(text: str) -> int:
     return len(_ANSI_RE.sub("", text))
 
 
-def render_table(headers: list[str], rows: list[list[str]]) -> str:
+_MIN_COL = 10
+
+
+def _fit_caps(natural: list[int], available: int) -> list[int]:
+    """Shrink the widest column one char at a time until the row fits `available`."""
+    caps = list(natural)
+    while sum(caps) > available and max(caps) > _MIN_COL:
+        widest = caps.index(max(caps))
+        caps[widest] -= 1
+    return caps
+
+
+def _wrap_cell(cell: str, cap: int) -> list[str]:
+    """Split a cell into display lines, wrapping plain lines longer than `cap`.
+
+    Styled (ANSI) lines are short tags and are left intact to avoid splitting
+    escape sequences; long plain text (paths, commands) is wrapped to fit.
+    """
+    lines: list[str] = []
+    for line in cell.splitlines() or [""]:
+        if _ANSI_RE.search(line) or _visible_len(line) <= cap:
+            lines.append(line)
+        else:
+            lines.extend(
+                textwrap.wrap(line, width=cap, break_long_words=True, break_on_hyphens=False)
+                or [""]
+            )
+    return lines or [""]
+
+
+def render_table(
+    headers: list[str], rows: list[list[str]], max_width: int | None = None
+) -> str:
     safe_headers = [str(item) for item in headers]
     safe_rows = [[str(cell) for cell in row] for row in rows]
     column_count = len(safe_headers)
@@ -94,30 +128,54 @@ def render_table(headers: list[str], rows: list[list[str]]) -> str:
         else:
             normalized_rows.append(row[:column_count])
 
-    widths = [_visible_len(head) for head in safe_headers]
+    # Natural (unwrapped) width each column would like.
+    natural = [_visible_len(head) for head in safe_headers]
     for row in normalized_rows:
         for index, cell in enumerate(row):
-            cell_lines = cell.splitlines() or [""]
-            for line in cell_lines:
-                widths[index] = max(widths[index], _visible_len(line))
+            for line in cell.splitlines() or [""]:
+                natural[index] = max(natural[index], _visible_len(line))
+
+    # Cap columns so the whole table fits the terminal width, then wrap to the caps.
+    if max_width is None:
+        max_width = shutil.get_terminal_size((100, 24)).columns
+    overhead = 3 * column_count + 1
+    available = max(max_width - overhead, column_count * _MIN_COL)
+    caps = _fit_caps(natural, available)
+
+    wrapped_header = [_wrap_cell(head, caps[i]) for i, head in enumerate(safe_headers)]
+    wrapped_rows = [
+        [_wrap_cell(cell, caps[i]) for i, cell in enumerate(row)]
+        for row in normalized_rows
+    ]
+
+    # Actual widths from the wrapped content (each <= its cap).
+    widths = []
+    for i in range(column_count):
+        candidates = [_visible_len(line) for line in wrapped_header[i]]
+        for row in wrapped_rows:
+            candidates.extend(_visible_len(line) for line in row[i])
+        widths.append(max(candidates) if candidates else 1)
 
     def _pad(cell: str, width: int) -> str:
         extra = width - _visible_len(cell)
         return cell + (" " * max(0, extra))
 
-    horizontal = "+-" + "-+-".join("-" * width for width in widths) + "-+"
-    header_line = "| " + " | ".join(_pad(head, widths[idx]) for idx, head in enumerate(safe_headers)) + " |"
-
-    lines = [horizontal, header_line, horizontal]
-    for row in normalized_rows:
-        split_cells = [cell.splitlines() or [""] for cell in row]
-        row_height = max(len(parts) for parts in split_cells)
+    def _render_row(cells: list[list[str]]) -> list[str]:
+        row_height = max((len(parts) for parts in cells), default=1)
+        out: list[str] = []
         for line_idx in range(row_height):
-            rendered_cells: list[str] = []
-            for col_idx, parts in enumerate(split_cells):
-                chunk = parts[line_idx] if line_idx < len(parts) else ""
-                rendered_cells.append(_pad(chunk, widths[col_idx]))
-            body_line = "| " + " | ".join(rendered_cells) + " |"
-            lines.append(body_line)
+            rendered = [
+                _pad(parts[line_idx] if line_idx < len(parts) else "", widths[col_idx])
+                for col_idx, parts in enumerate(cells)
+            ]
+            out.append("| " + " | ".join(rendered) + " |")
+        return out
+
+    horizontal = "+-" + "-+-".join("-" * width for width in widths) + "-+"
+    lines = [horizontal]
+    lines.extend(_render_row(wrapped_header))
+    lines.append(horizontal)
+    for row in wrapped_rows:
+        lines.extend(_render_row(row))
     lines.append(horizontal)
     return "\n".join(lines)

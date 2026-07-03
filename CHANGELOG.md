@@ -25,6 +25,8 @@ All notable changes to this project are documented here. The format is based on
 - Every menu now shows a consistent `0) Cancelar` entry (unifying the previous three cancel conventions).
 - Command output is now streamed live while a plan is applied (via stdlib `subprocess.Popen`), so long steps
   (apt/pip/git/pg_restore) are no longer silent. No new dependency — the tool remains standard-library only.
+- Tables now fit the terminal width and wrap long values (paths, addons lists, certificate subjects) instead
+  of overflowing and misaligning, so status and report tables stay readable.
 
 ### Changed
 
