@@ -861,6 +861,54 @@ def plan_backup_retention(
     return commands
 
 
+def plan_ufw_base_setup(
+    *,
+    ssh_port: int = 22,
+    allow_http: bool = True,
+    allow_https: bool = True,
+    pg_from_ip: str = "",
+) -> list[Command]:
+    """Install UFW and apply a secure baseline: deny incoming / allow outgoing,
+    allow SSH (before enabling, to avoid lock-out), HTTP/HTTPS, and optionally
+    PostgreSQL from a single app-server IP; then enable UFW."""
+    commands: list[Command] = [
+        Command(
+            "Asegurar UFW instalado",
+            "command -v ufw >/dev/null 2>&1 || (apt-get update && apt-get -y install ufw)",
+        ),
+        Command("Política por defecto: denegar entrante", "ufw default deny incoming"),
+        Command("Política por defecto: permitir saliente", "ufw default allow outgoing"),
+        Command(f"Permitir SSH (puerto {ssh_port})", f"ufw allow {int(ssh_port)}/tcp"),
+    ]
+    if allow_http:
+        commands.append(Command("Permitir HTTP (80)", "ufw allow 80/tcp"))
+    if allow_https:
+        commands.append(Command("Permitir HTTPS (443)", "ufw allow 443/tcp"))
+    if pg_from_ip:
+        commands.append(
+            Command(
+                f"Permitir PostgreSQL (5432) desde {pg_from_ip}",
+                f"ufw allow from {shlex.quote(pg_from_ip)} to any port 5432 proto tcp",
+            )
+        )
+    commands.append(Command("Habilitar UFW", "ufw --force enable"))
+    return commands
+
+
+def plan_ufw_allow_port(port: int, proto: str) -> list[Command]:
+    proto = "udp" if proto == "udp" else "tcp"
+    return [Command(f"Permitir {int(port)}/{proto}", f"ufw allow {int(port)}/{proto}")]
+
+
+def plan_ufw_delete_rule(number: int) -> list[Command]:
+    return [
+        Command(
+            f"Eliminar regla UFW #{int(number)}",
+            f"ufw --force delete {int(number)}",
+        )
+    ]
+
+
 def pretty_paths(config: InstanceConfig) -> list[tuple[str, str]]:
     return [
         ("Instance", config.instance),

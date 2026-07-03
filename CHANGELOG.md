@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Firewall (UFW)** (main menu): install and manage a UFW baseline — deny incoming / allow outgoing, allow
+  SSH (before enabling, to avoid lock-out), HTTP/HTTPS, and optionally PostgreSQL from an app-server IP;
+  plus allow-port, delete-rule, and enable/disable. Closes the gap Fail2ban's `banaction = ufw` assumed.
 - **Addon inventory** (instance management → "Inventario de addons"): list an instance's modules by origin
   (Odoo core / OCA / custom) with their manifest versions, and optionally mark which are installed in a chosen
   database (from `ir_module_module`).

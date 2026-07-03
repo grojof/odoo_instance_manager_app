@@ -11,6 +11,7 @@ from instance_manager.workflows import (
     install_odoo_only,
     manage_existing_instance,
     manage_fail2ban,
+    manage_firewall,
     manage_instance_services,
     purge_instance_superuser,
 )
@@ -68,6 +69,7 @@ def main() -> int:
                     "Servicios instancias",
                     "Gestionar instancias",
                     "Seguridad Fail2ban",
+                    "Firewall (UFW)",
                     "Menú de instalación",
                     "Eliminar instancias (Incluye configs, servicios, logs, etc.)",
                     "Informe para servidor externo",
@@ -89,6 +91,8 @@ def main() -> int:
                 manage_existing_instance()
             elif action == "Seguridad Fail2ban":
                 manage_fail2ban()
+            elif action == "Firewall (UFW)":
+                manage_firewall()
             elif action == "Menú de instalación":
                 _installation_menu()
             elif action == "Eliminar instancias (Incluye configs, servicios, logs, etc.)":
