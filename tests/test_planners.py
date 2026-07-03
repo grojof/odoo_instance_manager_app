@@ -9,8 +9,20 @@ from instance_manager.planners import (
     _logrotate_content,
     _nginx_logrotate_content,
     _odoo_conf_content,
+    plan_backup_retention,
     plan_logrotate_config,
 )
+
+
+class BackupRetentionTests(unittest.TestCase):
+    def test_keeps_n_newest_of_each_kind(self) -> None:
+        commands = plan_backup_retention(_config(), "/var/backups/odoo18", keep=5)
+        text = "\n".join(c.command for c in commands)
+        # Two stanzas (dumps + filestore archives), each keeping the 5 newest.
+        self.assertIn("odoo18_*.dump", text)
+        self.assertIn("odoo18_*.filestore.tar.gz", text)
+        self.assertIn("tail -n +6", text)  # keep 5 -> remove from the 6th onward
+        self.assertIn("/var/backups/odoo18/", text)
 
 
 class OdooConfContentTests(unittest.TestCase):

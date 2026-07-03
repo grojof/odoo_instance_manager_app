@@ -841,6 +841,26 @@ def plan_ensure_self_signed_certs(config: InstanceConfig) -> list[Command]:
     ]
 
 
+def plan_backup_retention(
+    config: InstanceConfig, backup_dir: str, keep: int
+) -> list[Command]:
+    """Delete an instance's oldest backup artifacts, keeping the `keep` newest of
+    each kind (DB dumps and filestore archives)."""
+    qdir = shlex.quote(backup_dir)
+    commands: list[Command] = []
+    for pattern, label in (
+        (f"{config.instance}_*.dump", "dumps de DB"),
+        (f"{config.instance}_*.filestore.tar.gz", "archivos de filestore"),
+    ):
+        commands.append(
+            Command(
+                f"Eliminar {label} antiguos (conservar {keep} más recientes)",
+                f"ls -1t {qdir}/{pattern} 2>/dev/null | tail -n +{keep + 1} | xargs -r rm -f",
+            )
+        )
+    return commands
+
+
 def pretty_paths(config: InstanceConfig) -> list[tuple[str, str]]:
     return [
         ("Instance", config.instance),

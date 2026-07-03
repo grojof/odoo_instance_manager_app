@@ -46,6 +46,7 @@ from .common import (
     _select_existing_instance,
     _validate_instance_or_abort,
 )
+from .diskusage import manage_disk_usage
 from .health import run_health_check
 from .install import _maybe_plan_certs
 from .logrotate import manage_log_rotation
@@ -488,6 +489,7 @@ def manage_existing_instance() -> None:
                 "Actualizar configuración existente",
                 "Reparar logs Nginx de instancia",
                 "Rotación de logs",
+                "Uso de disco y limpieza",
                 "Instalar paquetes Python en venv",
                 "Realizar backup",
                 "Restaurar backup",
@@ -516,6 +518,8 @@ def manage_existing_instance() -> None:
             _repair_instance_nginx_logs(config)
         elif action == "Rotación de logs":
             manage_log_rotation(config)
+        elif action == "Uso de disco y limpieza":
+            manage_disk_usage(config)
         elif action == "Instalar paquetes Python en venv":
             _install_python_packages_in_instance_venv(config)
         elif action == "Realizar backup":
