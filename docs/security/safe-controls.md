@@ -11,7 +11,7 @@ updated: 2026-07-03
 
 Two layers protect work *on this repository* (distinct from the tool's own runtime safety, which is the
 preview → confirm → apply gate described in
-[`decisions/0001-plan-preview-apply-safety.md`](decisions/0001-plan-preview-apply-safety.md)):
+[`decisions/0001-plan-preview-apply-safety.md`](../decisions/0001-plan-preview-apply-safety.md)):
 
 1. **Content-aware PreToolUse hooks** — contributed by the installed **eunomai** Claude Code plugin.
 2. **Static path permissions** — native Claude Code `permissions` in `.claude/settings.json`.
@@ -36,7 +36,7 @@ safety gate to ask before your shell runs a matching command.
 ## Recommended permissions baseline
 
 Static path rules use Claude Code's native `permissions`, already seeded in
-[`../.claude/settings.json`](../.claude/settings.json):
+[`../.claude/settings.json`](../../.claude/settings.json):
 
 ```json
 {

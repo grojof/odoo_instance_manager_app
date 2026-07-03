@@ -30,4 +30,4 @@ only).
 ## Related
 
 - [Managing existing instances](instance-management.md)
-- [Server audit](server-audit.md) — the whole-server read-only report.
+- [Server audit](../server-audit.md) — the whole-server read-only report.

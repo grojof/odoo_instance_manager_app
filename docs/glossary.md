@@ -49,7 +49,7 @@ Terms as they are used in this project.
 
 - **Real client IP** — the actual visitor IP, as opposed to the proxy/gateway IP. Behind Nginx, Odoo must log
   the real client IP (via forwarded headers) or Fail2ban would ban your own infrastructure. See
-  [Fail2ban security](security-fail2ban.md).
+  [Fail2ban security](security/security-fail2ban.md).
 
 - **Phrase confirmation** — typing an exact phrase (e.g. `ELIMINAR <instance>`) to authorize a destructive
   action, on top of the normal confirm step.
