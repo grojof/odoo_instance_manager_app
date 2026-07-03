@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from instance_manager.workflows import (
+from instance_manager.workflows._core import (
     _db_admin_psql_command,
     _is_safe_path_component,
 )
