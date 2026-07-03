@@ -26,8 +26,8 @@
 
 ## Phase 4 — fail2ban.py + services.py (PR 4)
 
-- [ ] 4.1 Extract `manage_fail2ban` + helpers into `workflows/fail2ban.py`.
-- [ ] 4.2 Extract `manage_instance_services` into `workflows/services.py`.
+- [x] 4.1 Extract `manage_fail2ban` + helpers into `workflows/fail2ban.py`.
+- [x] 4.2 Extract `manage_instance_services` into `workflows/services.py`.
 
 ## Phase 5 — backup_restore.py + purge.py (PR 5)
 

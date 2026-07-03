@@ -12,11 +12,11 @@ from ._core import (
     install_odoo_and_db,
     install_odoo_only,
     manage_existing_instance,
-    manage_fail2ban,
-    manage_instance_services,
     purge_instance_superuser,
 )
+from .fail2ban import manage_fail2ban
 from .report import external_server_report
+from .services import manage_instance_services
 
 __all__ = [
     "external_server_report",
