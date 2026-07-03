@@ -17,7 +17,7 @@
 
 ## Phase 2b — common.py (PR 3)
 
-- [ ] 2.2 Move shared helpers into `workflows/common.py`; `_core` and later feature modules import from it.
+- [x] 2.2 Move shared helpers into `workflows/common.py`; `_core` and later feature modules import from it.
 
 ## Phase 3 — report.py (PR 3)
 
