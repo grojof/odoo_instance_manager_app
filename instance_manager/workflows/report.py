@@ -12,6 +12,7 @@ import os
 import re
 import shlex
 import socket
+from dataclasses import dataclass
 
 from ..models import InstanceConfig
 from ..planners import _is_local_db_host, _sql_literal
@@ -535,12 +536,45 @@ def _detect_odoo_release_version(odoo_home: str) -> str:
     return ""
 
 
+@dataclass(frozen=True)
+class InstanceReportRow:
+    """One discovered instance's audited facts, named instead of positional."""
+
+    instance: str
+    service_state: str
+    autostart_state: str
+    odoo_version: str
+    http_port: str
+    gevent_port: str
+    db_host: str
+    db_user: str
+    db_port: str
+    workers: str
+    python_version: str
+    python_path: str
+    conf_path: str
+    data_dir: str
+    filestore_dbs: str
+    addons_summary: str
+    server_names: str
+    cert_paths: str
+    key_paths: str
+    tls_type: str
+    cert_issuer: str
+    cert_subject: str
+    cert_not_after: str
+    cert_serial: str
+    local_db_names: str
+    nginx_hits: int
+    filestore_hits: int
+
+
 def _collect_external_instance_rows(
     service_contexts: list[dict[str, str]],
     conf_paths: list[str],
     nginx_paths: list[str],
     filestore_roots: list[str],
-) -> list[list[str]]:
+) -> list[InstanceReportRow]:
     service_names = [context.get("service", "") for context in service_contexts if context.get("service")]
     service_context_by_name = {
         context.get("service", ""): context
@@ -567,7 +601,7 @@ def _collect_external_instance_rows(
                 pass
         filestore_db_map[root] = db_names
 
-    rows: list[list[str]] = []
+    rows: list[InstanceReportRow] = []
     for instance in sorted(detected):
         config = InstanceConfig(instance=instance)
         config.normalize_defaults()
@@ -683,35 +717,35 @@ def _collect_external_instance_rows(
             addons_summary = ", ".join(addon_items[:3]) + (" ..." if len(addon_items) > 3 else "")
 
         rows.append(
-            [
-                instance,
-                service_state,
-                autostart_state,
-                odoo_version or "no detectada",
-                http_port,
-                gevent_port,
-                db_host,
-                db_user,
-                db_port,
-                workers,
-                python_version or "",
-                python_path or "",
-                preferred_conf or "",
-                data_dir,
-                filestore_db_summary + (" ..." if len(filestore_match_dbs) > 8 else ""),
-                addons_summary,
-                server_name_summary,
-                cert_summary,
-                key_summary,
-                tls_type,
-                cert_meta.get("issuer", ""),
-                cert_meta.get("subject", ""),
-                cert_meta.get("not_after", ""),
-                cert_meta.get("serial", ""),
-                ", ".join(local_db_names),
-                str(len(nginx_hits)),
-                str(len(filestore_hits)),
-            ]
+            InstanceReportRow(
+                instance=instance,
+                service_state=service_state,
+                autostart_state=autostart_state,
+                odoo_version=odoo_version or "no detectada",
+                http_port=http_port,
+                gevent_port=gevent_port,
+                db_host=db_host,
+                db_user=db_user,
+                db_port=db_port,
+                workers=workers,
+                python_version=python_version or "",
+                python_path=python_path or "",
+                conf_path=preferred_conf or "",
+                data_dir=data_dir,
+                filestore_dbs=filestore_db_summary + (" ..." if len(filestore_match_dbs) > 8 else ""),
+                addons_summary=addons_summary,
+                server_names=server_name_summary,
+                cert_paths=cert_summary,
+                key_paths=key_summary,
+                tls_type=tls_type,
+                cert_issuer=cert_meta.get("issuer", ""),
+                cert_subject=cert_meta.get("subject", ""),
+                cert_not_after=cert_meta.get("not_after", ""),
+                cert_serial=cert_meta.get("serial", ""),
+                local_db_names=", ".join(local_db_names),
+                nginx_hits=len(nginx_hits),
+                filestore_hits=len(filestore_hits),
+            )
         )
 
     return rows
@@ -830,39 +864,39 @@ def external_server_report() -> None:
     for row in instance_rows:
         odoo_rows.append(
             [
-                row[0],
-                row[1],
-                row[2],
-                row[3],
-                row[4],
-                row[5],
-                row[6],
-                row[7],
-                row[8],
-                row[12],
-                row[13],
-                _cell_multiline(row[14]),
-                _cell_multiline(row[24]),
+                row.instance,
+                row.service_state,
+                row.autostart_state,
+                row.odoo_version,
+                row.http_port,
+                row.gevent_port,
+                row.db_host,
+                row.db_user,
+                row.db_port,
+                row.conf_path,
+                row.data_dir,
+                _cell_multiline(row.filestore_dbs),
+                _cell_multiline(row.local_db_names),
             ]
         )
         python_rows.append(
             [
-                row[0],
-                row[10],
-                row[25],
-                row[26],
-                _cell_multiline(row[15]),
+                row.instance,
+                row.python_version,
+                row.python_path,
+                row.workers,
+                _cell_multiline(row.addons_summary),
             ]
         )
         nginx_rows.append(
             [
-                row[0],
-                _cell_multiline(row[16]),
-                row[4],
-                row[5],
-                row[19],
-                row[24],
-                row[25],
+                row.instance,
+                _cell_multiline(row.server_names),
+                row.http_port,
+                row.gevent_port,
+                row.tls_type,
+                str(row.nginx_hits),
+                str(row.filestore_hits),
             ]
         )
 
@@ -903,15 +937,15 @@ def external_server_report() -> None:
 
     cert_details_map: dict[str, dict[str, str | set[str]]] = {}
     for row in instance_rows:
-        instance_name = row[0]
-        server_names = [item.strip() for item in row[16].split(",") if item.strip()]
-        cert_paths = [item.strip() for item in row[17].split(",") if item.strip()]
-        key_paths = [item.strip() for item in row[18].split(",") if item.strip()]
-        tls_type = row[19]
-        issuer = row[20]
-        subject = row[21]
-        expires = row[22]
-        serial = row[23]
+        instance_name = row.instance
+        server_names = [item.strip() for item in row.server_names.split(",") if item.strip()]
+        cert_paths = [item.strip() for item in row.cert_paths.split(",") if item.strip()]
+        key_paths = [item.strip() for item in row.key_paths.split(",") if item.strip()]
+        tls_type = row.tls_type
+        issuer = row.cert_issuer
+        subject = row.cert_subject
+        expires = row.cert_not_after
+        serial = row.cert_serial
 
         for cert_path in cert_paths:
             item = cert_details_map.setdefault(

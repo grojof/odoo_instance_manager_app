@@ -22,7 +22,7 @@
 ## Phase 3 — report.py (PR 3)
 
 - [x] 3.1 Extract the external-report cluster into `workflows/report.py`.
-- [ ] 3.2 Replace the 27-field positional rows with an `InstanceReportRow` dataclass.
+- [x] 3.2 Replace the 27-field positional rows with an `InstanceReportRow` dataclass.
 
 ## Phase 4 — fail2ban.py + services.py (PR 4)
 
@@ -38,4 +38,4 @@
 
 - [x] 6.1 Extract install flows (+ port suggestion, cleanup) into `workflows/install.py`.
 - [x] 6.2 Extract manage flows into `workflows/manage.py`; leave `__init__` a thin re-export.
-- [ ] 6.3 Consider enabling `E501` on the new modules.
+- [x] 6.3 E501 kept deferred: many lines are embedded shell/SQL command strings; declined to rewrap. Ruff enforces F/B/I/UP/E/W.

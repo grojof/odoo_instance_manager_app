@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from instance_manager.workflows.common import _is_safe_path_component
-from instance_manager.workflows.purge import _db_admin_psql_command
+from instance_manager.workflows.purge import DbAdminSession, _db_admin_psql_command
 
 
 class SafePathComponentTests(unittest.TestCase):
@@ -21,8 +21,8 @@ class SafePathComponentTests(unittest.TestCase):
 
 
 class DbAdminPsqlCommandTests(unittest.TestCase):
-    local = ("local", "127.0.0.1", 5432, "", "")
-    remote = ("remote", "db.example", 5432, "postgres", "se-cret")
+    local = DbAdminSession("local", "127.0.0.1", 5432, "", "")
+    remote = DbAdminSession("remote", "db.example", 5432, "postgres", "se-cret")
 
     def test_flags_inserted_before_c_local(self) -> None:
         cmd = _db_admin_psql_command(self.local, "SELECT 1;", psql_flags="-tA")
