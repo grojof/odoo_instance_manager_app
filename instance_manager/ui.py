@@ -94,21 +94,42 @@ def _fit_caps(natural: list[int], available: int) -> list[int]:
     return caps
 
 
-def _wrap_cell(cell: str, cap: int) -> list[str]:
-    """Split a cell into display lines, wrapping plain lines longer than `cap`.
+_SGR_LEAD_RE = re.compile(r"^(?:\x1b\[[0-9;]*m)+")
 
-    Styled (ANSI) lines are short tags and are left intact to avoid splitting
-    escape sequences; long plain text (paths, commands) is wrapped to fit.
+
+def _leading_sgr(text: str) -> str:
+    match = _SGR_LEAD_RE.match(text)
+    return match.group(0) if match else ""
+
+
+def wrap_plain_block(text: str, width: int) -> list[str]:
+    """Wrap every line of `text` (which may contain newlines) to `width`."""
+    width = max(1, width)
+    out: list[str] = []
+    for line in text.splitlines() or [""]:
+        out.extend(
+            textwrap.wrap(line, width=width, break_long_words=True, break_on_hyphens=False)
+            or [""]
+        )
+    return out
+
+
+def _wrap_cell(cell: str, cap: int) -> list[str]:
+    """Split a cell into display lines, wrapping lines longer than `cap`.
+
+    Wrapping is done on the *visible* text; a leading SGR style (from `style()`)
+    and a trailing reset are re-applied to each wrapped piece so escape sequences
+    are never split mid-code and short styled tags render unchanged.
     """
     lines: list[str] = []
     for line in cell.splitlines() or [""]:
-        if _ANSI_RE.search(line) or _visible_len(line) <= cap:
+        if _visible_len(line) <= cap:
             lines.append(line)
-        else:
-            lines.extend(
-                textwrap.wrap(line, width=cap, break_long_words=True, break_on_hyphens=False)
-                or [""]
-            )
+            continue
+        lead = _leading_sgr(line)
+        trail = _RESET if line.endswith(_RESET) else ""
+        for chunk in wrap_plain_block(strip_ansi(line), cap):
+            lines.append(f"{lead}{chunk}{trail}")
     return lines or [""]
 
 

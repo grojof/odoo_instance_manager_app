@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass
 
-from .ui import level_text, render_table, style, title
+from .ui import level_text, style, title, wrap_plain_block
 
 
 @dataclass
@@ -102,15 +103,19 @@ def database_exists(db_name: str) -> bool:
 
 
 def preview_commands(commands: list[Command]) -> None:
+    """Render the plan as a readable list.
+
+    Commands are shown below their description, indented and wrapped to the
+    terminal width — long or multi-line commands (e.g. a heredoc that writes a
+    config file) stay legible instead of overflowing a table column.
+    """
     print(f"\n{title('Plan de ejecución')}")
-    rows: list[list[str]] = []
+    indent = "     "
+    body_width = max(20, shutil.get_terminal_size((100, 24)).columns - len(indent))
     for index, item in enumerate(commands, start=1):
-        rows.append([
-            style(f"{index:02d}", "blue", "bold"),
-            item.description,
-            style(item.command, "dim"),
-        ])
-    print(render_table(["#", "Acción", "Comando"], rows))
+        print(f"\n{style(f'[{index:02d}]', 'blue', 'bold')} {item.description}")
+        for chunk in wrap_plain_block(item.command, body_width):
+            print(style(f"{indent}{chunk}", "dim"))
 
 
 def apply_commands(commands: list[Command], stop_on_error: bool = True) -> None:
