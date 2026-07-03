@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Instance health check** (instance management → "Comprobar salud"): a read-only check of the systemd
+  service, local HTTP responsiveness, database connectivity, and disk usage, flagging any problems. stdlib
+  only (uses `urllib`, no `curl` dependency).
 - **Log rotation capability** (instance management → "Rotación de logs"): configure a system `logrotate`
   policy for an instance's Odoo log (`/etc/logrotate.d/odoo-<instance>`, `copytruncate`, tunable
   frequency/retention/compression/size) and query the current rotation state (`logrotate -d` preview, log
