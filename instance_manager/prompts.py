@@ -5,7 +5,6 @@ from pathlib import Path
 
 from .ui import level_text, prompt_label, style, title
 
-
 _last_selected_dir: Path | None = None
 
 

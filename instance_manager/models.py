@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import ClassVar
 
-
 INSTANCE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 POSTGRES_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 

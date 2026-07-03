@@ -37,6 +37,24 @@ are held to a careful, spec-first standard.
 - Conventional Commits in the imperative mood; one logical change per commit. No AI-attribution trailers.
 - Match the surrounding style: small functions, early returns, type hints, Spanish operator-facing strings.
 
+## Dev loop
+
+Install the project with dev tooling and run the same gate CI runs:
+
+```bash
+pip install -e ".[dev]"      # editable install + pytest, ruff
+ruff check                   # lint (config in pyproject.toml)
+pytest                       # unit tests (tests/)
+openspec validate --specs    # specs are well-formed
+```
+
+CI (`.github/workflows/ci.yml`) runs ruff, pytest, a byte-compile, `openspec validate`, and the eunomai
+`docs-check` / `provenance-check` gates on every push and PR to `main`.
+
+Tests use stdlib `unittest` (collected by pytest) so they run with `python -m unittest discover -s tests`
+even without dev deps installed. Ruff enforces F/B/I/UP/E/W; `E501` (line length) is deliberately deferred
+because many long lines are embedded shell/SQL command strings — aim for ≤100 cols in new code.
+
 ## Workflow
 
 For non-trivial changes, use the OpenSpec flow:

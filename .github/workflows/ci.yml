@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (with dev deps)
+        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check
+
+      - name: Test (pytest)
+        run: pytest
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q odoo_instance_manager.py instance_manager
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install OpenSpec
+        run: npm install -g @fission-ai/openspec@1.4.1
+
+      - name: Validate specs
+        run: openspec validate --specs
+
+      - name: Checkout eunomai (pinned, for the doc/provenance checks)
+        uses: actions/checkout@v4
+        with:
+          repository: grojof/eunomai
+          ref: v0.4.0
+          path: .eunomai
+
+      - name: Docs check
+        run: node .eunomai/tools/dist/cli.cjs docs-check
+
+      - name: Provenance check
+        run: node .eunomai/tools/dist/cli.cjs provenance-check

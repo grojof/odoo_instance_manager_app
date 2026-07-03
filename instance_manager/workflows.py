@@ -13,10 +13,10 @@ from .planners import (
     plan_copy_custom_certs,
     plan_db_setup,
     plan_ensure_db_role,
-    plan_fail2ban_base_setup,
-    plan_fail2ban_ensure_odoo_filter,
-    plan_fail2ban_enable_odoo_instance,
     plan_ensure_self_signed_certs,
+    plan_fail2ban_base_setup,
+    plan_fail2ban_enable_odoo_instance,
+    plan_fail2ban_ensure_odoo_filter,
     plan_nginx_http,
     plan_nginx_https,
     plan_odoo_base_setup,
@@ -47,8 +47,7 @@ from .system import (
     service_exists,
     user_exists,
 )
-from .ui import level_tag, level_text, render_table, title
-from .ui import strip_ansi
+from .ui import level_tag, level_text, render_table, strip_ansi, title
 
 
 def _collect_instance_config() -> InstanceConfig:
@@ -327,7 +326,7 @@ def _ports_from_nginx_configs() -> set[int]:
                 continue
 
             try:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as file_handle:
+                with open(file_path, encoding="utf-8", errors="replace") as file_handle:
                     for raw_line in file_handle:
                         line = raw_line.strip()
                         if not line or line.startswith("#"):
@@ -512,7 +511,7 @@ def _read_nginx_https_ssl_paths(config: InstanceConfig) -> tuple[str, str]:
     cert_path = ""
     key_path = ""
     try:
-        with open(nginx_https_conf, "r", encoding="utf-8") as file_handle:
+        with open(nginx_https_conf, encoding="utf-8") as file_handle:
             for raw_line in file_handle:
                 line = raw_line.strip().rstrip(";")
                 if line.startswith("ssl_certificate_key "):
@@ -1993,7 +1992,7 @@ def _command_output(command: str) -> str:
 
 def _read_text_file(path: str) -> str:
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as file_handle:
+        with open(path, encoding="utf-8", errors="replace") as file_handle:
             return file_handle.read()
     except OSError:
         return ""
