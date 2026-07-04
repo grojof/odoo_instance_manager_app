@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Orchestrated instance duplication (replica or refresh).** *Duplicate instance* now creates a **fully
+  working** target instead of only copying the database. If the target does not exist it provisions the whole
+  instance (system user, home, Odoo checkout at the source's version, virtualenv, config, systemd service, and
+  optionally Nginx) with its own domain, auto-suggested ports, and generated secrets, then seeds it from the
+  source. If the target already exists it **refreshes it in place** (stop, replace DB + filestore, restart) —
+  the "keep dev up to date with production" flow. The database copy method is selectable: robust
+  `pg_dump | pg_restore --role` that reassigns ownership for cross-user targets, or a fast template copy.
+  Local PostgreSQL only (use Backup + Restore for a remote DB). `plan_odoo_base_setup` gained a `start_now`
+  flag so the target is provisioned before its database exists and started after seeding.
+
 ## [1.1.0] - 2026-07-04
 
 ### Added

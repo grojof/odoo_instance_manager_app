@@ -88,20 +88,25 @@ confirmation phrase (`RESTORE <instance>` / `DUPLICAR <instance>`):
 - **Neutralize** (optional, recommended) — deactivates `ir_cron`, outgoing mail servers (`ir_mail_server`),
   and `fetchmail_server` in the target so a copy can't send mail or run jobs meant for production.
 
-Guardrails: restore refuses to overwrite an existing target **database** (the existence check runs against the
-**local** server, so a remote target collision is caught by `createdb` failing rather than the pre-check); an
-existing target **filestore** requires an explicit overwrite confirmation. Duplication refuses if the target
-home, service, database, or filestore already exists, and copies the DB via `createdb -T <source>`.
+Guardrails: restore refuses to overwrite an existing target **database**; an existing target **filestore**
+requires an explicit overwrite confirmation.
 
-> **No manual stop needed:** a template copy requires no other sessions on the source database, so duplication
-> automatically **frees the source** — it blocks new connections, terminates existing sessions, copies, and
-> **re-enables** the source afterward (even if the copy fails). The source instance is briefly disconnected
-> during the copy, exactly like Odoo's own database-manager duplicate. It runs with the instance's own
-> database role — no superuser needed.
+### Duplicate instance — replica or refresh
 
-> **Duplication scope:** *Duplicate instance* copies the database and (optionally) the filestore only — the
-> duplicated filestore lands under the **target** instance's data directory. It does **not** provision the
-> target instance's service, config, or system user; run an install for that separately.
+*Duplicate instance* is **existence-aware and end-to-end** (local PostgreSQL; for a remote DB use Backup +
+Restore). You pick the **copy method**: *pg_dump → restore* (robust, reassigns ownership to the target role —
+recommended for **production → development** with different DB users) or a fast *template* copy (same DB owner).
+
+- **Target does not exist → replica:** the tool provisions the whole target instance — system user, home, Odoo
+  checkout at the **source's version**, virtualenv, `odoo.conf`, systemd service, and optionally Nginx — with
+  its own domain, **auto-suggested non-colliding ports**, and freshly generated secrets, seeds it with the
+  source database (+ filestore), applies copied/moved + neutralize, and starts it.
+- **Target exists → refresh in place:** the tool stops the target service, replaces its database and filestore
+  from the source, applies the semantics, and restarts — **without** recreating its config or service. This is
+  the "keep a dev environment up to date with production" flow.
+
+The filestore always lands under the **target** instance's data directory. The template method frees the
+source of sessions (brief disconnect); the dump method reads the source live.
 
 ## Repairing Nginx logs & venv packages
 

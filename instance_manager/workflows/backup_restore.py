@@ -8,8 +8,17 @@ import uuid
 
 from ..i18n import tf
 from ..models import InstanceConfig
+from ..planners import (
+    _is_local_db_host,
+    compute_worker_tuning,
+    plan_ensure_db_role,
+    plan_nginx_http,
+    plan_nginx_https,
+    plan_odoo_base_setup,
+)
 from ..prompts import (
     ask_bool,
+    ask_int,
     ask_text,
     choose,
     confirm_with_phrase,
@@ -18,7 +27,12 @@ from ..prompts import (
 from ..system import (
     Command,
     database_exists,
+    detect_cpu_count,
+    detect_nginx_version,
+    detect_total_ram_bytes,
     path_exists,
+    read_odoo_conf,
+    run,
     service_exists,
 )
 from ..ui import level_text
@@ -31,6 +45,7 @@ from .common import (
     _pick_db_name,
     _quote,
 )
+from .install import _choose_nginx_mode, _maybe_plan_certs, _suggest_instance_ports
 
 _SAFE_DB_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$")
 
@@ -76,15 +91,32 @@ def _duplicate_db_command(
     )
 
 
+def _psql_target(
+    db_host: str, db_port: int, db_user: str, db_password: str, target_db: str
+) -> str:
+    """A psql invocation pointed at ``target_db`` using client credentials."""
+    return (
+        f"PGPASSWORD={_quote(db_password)} psql -h {_quote(db_host)} -p {db_port} "
+        f"-U {_quote(db_user)} -d {_quote(target_db)}"
+    )
+
+
+def _psql_target_local(target_db: str) -> str:
+    """A psql invocation pointed at ``target_db`` as the local postgres superuser."""
+    return f"sudo -u postgres psql -d {_quote(target_db)}"
+
+
 def _post_db_mode_commands(
-    db_host: str,
-    db_port: int,
-    db_user: str,
-    db_password: str,
-    target_db: str,
+    psql_target: str,
     migration_mode: str,
     neutralize: bool,
 ) -> list[Command]:
+    """Apply Odoo migration semantics to an already-restored target database.
+
+    ``psql_target`` is a psql invocation already pointed at the target DB (built by
+    :func:`_psql_target` or :func:`_psql_target_local`), so the same logic serves
+    both the credential-based restore and the local, superuser-driven duplication.
+    """
     commands: list[Command] = []
     if migration_mode == 'Copied (new UUID on target)':
         new_uuid = str(uuid.uuid4())
@@ -96,7 +128,7 @@ def _post_db_mode_commands(
         commands.append(
             Command(
                 'Regenerate database.uuid on the target (Copied mode)',
-                f'PGPASSWORD={_quote(db_password)} psql -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -d {_quote(target_db)} -c "{sql_uuid}"',
+                f'{psql_target} -c "{sql_uuid}"',
             )
         )
 
@@ -105,20 +137,70 @@ def _post_db_mode_commands(
             [
                 Command(
                     'Neutralize cron on the target (if present)',
-                    f'PGPASSWORD={_quote(db_password)} psql -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -d {_quote(target_db)} -c "UPDATE ir_cron SET active = false;" || true',
+                    f'{psql_target} -c "UPDATE ir_cron SET active = false;" || true',
                 ),
                 Command(
                     'Neutralize outgoing mail servers (if present)',
-                    f'PGPASSWORD={_quote(db_password)} psql -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -d {_quote(target_db)} -c "UPDATE ir_mail_server SET active = false;" || true',
+                    f'{psql_target} -c "UPDATE ir_mail_server SET active = false;" || true',
                 ),
                 Command(
                     'Neutralize fetchmail (if present)',
-                    f'PGPASSWORD={_quote(db_password)} psql -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -d {_quote(target_db)} -c "UPDATE fetchmail_server SET active = false;" || true',
+                    f'{psql_target} -c "UPDATE fetchmail_server SET active = false;" || true',
                 ),
             ]
         )
 
     return commands
+
+
+def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method: str) -> list[Command]:
+    """Seed ``target_db`` from ``source_db`` on the **local** server (via
+    ``sudo -u postgres``), owned by ``target_owner``.
+
+    ``method="template"`` frees the source of sessions and does a fast template copy
+    (correct when the target keeps the source's owner). ``method="dump"`` restores a
+    ``pg_dump`` with ``--role`` so every object is re-owned by ``target_owner`` —
+    correct for a cross-user target (production→development). Names MUST be safe
+    (:func:`_is_safe_db_name`)."""
+    if method == "template":
+        return [
+            Command(
+                'Terminate connections to the source DB',
+                "sudo -u postgres psql -d postgres -c "
+                f"\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{source_db}' AND pid <> pg_backend_pid();\" || true",
+            ),
+            Command(
+                'Seed target DB via template copy',
+                f"sudo -u postgres createdb -T {_quote(source_db)} -O {_quote(target_owner)} {_quote(target_db)}",
+            ),
+        ]
+    return [
+        Command(
+            'Create empty target DB owned by the target role',
+            f"sudo -u postgres createdb -O {_quote(target_owner)} {_quote(target_db)}",
+        ),
+        Command(
+            'Seed target DB via pg_dump | pg_restore (re-owned by the target role)',
+            "set -o pipefail; "
+            f"sudo -u postgres pg_dump -Fc {_quote(source_db)} | "
+            f"sudo -u postgres pg_restore -d {_quote(target_db)} --no-owner --role={_quote(target_owner)} --no-privileges",
+        ),
+    ]
+
+
+def _drop_db_commands(target_db: str) -> list[Command]:
+    """Terminate connections to ``target_db`` and drop it (local, superuser)."""
+    return [
+        Command(
+            'Terminate connections to the target DB',
+            "sudo -u postgres psql -d postgres -c "
+            f"\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{target_db}' AND pid <> pg_backend_pid();\" || true",
+        ),
+        Command(
+            'Drop the target DB (if it exists)',
+            f"sudo -u postgres dropdb --if-exists {_quote(target_db)}",
+        ),
+    ]
 
 
 def _backup_instance(
@@ -239,13 +321,9 @@ def _restore_backup(
         )
         commands.extend(
             _post_db_mode_commands(
-                db_host=db_host,
-                db_port=db_port,
-                db_user=db_user,
-                db_password=db_password,
-                target_db=target_db,
-                migration_mode=migration_mode,
-                neutralize=neutralize,
+                _psql_target(db_host, db_port, db_user, db_password, target_db),
+                migration_mode,
+                neutralize,
             )
         )
 
@@ -294,34 +372,180 @@ def _restore_backup(
     return creds
 
 
+def _detect_source_repo_branch(config: InstanceConfig) -> str:
+    """Best-effort detection of the source instance's checked-out Odoo branch, so a
+    replica clones the same version."""
+    result = run(
+        f"git -C {_quote(config.odoo_home + '/odoo')} rev-parse --abbrev-ref HEAD 2>/dev/null",
+        check=False,
+    )
+    branch = result.stdout.strip()
+    return branch if branch and branch != "HEAD" else ""
+
+
+def _filestore_copy_commands(
+    source_config: InstanceConfig,
+    source_db: str,
+    target_config: InstanceConfig,
+    target_db: str,
+    overwrite: bool,
+) -> list[Command]:
+    """Copy the source filestore into the **target** instance's data dir, owned by
+    the target user."""
+    source_filestore = _filestore_path(source_config, source_db)
+    target_filestore = _filestore_path(target_config, target_db)
+    target_parent = target_filestore.rsplit("/", 1)[0]
+    commands = [
+        Command('Create the target filestore base path', f"mkdir -p {_quote(target_parent)}")
+    ]
+    if overwrite:
+        commands.append(
+            Command('Remove the previous target filestore', f"rm -rf {_quote(target_filestore)}")
+        )
+    commands.append(
+        Command('Duplicate the filestore', f"cp -a {_quote(source_filestore)} {_quote(target_filestore)}")
+    )
+    commands.append(
+        Command(
+            'Own the target filestore',
+            f"chown -R {_quote(target_config.odoo_user)}:{_quote(target_config.odoo_user)} {_quote(target_filestore)}",
+        )
+    )
+    return commands
+
+
+def _plan_refresh_target(
+    source_config: InstanceConfig,
+    target_config: InstanceConfig,
+    source_db: str,
+    target_db: str,
+    method: str,
+    migration_mode: str,
+    neutralize: bool,
+    duplicate_filestore: bool,
+) -> list[Command]:
+    """Refresh an existing target in place: keep its config/service, replace data."""
+    existing = read_odoo_conf(target_config.odoo_conf_file)
+    target_owner = existing.get("db_user", target_db)
+    print(
+        level_text(
+            "INFO",
+            tf('Target instance {} exists — refreshing it in place from {}.', target_config.instance, source_db),
+        )
+    )
+    commands: list[Command] = [
+        Command('Stop the target Odoo service', f"systemctl stop {_quote(target_config.odoo_service)} || true"),
+    ]
+    commands.extend(_drop_db_commands(target_db))
+    commands.extend(_seed_db_commands(source_db, target_db, target_owner, method))
+    commands.extend(_post_db_mode_commands(_psql_target_local(target_db), migration_mode, neutralize))
+    if duplicate_filestore:
+        commands.extend(
+            _filestore_copy_commands(source_config, source_db, target_config, target_db, overwrite=True)
+        )
+    commands.append(
+        Command('Start the target Odoo service', f"systemctl start {_quote(target_config.odoo_service)}")
+    )
+    return commands
+
+
+def _plan_replica_target(
+    source_config: InstanceConfig,
+    creds: DbCredentials,
+    target_config: InstanceConfig,
+    source_db: str,
+    target_db: str,
+    method: str,
+    migration_mode: str,
+    neutralize: bool,
+    duplicate_filestore: bool,
+) -> list[Command] | None:
+    """Provision a brand-new target instance seeded from the source."""
+    if database_exists(target_db):
+        print(level_text("ERROR", tf('Target DB already exists: {}', target_db)))
+        return None
+
+    branch = _detect_source_repo_branch(source_config)
+    if branch:
+        target_config.repo_branch = branch
+        match = re.search(r"\d+", branch)
+        if match:
+            target_config.version = match.group(0)
+    target_config.repo_branch = ask_text('Odoo repo branch (from source)', target_config.repo_branch, required=True)
+    target_config.version = ask_text('Odoo version', target_config.version, required=True)
+    target_config.domain = ask_text('Target public domain', target_config.domain, required=True)
+
+    suggested_http, suggested_gevent = _suggest_instance_ports(
+        target_config.http_port, target_config.gevent_port
+    )
+    target_config.http_port = ask_int('Target internal HTTP port', suggested_http)
+    target_config.gevent_port = ask_int('Target internal gevent port', suggested_gevent)
+    target_config.db_host = creds.host
+    target_config.db_port = creds.port
+    target_config.ensure_strong_secrets()
+    target_config.list_db = False
+    target_config.dbfilter = f"^{target_db}$"
+    tuning = compute_worker_tuning(detect_cpu_count(), detect_total_ram_bytes())
+    target_config.workers = tuning["workers"]
+    target_config.max_cron_threads = tuning["max_cron_threads"]
+    target_config.limit_memory_soft = tuning["limit_memory_soft"]
+    target_config.limit_memory_hard = tuning["limit_memory_hard"]
+    target_config.limit_request = tuning["limit_request"]
+    if target_config.is_remote_db_host:
+        target_config.db_sslmode = "require"
+
+    nginx_version = detect_nginx_version()
+    nginx_mode = _choose_nginx_mode()
+
+    print(
+        level_text(
+            "INFO",
+            tf('Target instance {} does not exist — creating a replica seeded from {}.', target_config.instance, source_db),
+        )
+    )
+
+    commands: list[Command] = []
+    commands.extend(plan_ensure_db_role(target_config))
+    commands.extend(_seed_db_commands(source_db, target_db, target_db, method))
+    commands.extend(plan_odoo_base_setup(target_config, service_autostart=True, start_now=False))
+    if duplicate_filestore:
+        commands.extend(
+            _filestore_copy_commands(source_config, source_db, target_config, target_db, overwrite=False)
+        )
+    commands.extend(_post_db_mode_commands(_psql_target_local(target_db), migration_mode, neutralize))
+    commands.append(
+        Command('Start the target Odoo service', f"systemctl start {_quote(target_config.odoo_service)}")
+    )
+    if nginx_mode == 'Configure HTTP':
+        commands.extend(plan_nginx_http(target_config, nginx_version))
+    elif nginx_mode == 'Configure HTTPS':
+        commands.extend(_maybe_plan_certs(target_config))
+        commands.extend(plan_nginx_https(target_config, nginx_version))
+    return commands
+
+
 def _duplicate_instance(
     config: InstanceConfig, cached: DbCredentials | None = None
 ) -> DbCredentials | None:
+    """Duplicate a source instance into a target: create a full replica when the
+    target does not exist, or refresh an existing target in place from the source."""
     creds = _ask_db_credentials(config.instance, cached)
     source_db = _pick_db_name(creds, 'Source DB to duplicate', required=True)
     if not source_db:
         print(level_text("INFO", 'No source DB, operation cancelled.'))
         return creds
 
-    target_instance = ask_text('New target instance', "", required=True)
-    target_db = ask_text('New target DB', target_instance, required=True)
+    if not _is_local_db_host(creds.host):
+        print(
+            level_text(
+                "WARN",
+                'Orchestrated duplication requires a local PostgreSQL server (sudo -u postgres). For a remote DB, use Backup then Restore.',
+            )
+        )
+        return creds
 
-    target_config = InstanceConfig(instance=target_instance)
-    target_config.db_user = target_db
-    try:
-        target_config.validate_identifiers()
-    except ValueError as error:
-        print(level_text("ERROR", str(error)))
-        return creds
-    if path_exists(target_config.odoo_home):
-        print(level_text("ERROR", tf('Already exists: {}', target_config.odoo_home)))
-        return creds
-    if service_exists(target_instance):
-        print(level_text("ERROR", tf('systemd service already exists: {}', target_instance)))
-        return creds
-    if database_exists(target_db):
-        print(level_text("ERROR", tf('Target DB already exists: {}', target_db)))
-        return creds
+    target_instance = ask_text('Target instance name', "", required=True)
+    target_db = ask_text('Target DB', target_instance, required=True)
 
     if not _is_safe_db_name(source_db) or not _is_safe_db_name(target_db):
         print(
@@ -332,7 +556,33 @@ def _duplicate_instance(
         )
         return creds
 
-    db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
+    target_config = InstanceConfig(instance=target_instance)
+    target_config.db_user = target_db
+    target_config.db_name = target_db
+    try:
+        target_config.validate_identifiers()
+    except ValueError as error:
+        print(level_text("ERROR", str(error)))
+        return creds
+
+    target_exists = (
+        service_exists(target_instance)
+        or path_exists(target_config.odoo_home)
+        or path_exists(target_config.odoo_conf_file)
+    )
+
+    method_choice = choose(
+        'Database copy method',
+        [
+            'Robust: pg_dump then restore (cross-user, recommended)',
+            'Fast: template copy (same DB owner)',
+        ],
+        default_index=0,
+    )
+    if not method_choice:
+        print(level_text("INFO", 'Operation cancelled.'))
+        return creds
+    method = "template" if method_choice.startswith('Fast') else "dump"
 
     migration_mode = choose(
         'Duplication mode',
@@ -345,49 +595,16 @@ def _duplicate_instance(
     neutralize = ask_bool('Neutralize the duplicated DB?', True)
     duplicate_filestore = ask_bool('Also duplicate the filestore?', True)
 
-    commands: list[Command] = [
-        Command(
-            'Duplicate DB via template (frees the source of active sessions)',
-            _duplicate_db_command(
-                db_host, db_port, db_user, db_password, source_db, target_db
-            ),
+    if target_exists:
+        commands = _plan_refresh_target(
+            config, target_config, source_db, target_db, method, migration_mode, neutralize, duplicate_filestore
         )
-    ]
-
-    commands.extend(
-        _post_db_mode_commands(
-            db_host=db_host,
-            db_port=db_port,
-            db_user=db_user,
-            db_password=db_password,
-            target_db=target_db,
-            migration_mode=migration_mode,
-            neutralize=neutralize,
+    else:
+        commands = _plan_replica_target(
+            config, creds, target_config, source_db, target_db, method, migration_mode, neutralize, duplicate_filestore
         )
-    )
-
-    if duplicate_filestore:
-        source_filestore = _filestore_path(config, source_db)
-        # Target filestore must resolve under the TARGET instance's data dir, not
-        # the source instance's, or the duplicated instance starts without it.
-        target_filestore = _filestore_path(target_config, target_db)
-        if path_exists(target_filestore):
-            print(level_text("ERROR", tf('Target filestore already exists: {}', target_filestore)))
-            return creds
-
-        target_parent = target_filestore.rsplit("/", 1)[0]
-        commands.extend(
-            [
-                Command(
-                    'Create the target filestore base path',
-                    f"mkdir -p {_quote(target_parent)}",
-                ),
-                Command(
-                    'Duplicate the filestore',
-                    f"cp -a {_quote(source_filestore)} {_quote(target_filestore)}",
-                ),
-            ]
-        )
+    if commands is None:
+        return creds
 
     if not confirm_with_phrase(
         'Sensitive duplication action detected.',
