@@ -565,7 +565,9 @@ def plan_fail2ban_ensure_odoo_filter() -> list[Command]:
     return commands
 
 
-def plan_odoo_base_setup(config: InstanceConfig, service_autostart: bool = True) -> list[Command]:
+def plan_odoo_base_setup(
+    config: InstanceConfig, service_autostart: bool = True, start_now: bool = True
+) -> list[Command]:
     config.normalize_defaults()
     config.ensure_strong_secrets()
     config.validate_identifiers()
@@ -627,22 +629,25 @@ def plan_odoo_base_setup(config: InstanceConfig, service_autostart: bool = True)
     if service_autostart:
         commands.append(
             Command(
-                'Enable and start the Odoo service',
-                f"systemctl enable --now '{config.odoo_service}'",
+                'Enable Odoo service autostart',
+                f"systemctl enable '{config.odoo_service}'",
             )
         )
     else:
-        commands.extend(
-            [
-                Command(
-                    'Disable Odoo service autostart',
-                    f"systemctl disable '{config.odoo_service}' || true",
-                ),
-                Command(
-                    'Start the Odoo service (without autostart)',
-                    f"systemctl start '{config.odoo_service}'",
-                ),
-            ]
+        commands.append(
+            Command(
+                'Disable Odoo service autostart',
+                f"systemctl disable '{config.odoo_service}' || true",
+            )
+        )
+    # Duplication provisions the target before its database exists; it starts the
+    # service itself after seeding, so it passes start_now=False.
+    if start_now:
+        commands.append(
+            Command(
+                'Start the Odoo service',
+                f"systemctl start '{config.odoo_service}'",
+            )
         )
     return commands
 

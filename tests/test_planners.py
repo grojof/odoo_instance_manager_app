@@ -11,11 +11,31 @@ from instance_manager.planners import (
     _odoo_conf_content,
     plan_backup_retention,
     plan_logrotate_config,
+    plan_odoo_base_setup,
     plan_remove_scheduled_backup,
     plan_scheduled_backup,
     plan_ufw_allow_port,
     plan_ufw_base_setup,
 )
+
+
+class BaseSetupStartTests(unittest.TestCase):
+    def _descs(self, **kw: object) -> list[str]:
+        cfg = InstanceConfig(instance="odoo18")
+        return [c.description for c in plan_odoo_base_setup(cfg, **kw)]  # type: ignore[arg-type]
+
+    def test_start_now_true_starts_the_service(self) -> None:
+        self.assertIn("Start the Odoo service", self._descs(start_now=True))
+
+    def test_start_now_false_provisions_without_starting(self) -> None:
+        descs = self._descs(start_now=False)
+        self.assertNotIn("Start the Odoo service", descs)
+        self.assertIn("Enable Odoo service autostart", descs)
+
+    def test_autostart_false_disables(self) -> None:
+        descs = self._descs(service_autostart=False, start_now=False)
+        self.assertIn("Disable Odoo service autostart", descs)
+        self.assertNotIn("Start the Odoo service", descs)
 
 
 class ScheduledBackupTests(unittest.TestCase):
