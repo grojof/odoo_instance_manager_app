@@ -60,8 +60,11 @@ applies it only after confirmation. This file is the single authored source of t
 - **Keep the changelog and version in lockstep.** User-facing changes go under `## [Unreleased]` in
   `CHANGELOG.md` (Keep a Changelog format) as they land. To cut a release, follow **SemVer**: rename
   `[Unreleased]` to `[<version>] - <YYYY-MM-DD>` (leave a fresh empty `[Unreleased]` on top), bump `version`
-  in `pyproject.toml` to match, add the `[<version>]` compare/tag link at the bottom, then tag `v<version>`
-  and publish a GitHub release. The tag, the `pyproject` version, and the changelog heading must always agree.
+  in `pyproject.toml` to match, add the `[<version>]` compare/tag link at the bottom, then tag `v<version>`.
+  Pushing the tag triggers the **Release workflow** (`.github/workflows/release.yml`): it verifies the tag
+  matches the `pyproject` version, runs the checks, builds the sdist + wheel, and publishes/updates the GitHub
+  Release with those artifacts and the changelog notes. The tag, the `pyproject` version, and the changelog
+  heading must always agree (the workflow fails the release if they don't).
 - **Secure by default.** Validate input at boundaries, never hardcode secrets, and quote everything that
   reaches a shell or SQL. The tool runs as root — assume every input is attacker-controlled.
 - **Add dependencies deliberately.** This project is standard-library-only by design; introducing a runtime

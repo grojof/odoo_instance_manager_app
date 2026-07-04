@@ -1,0 +1,82 @@
+name: Release
+
+# Build the package and publish a GitHub Release on every version tag.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the release and upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project (with dev deps) + build tooling
+        run: python -m pip install --upgrade pip && pip install -e ".[dev]" build twine
+
+      - name: Verify the tag matches the pyproject version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PYPROJECT_VERSION="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          echo "tag=$VERSION pyproject=$PYPROJECT_VERSION"
+          if [ "$VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "::error::Tag v$VERSION does not match pyproject version $PYPROJECT_VERSION"
+            exit 1
+          fi
+
+      - name: Lint (ruff)
+        run: ruff check
+
+      - name: Test (pytest)
+        run: pytest
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q odoo_instance_manager.py instance_manager
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Check the built artifacts
+        run: twine check dist/*
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v start="## [$VERSION]" '
+            index($0, start) == 1 { f = 1; next }
+            /^## \[/ { if (f) exit }
+            f
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "Release $GITHUB_REF_NAME." > release_notes.md
+          fi
+          {
+            echo
+            echo "**Full changelog:** https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md"
+          } >> release_notes.md
+
+      - name: Publish the GitHub Release with artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file release_notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release_notes.md \
+              --latest \
+              --verify-tag
+          fi
