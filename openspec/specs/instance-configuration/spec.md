@@ -9,19 +9,22 @@ log files, and install Python packages into the instance virtualenv.
 ## Requirements
 ### Requirement: Instance discovery and selection
 
-The tool SHALL discover instances as directories under `/opt/odoo` and let the
-operator select a detected instance or type a known name, and SHALL optionally
-query PostgreSQL to list available databases for validation.
+The tool SHALL discover instances as directories under `/opt/odoo` and let the operator select a detected
+instance or type a known name, and SHALL optionally query PostgreSQL to list available databases for
+validation, **scoped to the instance's database role** (databases owned by that role or named after it) rather
+than every database on the server.
 
 #### Scenario: Detected instances are listed for selection
 
 - **WHEN** the operator enters instance management
 - **THEN** directories under `/opt/odoo` are listed for selection, with options to type a name manually or cancel
 
-#### Scenario: Optional database listing for validation
+#### Scenario: Optional database listing is scoped to the instance role
 
 - **WHEN** the operator opts to connect to PostgreSQL during management
-- **THEN** the tool lists non-template databases and lets the operator pick one as the validation target, or reports the connection error without blocking management
+- **THEN** the tool lists only the databases owned by the connected instance role (or whose name starts with
+  it), letting the operator pick one as the validation target, or reports the connection error without blocking
+  management
 
 ### Requirement: Instance status inspection
 
@@ -136,4 +139,21 @@ whether `db_sslmode` is set when the DB host is remote; and whether a `dbfilter`
 - **WHEN** the DB host is remote and `db_sslmode` is unset or permits cleartext fallback
   (`disable`/`allow`/`prefer`)
 - **THEN** the posture view marks the DB connection as WARN and recommends `require` or stricter
+
+### Requirement: Grouped management menu
+
+The instance-management menu SHALL present its actions in grouped submenus — **Status & health**,
+**Configuration**, and **Backups & duplication** — plus a top-level **Delete instance**, so the top menu stays
+short. Selecting a group SHALL open a submenu of its actions, each of which behaves exactly as before.
+
+#### Scenario: Actions are grouped into submenus
+
+- **WHEN** the operator opens the management menu for an instance
+- **THEN** the top menu shows the group entries (Status & health, Configuration, Backups & duplication) plus
+  Delete instance, and selecting a group opens a submenu listing that group's actions with a Back entry
+
+#### Scenario: Delete instance stays top-level
+
+- **WHEN** the operator selects Delete instance from the top menu
+- **THEN** the destructive delete flow (with its phrase confirmation) runs directly, not nested in a submenu
 
