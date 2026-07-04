@@ -7,8 +7,10 @@ import unittest
 from pathlib import Path
 
 from instance_manager.workflows.addons import (
+    _build_group_rows,
     _classify_addon_path,
     _extract_manifest_version,
+    _is_installed,
     _modules_in_dir,
 )
 
@@ -22,6 +24,28 @@ class ManifestVersionTests(unittest.TestCase):
 
     def test_missing_version(self) -> None:
         self.assertEqual(_extract_manifest_version("{'name': 'x'}"), "?")
+
+
+class InstalledFilterTests(unittest.TestCase):
+    def test_is_installed_states(self) -> None:
+        for state in ("installed", "to upgrade", "to remove"):
+            self.assertTrue(_is_installed(state))
+        for state in ("uninstalled", "to install", "uninstallable", ""):
+            self.assertFalse(_is_installed(state))
+
+    def test_all_rows_when_not_filtering(self) -> None:
+        entries = [("sale", "18.0"), ("stock", "18.0")]
+        installed = {"sale": ("installed", "18.0.1")}
+        rows = _build_group_rows(entries, installed, only_installed=False)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0], ["sale", "18.0", "installed", "18.0.1"])
+        self.assertEqual(rows[1], ["stock", "18.0", "-", "-"])
+
+    def test_only_installed_filters_out_the_rest(self) -> None:
+        entries = [("sale", "18.0"), ("stock", "18.0"), ("mrp", "18.0")]
+        installed = {"sale": ("installed", "18.0.1"), "stock": ("uninstalled", "")}
+        rows = _build_group_rows(entries, installed, only_installed=True)
+        self.assertEqual([r[0] for r in rows], ["sale"])
 
 
 class ClassifyAddonPathTests(unittest.TestCase):

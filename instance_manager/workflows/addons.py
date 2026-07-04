@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import re
 
@@ -9,10 +10,33 @@ from ..i18n import tf
 from ..models import InstanceConfig
 from ..prompts import ask_bool, ask_text
 from ..system import read_odoo_conf, run
-from ..ui import level_text, render_table, title
+from ..ui import level_text, render_table, strip_ansi, title
 from .common import DbCredentials, _ask_db_credentials, _quote
 
 _VERSION_RE = re.compile(r"""["']version["']\s*:\s*["']([^"']+)["']""")
+
+# ir_module_module states that mean the module is currently on the system.
+_INSTALLED_STATES = frozenset({"installed", "to upgrade", "to remove"})
+
+
+def _is_installed(state: str) -> bool:
+    return (state or "").strip() in _INSTALLED_STATES
+
+
+def _build_group_rows(
+    entries: list[tuple[str, str]],
+    installed: dict[str, tuple[str, str]],
+    only_installed: bool,
+) -> list[list[str]]:
+    """Rows [name, manifest version, state, installed version] for one origin group.
+    When `only_installed`, modules whose state is not installed are dropped."""
+    rows: list[list[str]] = []
+    for name, version in entries:
+        state, inst_version = installed.get(name, ("", ""))
+        if only_installed and not _is_installed(state):
+            continue
+        rows.append([name, version, state or "-", inst_version or "-"])
+    return rows
 
 
 def _extract_manifest_version(manifest_text: str) -> str:
@@ -110,14 +134,46 @@ def show_addon_inventory(config: InstanceConfig) -> None:
         if not installed:
             print(level_text("WARN", "Could not read ir_module_module (connection/DB); showing only what's available."))
 
+    # Only offer the installed/all filter when a database was actually read.
+    only_installed = bool(installed) and ask_bool('Show only installed modules (instead of all)?', True)
+
     # Odoo core first, then OCA, Custom, then the rest — each its own table.
     order = ["Odoo core", "OCA", "Custom"]
     groups = [g for g in order if g in grouped] + sorted(g for g in grouped if g not in order)
+    sections: list[str] = []
     for group in groups:
         entries = sorted(set((name, version) for name, version, _root in grouped[group]))
-        rows: list[list[str]] = []
-        for name, version in entries:
-            state, inst_version = installed.get(name, ("", ""))
-            rows.append([name, version, state or "-", inst_version or "-"])
-        print(f"\n{title(tf('{} — {} module(s)', group, len(rows)))}")
-        print(render_table(['Module', 'Version (manifest)', 'State', 'Installed version'], rows))
+        rows = _build_group_rows(entries, installed, only_installed)
+        if not rows:
+            continue
+        heading = tf('{} — {} module(s)', group, len(rows))
+        table = render_table(['Module', 'Version (manifest)', 'State', 'Installed version'], rows)
+        print(f"\n{title(heading)}")
+        print(table)
+        sections.append(f"{heading}\n{strip_ansi(table)}")
+
+    if not sections:
+        print(level_text("INFO", 'No modules to show with the current filter.'))
+        return
+
+    _maybe_export_inventory(config, sections)
+
+
+def _maybe_export_inventory(config: InstanceConfig, sections: list[str]) -> None:
+    """Offer to export the rendered inventory to a text file, like the server-audit
+    report export."""
+    if not ask_bool('Export the inventory to a file?', True):
+        print(level_text("INFO", 'Export skipped by the operator.'))
+        return
+
+    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    default_path = f"./reports/addons_{config.instance}_{now}.txt"
+    export_path = ask_text('Inventory export path', default_path, required=True)
+
+    export_dir = os.path.dirname(export_path) or "."
+    os.makedirs(export_dir, exist_ok=True)
+    header = tf('Addon inventory: {}', config.instance)
+    with open(export_path, "w", encoding="utf-8") as file_handle:
+        file_handle.write(f"{header}\n\n" + "\n\n".join(sections) + "\n")
+
+    print(level_text("OK", tf('Inventory exported to: {}', export_path)))

@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **Addon inventory: installed/all filter and export.** After checking a database, the inventory can list
+  **only installed** modules (default) instead of all — the full list is long — and it can be **exported to a
+  text file** (default under `./reports/`), mirroring the server-audit report export.
+
 - **Secure-by-default provisioning (informed choice).** Blank master/DB passwords now default to a strong
   random secret (stdlib `secrets`), never the guessable instance name; the database manager defaults to
   `list_db = False`; an optional `dbfilter` (recommended, but you can decline to leave the instance
