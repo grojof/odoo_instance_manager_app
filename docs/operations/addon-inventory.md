@@ -9,7 +9,7 @@ updated: 2026-07-03
 
 # Addon inventory
 
-From **Gestionar instancias → Inventario de addons**, the tool lists an instance's addon modules — read-only.
+From **Manage instances → Addon inventory**, the tool lists an instance's addon modules — read-only.
 
 ## What it shows
 

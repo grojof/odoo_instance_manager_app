@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -168,6 +169,82 @@ def read_odoo_conf(conf_path: str) -> dict[str, str]:
             values[key.strip()] = value.strip()
 
     return values
+
+
+def detect_cpu_count() -> int:
+    """Detected CPU count via ``nproc``, falling back to 1 when unavailable."""
+    result = run("nproc", check=False)
+    value = result.stdout.strip()
+    if result.returncode == 0 and value.isdigit() and int(value) >= 1:
+        return int(value)
+    return 1
+
+
+def detect_total_ram_bytes() -> int | None:
+    """Total RAM in bytes from ``/proc/meminfo`` (``MemTotal`` is in kB), or None."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as file_handle:
+            for line in file_handle:
+                if line.startswith("MemTotal:"):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        return int(parts[1]) * 1024
+    except OSError:
+        return None
+    return None
+
+
+def wkhtmltopdf_version() -> str | None:
+    """Installed wkhtmltopdf version string (e.g. ``0.12.6``), or None if absent.
+
+    The ``(with patched qt)`` suffix, when present, signals the Odoo-recommended
+    build; callers may inspect the raw string for it.
+    """
+    if not command_ok("command -v wkhtmltopdf >/dev/null 2>&1"):
+        return None
+    result = run("wkhtmltopdf --version 2>/dev/null", check=False)
+    text = result.stdout.strip() or result.stderr.strip()
+    return text or None
+
+
+def detect_os_release() -> dict[str, str]:
+    """Parse ``/etc/os-release`` into a dict (e.g. ``ID``, ``VERSION_CODENAME``)."""
+    values: dict[str, str] = {}
+    try:
+        with open("/etc/os-release", encoding="utf-8") as file_handle:
+            for raw_line in file_handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        return values
+    return values
+
+
+def detect_nginx_version() -> tuple[int, int, int] | None:
+    """Parse ``nginx -v`` (``nginx version: nginx/1.24.0``) into a version tuple."""
+    if not command_ok("command -v nginx >/dev/null 2>&1"):
+        return None
+    # nginx prints its version banner to stderr.
+    result = run("nginx -v 2>&1", check=False)
+    match = re.search(r"nginx/(\d+)\.(\d+)\.(\d+)", result.stdout + result.stderr)
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def detect_postgres_version() -> int | None:
+    """Detected local PostgreSQL server major version via ``SHOW server_version``."""
+    result = run(
+        'sudo -u postgres psql -tAc "SHOW server_version" 2>/dev/null',
+        check=False,
+    )
+    match = re.search(r"(\d+)", result.stdout.strip())
+    if result.returncode == 0 and match:
+        return int(match.group(1))
+    return None
 
 
 def list_databases(

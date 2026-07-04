@@ -10,6 +10,7 @@ from ..planners import (
     plan_nginx_http,
     plan_nginx_https,
     plan_odoo_base_setup,
+    posture_rows,
     pretty_paths,
 )
 from ..prompts import (
@@ -24,12 +25,15 @@ from ..system import (
     Command,
     database_exists,
     db_role_exists,
+    detect_cpu_count,
+    detect_nginx_version,
     path_exists,
     read_odoo_conf,
     service_active,
     service_enabled,
     service_exists,
     user_exists,
+    wkhtmltopdf_version,
 )
 from ..ui import level_tag, level_text, render_table, title
 from .addons import show_addon_inventory
@@ -98,16 +102,28 @@ def _detect_certificate_mode(config: InstanceConfig) -> tuple[str, bool]:
     return 'Incomplete TLS configuration', False
 
 
-def _show_instance_status(
-    config: InstanceConfig,
-    db_error: str | None = None,
-    listed_dbs: list[str] | None = None,
-) -> None:
+def _show_locations_view(config: InstanceConfig) -> None:
     print(f"\n{title('Expected locations and names')}")
     path_rows = [[key, value] for key, value in pretty_paths(config)]
     print(render_table(['Field', 'Value'], path_rows))
 
-    conf_values = read_odoo_conf(config.odoo_conf_file)
+    print(f"\n{title('Relevant instance locations')}")
+    rows = [
+        ["Odoo config", config.odoo_conf_file],
+        ["Odoo home", config.odoo_home],
+        ["Nginx HTTP", f"/etc/nginx/sites-available/{config.nginx_http_name}"],
+        ["Nginx HTTPS", f"/etc/nginx/sites-available/{config.nginx_https_name}"],
+        ["SSL dir", config.nginx_ssl_dir],
+        ["Data store (data_dir)", _resolve_data_dir(config)],
+    ]
+    print(render_table(['Item', 'Path/Value'], rows))
+
+
+def _show_detected_state_view(
+    config: InstanceConfig,
+    db_error: str | None = None,
+    listed_dbs: list[str] | None = None,
+) -> None:
     data_dir = _resolve_data_dir(config)
 
     print(f"\n{title('Detected state')}")
@@ -140,35 +156,48 @@ def _show_instance_status(
     labeled_rows = [[level_tag(state), label, value] for state, label, value in status_rows]
     print(render_table(['State', 'Check', 'Value'], labeled_rows))
 
-    if conf_values:
-        print(f"\n{title('Useful values in the Odoo config')}")
-        conf_rows: list[list[str]] = []
-        for key in [
-            "db_host",
-            "db_port",
-            "db_user",
-            "addons_path",
-            "data_dir",
-            "http_port",
-            "gevent_port",
-        ]:
-            if key in conf_values:
-                conf_rows.append([key, conf_values[key]])
-        if conf_rows:
-            print(render_table(['Key', 'Value'], conf_rows))
+
+def _show_config_values_view(config: InstanceConfig) -> None:
+    conf_values = read_odoo_conf(config.odoo_conf_file)
+    if not conf_values:
+        print(level_text("INFO", tf('No readable Odoo config at {}.', config.odoo_conf_file)))
+        return
+    print(f"\n{title('Useful values in the Odoo config')}")
+    conf_rows: list[list[str]] = []
+    for key in [
+        "db_host",
+        "db_port",
+        "db_user",
+        "addons_path",
+        "data_dir",
+        "http_port",
+        "gevent_port",
+        "longpolling_port",
+        "list_db",
+        "dbfilter",
+        "workers",
+        "db_sslmode",
+    ]:
+        if key in conf_values:
+            conf_rows.append([key, conf_values[key]])
+    if conf_rows:
+        print(render_table(['Key', 'Value'], conf_rows))
 
 
-def _show_instance_locations(config: InstanceConfig) -> None:
-    print(f"\n{title('Relevant instance locations')}")
-    rows = [
-        ["Odoo config", config.odoo_conf_file],
-        ["Odoo home", config.odoo_home],
-        ["Nginx HTTP", f"/etc/nginx/sites-available/{config.nginx_http_name}"],
-        ["Nginx HTTPS", f"/etc/nginx/sites-available/{config.nginx_https_name}"],
-        ["SSL dir", config.nginx_ssl_dir],
-        ["Data store (data_dir)", _resolve_data_dir(config)],
-    ]
-    print(render_table(['Item', 'Path/Value'], rows))
+def _show_posture_view(config: InstanceConfig) -> None:
+    conf_values = read_odoo_conf(config.odoo_conf_file)
+    if not conf_values:
+        print(level_text("INFO", tf('No readable Odoo config at {}.', config.odoo_conf_file)))
+        return
+    rows = posture_rows(
+        instance=config.instance,
+        conf_values=conf_values,
+        wkhtmltopdf_ver=wkhtmltopdf_version(),
+        cpu_count=detect_cpu_count(),
+    )
+    print(f"\n{title('Security & production posture')}")
+    labeled = [[level_tag(state), check, detail] for state, check, detail in rows]
+    print(render_table(['State', 'Check', 'Detail'], labeled))
 
 
 def _repair_instance_nginx_logs(config: InstanceConfig) -> None:
@@ -301,8 +330,51 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
     _execute_plan(commands)
 
 
+def _load_config_from_conf(config: InstanceConfig, values: dict[str, str]) -> None:
+    """Populate a config from an existing ``odoo.conf`` so a regeneration preserves
+    the instance's current credentials and production-posture settings instead of
+    silently resetting them."""
+    if not values:
+        return
+
+    def _int(key: str, current: int) -> int:
+        raw = values.get(key, "").strip()
+        return int(raw) if raw.isdigit() else current
+
+    config.db_host = values.get("db_host", config.db_host)
+    config.db_port = _int("db_port", config.db_port)
+    config.db_user = values.get("db_user", config.db_user)
+    config.db_password = values.get("db_password", config.db_password)
+    config.odoo_admin_passwd = values.get("admin_passwd", config.odoo_admin_passwd)
+    config.http_port = _int("http_port", config.http_port)
+
+    # Preserve the live-chat/bus port under whichever key the instance already uses;
+    # a lone longpolling_port implies an Odoo ≤ 15 instance.
+    if values.get("gevent_port", "").strip().isdigit():
+        config.gevent_port = int(values["gevent_port"])
+    elif values.get("longpolling_port", "").strip().isdigit():
+        config.gevent_port = int(values["longpolling_port"])
+        config.version = "15"
+
+    if "list_db" in values:
+        config.list_db = values.get("list_db", "").strip().lower() in {"true", "1", "yes"}
+    config.dbfilter = values.get("dbfilter", config.dbfilter)
+    config.db_sslmode = values.get("db_sslmode", config.db_sslmode)
+    for key in (
+        "workers",
+        "max_cron_threads",
+        "limit_memory_soft",
+        "limit_memory_hard",
+        "limit_request",
+        "limit_time_cpu",
+        "limit_time_real",
+    ):
+        setattr(config, key, _int(key, getattr(config, key)))
+
+
 def update_existing_configs(instance: str) -> None:
     config = InstanceConfig(instance=instance)
+    _load_config_from_conf(config, read_odoo_conf(config.odoo_conf_file))
     config.normalize_defaults()
 
     print(t('\nEnter new values (if applicable)'))
@@ -316,6 +388,7 @@ def update_existing_configs(instance: str) -> None:
     config.odoo_admin_passwd = ask_text(
         'Odoo admin_passwd', config.odoo_admin_passwd, required=True
     )
+    config.ensure_strong_secrets()
 
     backup_root = f"/var/backups/{config.instance}/config_preupdate"
     # One timestamped directory for the whole pre-update backup, so all files
@@ -356,16 +429,17 @@ def update_existing_configs(instance: str) -> None:
         )
     )
 
+    nginx_version = detect_nginx_version()
     nginx_mode = choose(
         'Regenerate Nginx',
         ["No", 'Yes - HTTP', 'Yes - HTTPS'],
         default_index=None,
     )
     if nginx_mode == 'Yes - HTTP':
-        commands.extend(plan_nginx_http(config))
+        commands.extend(plan_nginx_http(config, nginx_version))
     elif nginx_mode == 'Yes - HTTPS':
         commands.extend(_maybe_plan_certs(config))
-        commands.extend(plan_nginx_https(config))
+        commands.extend(plan_nginx_https(config, nginx_version))
 
     _execute_plan(commands)
     print(level_text("INFO", tf('Configuration backup (if the plan ran) at: {}', backup_dest)))
@@ -480,13 +554,13 @@ def manage_existing_instance() -> None:
     db_creds: DbCredentials | None = None
 
     while True:
-        print(t('\nFull instance status:'))
-        _show_instance_status(config, db_error=db_error, listed_dbs=listed_dbs)
-
         action = choose(
             tf('\nSafe instance management: {}', instance),
             [
-                'Show locations / current config',
+                'Status: locations & names',
+                'Status: detected resources',
+                'Status: config values',
+                'Status: security & production',
                 'Health check',
                 'Update existing configuration',
                 'Repair instance Nginx logs',
@@ -507,8 +581,14 @@ def manage_existing_instance() -> None:
         if action in {"", 'Back'}:
             return
 
-        if action == 'Show locations / current config':
-            _show_instance_locations(config)
+        if action == 'Status: locations & names':
+            _show_locations_view(config)
+        elif action == 'Status: detected resources':
+            _show_detected_state_view(config, db_error=db_error, listed_dbs=listed_dbs)
+        elif action == 'Status: config values':
+            _show_config_values_view(config)
+        elif action == 'Status: security & production':
+            _show_posture_view(config)
         elif action == 'Health check':
             run_health_check(config)
         elif action == 'Update existing configuration':

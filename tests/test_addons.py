@@ -32,7 +32,7 @@ class ClassifyAddonPathTests(unittest.TestCase):
         self.assertEqual(_classify_addon_path("/opt/odoo/inst/addons-custom"), "Custom")
 
     def test_unknown_origin_is_labelled(self) -> None:
-        self.assertTrue(_classify_addon_path("/opt/odoo/inst/extra-mods").startswith("Otros"))
+        self.assertTrue(_classify_addon_path("/opt/odoo/inst/extra-mods").startswith("Other"))
 
 
 class ModulesInDirTests(unittest.TestCase):

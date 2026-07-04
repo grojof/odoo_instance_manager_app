@@ -13,7 +13,13 @@ tool is for you. If you use Odoo's SaaS/Online or a managed host, you don't need
   the config and systemd service, and optionally sets up PostgreSQL, Nginx, and TLS.
 - **Run many sites on one server** — each instance is isolated (its own service, ports, config, and database),
   all derived from a name, so they don't collide.
-- **Keep them secure** — Fail2ban jails, a UFW firewall baseline, and TLS certificate management.
+- **Keep them secure by default** — strong random master/DB passwords, a hidden database manager
+  (`list_db = False`), a `dbfilter`, and encrypted remote DB connections — each recommended but always your
+  informed choice, with warnings. Plus Fail2ban jails, a UFW firewall baseline, and TLS management.
+- **Get working PDFs and right-sized performance** — optional checksum-verified **wkhtmltopdf** (for invoice
+  and report PDFs), and `workers`/memory limits derived from the server's CPU and RAM.
+- **Run on your stack, not just one** — detects the OS codename, nginx, PostgreSQL, and Odoo version and
+  writes version-correct config (see [Supported platforms](docs/platforms.md)).
 - **Keep them healthy** — a one-look health check (service, HTTP, database, disk), disk-usage reports, and log
   rotation.
 - **Never lose data** — manual or **scheduled automatic backups**, plus restore and duplicate, all with
@@ -30,7 +36,8 @@ tool is for you. If you use Odoo's SaaS/Online or a managed host, you don't need
 
 ## Requirements
 
-- An **Ubuntu 24.04** server, run as **root** (`sudo`).
+- A **Debian/Ubuntu (apt) server**, run as **root** (`sudo`) — validated on **Ubuntu 24.04**, and
+  version-adaptive across other releases (see [Supported platforms](docs/platforms.md)).
 - **Python 3.12+** (ships with 24.04). Nothing else.
 
 The interface is available in **English** (default) or **Spanish** — chosen at startup or via `OIM_LANG=en|es`
@@ -43,8 +50,8 @@ The interface is available in **English** (default) or **Spanish** — chosen at
 sudo python3 odoo_instance_manager.py
 ```
 
-Then pick an action from the main menu — for example **Menú de instalación** to create a new Odoo site, or
-**Gestionar instancias** to manage an existing one. Every action shows its full command plan and waits for your
+Then pick an action from the main menu — for example **Installation menu** to create a new Odoo site, or
+**Manage instances** to manage an existing one. Every action shows its full command plan and waits for your
 confirmation before touching the system.
 
 ```mermaid
@@ -65,6 +72,8 @@ flowchart LR
 
 - [Installing and provisioning instances](docs/installation.md) — install modes, ports, Nginx, TLS.
 - [Configuration reference](docs/configuration-reference.md) — every field, default, and derived path.
+- [What it offers & supported platforms](docs/platforms.md) — capabilities and the OS/nginx/PostgreSQL/Odoo
+  support matrix.
 
 **Daily operations** ([docs/operations/](docs/operations/))
 

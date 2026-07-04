@@ -9,13 +9,13 @@ updated: 2026-07-03
 
 # Fail2ban protection
 
-The **Seguridad Fail2ban** menu installs and operates Fail2ban for the host and for individual Odoo
+The **Fail2ban security** menu installs and operates Fail2ban for the host and for individual Odoo
 instances. The status header shows service/enabled state and tolerates a socket that has not yet come up
 (reported as *waiting*, not an error).
 
 ## Secure base setup
 
-**Instalar/config base segura** installs Fail2ban and writes a base configuration with `ufw` as the ban
+**Install / configure secure baseline** installs Fail2ban and writes a base configuration with `ufw` as the ban
 action, enabling `sshd`, `nginx-http-auth`, `nginx-botsearch`, and `recidive`. You supply extra admin
 IPs/networks to ignore (loopback is always ignored) and tune `bantime`, `findtime`, `maxretry`, and the
 recidive bantime. The plan validates with `fail2ban-client -t`, enables/restarts the service, and waits for
@@ -27,7 +27,7 @@ the socket to be ready.
 
 ## Per-instance Odoo jail
 
-**Activar protección Odoo por instancia** installs the shared `odoo-auth` filter and writes a dedicated
+**Enable per-instance Odoo protection** installs the shared `odoo-auth` filter and writes a dedicated
 `odoo-auth-<instance>` jail bound to the instance log. Before activating, it **tests the filter** against the
 log with `fail2ban-regex`.
 
@@ -44,14 +44,14 @@ those would lock out your own infrastructure. The tool assesses the **last 300 l
 - **Unknown** (log missing/unreadable or no parseable IPv4) → warns, but does not by itself block enabling the
   jail.
 
-Run this check on its own with **Verificar IP real en log Odoo**.
+Run this check on its own with **Check the real IP in the Odoo log**.
 
 ## Operating bans
 
-- **Ver estado y jails** / **Ver detalle de jail** — inspect the current jails and a jail's detail.
-- **Desbanear IP de jail** — lists the currently banned IPs for a jail (or accept a manual IP) and runs
+- **Show status and jails** / **Show jail detail** — inspect the current jails and a jail's detail.
+- **Unban an IP from a jail** — lists the currently banned IPs for a jail (or accept a manual IP) and runs
   `fail2ban-client set <jail> unbanip <ip>`.
-- **Probar regex Odoo** — ensures the default `odoo-auth` filter exists, validates the log and filter files,
+- **Test the Odoo regex** — ensures the default `odoo-auth` filter exists, validates the log and filter files,
   and runs `fail2ban-regex`.
 
 ## Related

@@ -28,7 +28,7 @@ def _classify_addon_path(path: str) -> str:
         return "OCA"
     if lowered.endswith("addons-custom") or "/addons-custom" in lowered:
         return "Custom"
-    return f"Otros ({os.path.basename(lowered) or path})"
+    return f"Other ({os.path.basename(lowered) or path})"
 
 
 def _addon_roots(config: InstanceConfig) -> list[str]:

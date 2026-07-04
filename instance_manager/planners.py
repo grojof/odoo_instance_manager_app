@@ -54,31 +54,74 @@ def _db_connectivity_check_command(config: InstanceConfig) -> str:
 
 
 def _odoo_conf_content(config: InstanceConfig) -> str:
-    return f"""[options]
-admin_passwd = {config.odoo_admin_passwd}
-list_db = True
+    """Render the instance ``odoo.conf``.
 
-addons_path = {config.odoo_home}/odoo/addons,{config.odoo_home}/addons-oca,{config.odoo_home}/addons-custom
+    Version-adaptive: the live-chat/bus port key is ``gevent_port`` on Odoo ≥ 16
+    and ``longpolling_port`` on ≤ 15. Production posture (``list_db``, ``dbfilter``,
+    derived ``workers``/memory limits) and ``db_sslmode`` for a remote DB host are
+    written from the resolved config. Pure — all values are passed in.
+    """
+    lines = [
+        "[options]",
+        f"admin_passwd = {config.odoo_admin_passwd}",
+        f"list_db = {config.list_db}",
+        f"dbfilter = {config.effective_dbfilter()}",
+        "",
+        f"addons_path = {config.odoo_home}/odoo/addons,"
+        f"{config.odoo_home}/addons-oca,{config.odoo_home}/addons-custom",
+        "",
+        "http_interface = 127.0.0.1",
+        f"http_port = {config.http_port}",
+        f"{config.gevent_port_key} = {config.gevent_port}",
+        "proxy_mode = True",
+        "",
+        f"logfile = {config.odoo_log_file}",
+        "",
+        f"workers = {config.workers}",
+        f"max_cron_threads = {config.max_cron_threads}",
+        f"limit_memory_soft = {config.limit_memory_soft}",
+        f"limit_memory_hard = {config.limit_memory_hard}",
+        f"limit_request = {config.limit_request}",
+        f"limit_time_cpu = {config.limit_time_cpu}",
+        f"limit_time_real = {config.limit_time_real}",
+        "",
+        f"db_host = {config.db_host}",
+        f"db_port = {config.db_port}",
+        f"db_user = {config.db_user}",
+        f"db_password = {config.db_password}",
+    ]
+    if config.is_remote_db_host and config.db_sslmode:
+        lines.append(f"db_sslmode = {config.db_sslmode}")
+    return "\n".join(lines) + "\n"
 
-http_interface = 127.0.0.1
-http_port = {config.http_port}
-gevent_port = {config.gevent_port}
-proxy_mode = True
 
-logfile = {config.odoo_log_file}
+_GIB = 1024**3
 
-workers = 4
-max_cron_threads = 2
-limit_memory_soft = 2147483648
-limit_memory_hard = 2684354560
-limit_time_cpu = 3600
-limit_time_real = 7200
 
-db_host = {config.db_host}
-db_port = {config.db_port}
-db_user = {config.db_user}
-db_password = {config.db_password}
-"""
+def compute_worker_tuning(cpu_count: int, ram_bytes: int | None) -> dict[str, int]:
+    """Pure worker/memory sizing from detected resources.
+
+    ``workers = (cpu * 2) + 1`` (Odoo's guidance), then capped so the worker + cron
+    steady-state memory budget (~1 GiB/process) fits detected RAM after an
+    OS/PostgreSQL reserve. A floor of 2 keeps a production host multi-process; the
+    per-worker soft/hard limits are ceilings, not steady use. Operators override.
+    """
+    cpu = max(1, cpu_count)
+    max_cron_threads = 2 if cpu >= 4 else 1
+    workers = (cpu * 2) + 1
+    if ram_bytes and ram_bytes > 0:
+        reserve = max(_GIB, int(ram_bytes * 0.2))
+        available = max(0, ram_bytes - reserve)
+        per_process = _GIB
+        max_by_ram = available // per_process - max_cron_threads
+        workers = max(2, min(workers, int(max_by_ram)))
+    return {
+        "workers": workers,
+        "max_cron_threads": max_cron_threads,
+        "limit_memory_soft": 2147483648,
+        "limit_memory_hard": 2684354560,
+        "limit_request": 8192,
+    }
 
 
 def _systemd_content(config: InstanceConfig) -> str:
@@ -99,6 +142,18 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 """
+
+
+def _https_listen_block(nginx_version: tuple[int, int, int] | None) -> str:
+    """The `listen`/http2 lines for the TLS server block, adapted to nginx.
+
+    nginx ≥ 1.25.1 uses `listen … ssl;` plus a separate `http2 on;` (the `http2`
+    listen parameter is deprecated there); older nginx uses `listen … ssl http2;`
+    (the `http2 on;` directive does not exist and would fail `nginx -t`).
+    """
+    if nginx_version is not None and nginx_version >= (1, 25, 1):
+        return "  listen 443 ssl;\n  http2 on;"
+    return "  listen 443 ssl http2;"
 
 
 def _nginx_http_content(config: InstanceConfig) -> str:
@@ -126,7 +181,7 @@ server {{
   access_log /var/log/nginx/{config.instance}.access.log;
   error_log  /var/log/nginx/{config.instance}.error.log;
 
-  location /websocket {{
+  location {config.live_chat_location} {{
     proxy_pass http://odoochat_{config.instance};
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
@@ -148,7 +203,10 @@ server {{
 """
 
 
-def _nginx_https_content(config: InstanceConfig) -> str:
+def _nginx_https_content(
+    config: InstanceConfig, nginx_version: tuple[int, int, int] | None = None
+) -> str:
+    listen_block = _https_listen_block(nginx_version)
     return f"""upstream odoo_{config.instance} {{
   server 127.0.0.1:{config.http_port};
 }}
@@ -169,7 +227,7 @@ server {{
 }}
 
 server {{
-  listen 443 ssl http2;
+{listen_block}
   server_name {config.domain};
 
   client_max_body_size 2048m;
@@ -186,7 +244,7 @@ server {{
   access_log /var/log/nginx/{config.instance}.access.log;
   error_log  /var/log/nginx/{config.instance}.error.log;
 
-  location /websocket {{
+  location {config.live_chat_location} {{
     proxy_pass http://odoochat_{config.instance};
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
@@ -506,6 +564,7 @@ def plan_fail2ban_ensure_odoo_filter() -> list[Command]:
 
 def plan_odoo_base_setup(config: InstanceConfig, service_autostart: bool = True) -> list[Command]:
     config.normalize_defaults()
+    config.ensure_strong_secrets()
     config.validate_identifiers()
     commands: list[Command] = [
         Command('Update packages', "apt-get update"),
@@ -589,6 +648,7 @@ def plan_db_setup(
     config: InstanceConfig, ensure_remote_access: bool = True
 ) -> list[Command]:
     config.normalize_defaults()
+    config.ensure_strong_secrets()
     config.validate_identifiers()
     role_sql = _db_role_create_if_missing_sql(config)
 
@@ -627,6 +687,7 @@ def plan_db_setup(
 
 def plan_ensure_db_role(config: InstanceConfig) -> list[Command]:
     config.normalize_defaults()
+    config.ensure_strong_secrets()
     config.validate_identifiers()
 
     commands: list[Command] = []
@@ -655,7 +716,11 @@ def plan_ensure_db_role(config: InstanceConfig) -> list[Command]:
     return commands
 
 
-def plan_nginx_http(config: InstanceConfig) -> list[Command]:
+def plan_nginx_http(
+    config: InstanceConfig, nginx_version: tuple[int, int, int] | None = None
+) -> list[Command]:
+    # nginx_version is accepted for signature parity with plan_nginx_https; the
+    # plain HTTP vhost listens on port 80 only and needs no http2 adaptation.
     site_available = f"/etc/nginx/sites-available/{config.nginx_http_name}"
     site_enabled_http = f"/etc/nginx/sites-enabled/{config.nginx_http_name}"
     site_enabled_https = f"/etc/nginx/sites-enabled/{config.nginx_https_name}"
@@ -684,7 +749,9 @@ def plan_nginx_http(config: InstanceConfig) -> list[Command]:
     return commands
 
 
-def plan_nginx_https(config: InstanceConfig) -> list[Command]:
+def plan_nginx_https(
+    config: InstanceConfig, nginx_version: tuple[int, int, int] | None = None
+) -> list[Command]:
     site_available = f"/etc/nginx/sites-available/{config.nginx_https_name}"
     site_enabled_http = f"/etc/nginx/sites-enabled/{config.nginx_http_name}"
     site_enabled_https = f"/etc/nginx/sites-enabled/{config.nginx_https_name}"
@@ -694,7 +761,9 @@ def plan_nginx_https(config: InstanceConfig) -> list[Command]:
         Command('Enable Nginx', "systemctl enable --now nginx"),
     ]
     commands.extend(
-        write_text_file_command(site_available, _nginx_https_content(config), "644")
+        write_text_file_command(
+            site_available, _nginx_https_content(config, nginx_version), "644"
+        )
     )
     commands.extend(
         [
@@ -1010,6 +1079,186 @@ def plan_ufw_delete_rule(number: int) -> list[Command]:
             f"ufw --force delete {int(number)}",
         )
     ]
+
+
+_WKHTMLTOPDF_BASE_URL = (
+    "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3"
+)
+# Detected OS codename -> (asset filename, sha256). amd64, Qt-patched 0.12.6.1-3.
+# The jammy build is verified against Odoo's own pinned checksum (its SHA-1
+# 967390a759707337b46d1c02452e2bb6b2dc6d59 matches the Odoo 18 Dockerfile) and
+# also runs on noble (24.04). Codenames without a compatible asset resolve to
+# None so the caller recommends the distro package or skip — never a guessed URL.
+_WKHTMLTOPDF_ASSETS: dict[str, tuple[str, str]] = {
+    "jammy": (
+        "wkhtmltox_0.12.6.1-3.jammy_amd64.deb",
+        "4f723b2691ad8638a9df960e0421d346d7315083e3583a334f33362280ddba15",
+    ),
+    "noble": (
+        "wkhtmltox_0.12.6.1-3.jammy_amd64.deb",
+        "4f723b2691ad8638a9df960e0421d346d7315083e3583a334f33362280ddba15",
+    ),
+    "bookworm": (
+        "wkhtmltox_0.12.6.1-3.bookworm_amd64.deb",
+        "98ba0d157b50d36f23bd0dedf4c0aa28c7b0c50fcdcdc54aa5b6bbba81a3941d",
+    ),
+    "bullseye": (
+        "wkhtmltox_0.12.6.1-3.bullseye_amd64.deb",
+        "9c687f0c58cf50e01f2a6375d2e34372f8feeec56a84690ea113d298fccadd98",
+    ),
+}
+
+
+def resolve_wkhtmltopdf_asset(codename: str) -> tuple[str, str, str] | None:
+    """``(url, filename, sha256)`` for the patched wkhtmltopdf matching ``codename``,
+    or ``None`` when no compatible verified asset is pinned (the caller then
+    recommends the distro package or skip; it never guesses a URL)."""
+    entry = _WKHTMLTOPDF_ASSETS.get((codename or "").strip().lower())
+    if not entry:
+        return None
+    filename, sha256 = entry
+    return f"{_WKHTMLTOPDF_BASE_URL}/{filename}", filename, sha256
+
+
+def plan_install_wkhtmltopdf(mode: str, codename: str = "") -> list[Command]:
+    """Plan a wkhtmltopdf install.
+
+    ``mode == "patched"``: download the codename's pinned Qt-patched ``.deb``,
+    verify its SHA-256, and install only on a match. ``mode == "distro"``: the apt
+    package (un-patched, reduced fidelity). Any other mode (or an unmapped codename
+    for ``patched``): no commands.
+    """
+    if mode == "distro":
+        return [
+            Command(
+                'Install distro wkhtmltopdf (un-patched, reduced fidelity)',
+                "apt-get update && apt-get -y install wkhtmltopdf",
+            )
+        ]
+    if mode != "patched":
+        return []
+    asset = resolve_wkhtmltopdf_asset(codename)
+    if asset is None:
+        return []
+    url, filename, sha256 = asset
+    tmp = f"/tmp/{filename}"
+    return [
+        Command(
+            'Ensure curl is available',
+            "command -v curl >/dev/null 2>&1 || (apt-get update && apt-get -y install curl)",
+        ),
+        Command(
+            tf('Download patched wkhtmltopdf ({})', filename),
+            f"curl -fSL -o {shlex.quote(tmp)} {shlex.quote(url)}",
+        ),
+        Command(
+            'Verify wkhtmltopdf SHA-256 (aborts on mismatch)',
+            f"echo {shlex.quote(sha256 + '  ' + tmp)} | sha256sum -c -",
+        ),
+        Command(
+            'Install verified wkhtmltopdf .deb',
+            f"apt-get update && apt-get -y install {shlex.quote(tmp)}",
+        ),
+        Command('Remove downloaded wkhtmltopdf .deb', f"rm -f {shlex.quote(tmp)}"),
+    ]
+
+
+def posture_rows(
+    *,
+    instance: str,
+    conf_values: dict[str, str],
+    wkhtmltopdf_ver: str | None,
+    cpu_count: int | None = None,
+) -> list[tuple[str, str, str]]:
+    """Pure security/production posture evaluation over a read ``odoo.conf`` plus
+    host facts. Returns ``(state, check, detail)`` rows (state ∈ OK/WARN/INFO),
+    shared by the management posture view and the server-audit report."""
+    rows: list[tuple[str, str, str]] = []
+
+    list_db = conf_values.get("list_db", "").strip().lower()
+    manager_exposed = list_db in {"", "true", "1", "yes"}
+    if manager_exposed:
+        rows.append((
+            "WARN",
+            "Database manager (list_db)",
+            "exposed — set list_db = False for production (and a dbfilter)",
+        ))
+    else:
+        rows.append(("OK", "Database manager (list_db)", "disabled (list_db = False)"))
+
+    dbfilter = conf_values.get("dbfilter", "").strip()
+    if dbfilter:
+        rows.append(("OK", "dbfilter", dbfilter))
+    else:
+        rows.append((
+            "WARN" if manager_exposed else "INFO",
+            "dbfilter",
+            "not set — bind the instance to its database(s)",
+        ))
+
+    admin = conf_values.get("admin_passwd", "").strip()
+    if admin == instance:
+        rows.append((
+            "WARN",
+            "Master password (admin_passwd)",
+            "equals the instance name — guessable",
+        ))
+    elif admin.startswith("$"):
+        rows.append(("OK", "Master password (admin_passwd)", "hashed"))
+    elif admin:
+        rows.append(("OK", "Master password (admin_passwd)", "set (non-default)"))
+    else:
+        rows.append(("INFO", "Master password (admin_passwd)", "not found in config"))
+
+    db_password = conf_values.get("db_password", "").strip()
+    if db_password == instance:
+        rows.append(("WARN", "DB password", "equals the instance name — guessable"))
+    elif db_password:
+        rows.append(("OK", "DB password", "set (non-default)"))
+    else:
+        rows.append(("INFO", "DB password", "not found in config"))
+
+    if not wkhtmltopdf_ver:
+        rows.append(("WARN", "wkhtmltopdf", "not installed — PDF reports will fail"))
+    else:
+        patched = "with patched qt" in wkhtmltopdf_ver.lower()
+        detail = wkhtmltopdf_ver if patched else f"{wkhtmltopdf_ver} (un-patched — reports may be degraded)"
+        rows.append(("OK" if patched else "WARN", "wkhtmltopdf", detail))
+
+    workers_raw = conf_values.get("workers", "").strip()
+    if workers_raw.isdigit():
+        workers = int(workers_raw)
+        if workers == 0:
+            rows.append(("WARN", "workers", "0 (threaded/dev mode) — set > 0 for production"))
+        elif cpu_count:
+            suggested = cpu_count * 2 + 1
+            state = "OK" if workers <= suggested else "INFO"
+            rows.append((state, "workers", tf("{} (detected {} CPU → suggested {})", workers, cpu_count, suggested)))
+        else:
+            rows.append(("OK", "workers", workers_raw))
+    else:
+        rows.append(("INFO", "workers", "not set"))
+
+    db_host = conf_values.get("db_host", "")
+    if _is_local_db_host(db_host):
+        rows.append(("OK", "db_sslmode", "local DB (SSL mode not required)"))
+    else:
+        sslmode = conf_values.get("db_sslmode", "").strip().lower()
+        if sslmode in {"require", "verify-ca", "verify-full"}:
+            rows.append(("OK", "db_sslmode (remote DB)", sslmode))
+        else:
+            rows.append((
+                "WARN",
+                "db_sslmode (remote DB)",
+                f"{sslmode or 'unset'} — remote DB traffic may be unencrypted; use require or stricter",
+            ))
+
+    if conf_values.get("proxy_mode", "").strip().lower() in {"true", "1", "yes"}:
+        rows.append(("OK", "proxy_mode", "True"))
+    else:
+        rows.append(("WARN", "proxy_mode", "not True — required behind Nginx"))
+
+    return rows
 
 
 def pretty_paths(config: InstanceConfig) -> list[tuple[str, str]]:

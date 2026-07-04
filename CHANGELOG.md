@@ -6,6 +6,38 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Secure-by-default provisioning (informed choice).** Blank master/DB passwords now default to a strong
+  random secret (stdlib `secrets`), never the guessable instance name; the database manager defaults to
+  `list_db = False`; a `dbfilter` is written; and remote database hosts get `db_sslmode = require`. Each
+  recommended default remains an explicit, warned operator choice at install.
+- **Optional wkhtmltopdf** at install: the checksum-verified Qt-patched 0.12.6.1-3 build selected for the
+  detected OS codename (SHA-256 pinned; jammy build verified against Odoo's own published checksum), a distro
+  package fallback, or skip (warned). Required for Odoo PDF reports.
+- **CPU/RAM-derived performance tuning**: `workers = (cpu*2)+1` capped by detected RAM, per-worker memory
+  limits, and `limit_request`, all overridable by the operator.
+- **Version-adaptive configuration**: the tool detects the OS codename, nginx version, PostgreSQL version and
+  the Odoo major, and renders version-correct config — `gevent_port` (Odoo ≥ 16) vs `longpolling_port` (≤ 15),
+  the Nginx live-chat location `/websocket` vs `/longpolling/poll`, and the nginx HTTP/2 form
+  (`listen … ssl http2` on nginx < 1.25.1, `http2 on;` on ≥ 1.25.1). This fixes a latent broken live-chat
+  location on Odoo ≤ 15 and removes the hard tie to Ubuntu 24.04 (now Debian/Ubuntu-family, version-adaptive).
+- **Security & production posture audit**: a new instance **Status ▸ Security & production** view and a
+  per-instance posture summary in the server-audit report flag `list_db`, guessable default secrets,
+  wkhtmltopdf presence/version, worker sizing, remote `db_sslmode`, and `dbfilter`.
+- **New doc**: [What it offers & supported platforms](docs/platforms.md) with the OS/nginx/PostgreSQL/Odoo
+  support matrix.
+
+### Changed
+
+- **Instance status is on-demand.** The management menu no longer dumps every status table on each iteration;
+  status is split into selectable **Status ▸ Locations / Detected resources / Config values / Security &
+  production** views.
+- Documentation is English-canonical: doc pages now quote the English UI labels (the UI defaults to English,
+  with Spanish available via i18n), and two in-code Spanish labels were migrated to English.
+- Configuration updates for an existing instance now read and preserve its current credentials and
+  production-posture settings before regenerating, instead of resetting them.
+
 ## [1.0.0] - 2026-07-04
 
 First stable, publicly released version. The interactive manager is feature-complete for installing,

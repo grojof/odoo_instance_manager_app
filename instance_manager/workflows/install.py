@@ -6,27 +6,163 @@ import os
 import re
 
 from ..i18n import tf
-from ..models import InstanceConfig
+from ..models import InstanceConfig, generate_secret
 from ..planners import (
+    compute_worker_tuning,
     plan_copy_custom_certs,
     plan_db_setup,
     plan_ensure_db_role,
     plan_ensure_self_signed_certs,
+    plan_install_wkhtmltopdf,
     plan_logrotate_config,
     plan_nginx_http,
     plan_nginx_https,
     plan_odoo_base_setup,
+    resolve_wkhtmltopdf_asset,
 )
 from ..prompts import ask_bool, ask_int, ask_text, choose, select_file_path
 from ..system import (
     Command,
     apply_commands,
+    detect_cpu_count,
+    detect_nginx_version,
+    detect_os_release,
+    detect_total_ram_bytes,
     list_instances,
     read_odoo_conf,
     run,
 )
 from ..ui import level_text
 from .common import _execute_plan, _odoo_conf_candidates, _quote
+
+
+def _prompt_secret(label: str, instance: str) -> str:
+    """Prompt for a secret, defaulting to a freshly generated strong value the
+    operator can accept with Enter. Warn (but allow) if they set the guessable
+    instance name."""
+    default_secret = generate_secret()
+    print(
+        level_text(
+            "INFO",
+            tf('A strong value for {} was generated — press Enter to accept it, and record it now.', label),
+        )
+    )
+    value = ask_text(label, default_secret, required=True)
+    if value == instance:
+        print(
+            level_text(
+                "WARN",
+                'That value equals the instance name and is easily guessable; the master password guards the database manager. Prefer the generated strong value.',
+            )
+        )
+    return value
+
+
+def _prompt_production_hardening(config: InstanceConfig) -> None:
+    """Interactively resolve the production-posture settings, recommending the
+    secure option while letting the operator make an informed choice."""
+    config.list_db = ask_bool(
+        'Expose the Odoo database manager over HTTP (list_db)? Recommended: No', False
+    )
+    if config.list_db:
+        print(
+            level_text(
+                "WARN",
+                'The database manager will be reachable over HTTP (create/duplicate/drop/restore), guarded only by the master password. Keep a strong master password and a dbfilter.',
+            )
+        )
+    else:
+        print(
+            level_text(
+                "INFO",
+                'Database manager disabled (list_db = False). Create the first database via CLI (odoo-bin -d <db> -i base --stop-after-init) or by temporarily re-enabling it.',
+            )
+        )
+
+    config.dbfilter = ask_text(
+        'dbfilter (binds host/database)', config.effective_dbfilter(), required=True
+    )
+
+    cpu = detect_cpu_count()
+    ram = detect_total_ram_bytes()
+    tuning = compute_worker_tuning(cpu, ram)
+    ram_txt = f"{ram // (1024 ** 3)} GiB" if ram else "unknown"
+    print(
+        level_text(
+            "INFO",
+            tf('Detected {} CPU / {} RAM -> suggested workers={}, max_cron_threads={}.', cpu, ram_txt, tuning["workers"], tuning["max_cron_threads"]),
+        )
+    )
+    config.workers = ask_int('Odoo workers', tuning["workers"], min_value=0, max_value=256)
+    config.max_cron_threads = ask_int(
+        'max_cron_threads', tuning["max_cron_threads"], min_value=0, max_value=64
+    )
+    config.limit_memory_soft = tuning["limit_memory_soft"]
+    config.limit_memory_hard = tuning["limit_memory_hard"]
+    config.limit_request = tuning["limit_request"]
+
+    if config.is_remote_db_host:
+        ssl_options = [
+            'require (recommended)',
+            'verify-full (needs a CA)',
+            'prefer (allows cleartext fallback)',
+            'disable',
+        ]
+        selection = choose(
+            'PostgreSQL SSL mode (remote DB host)', ssl_options, default_index=0
+        )
+        config.db_sslmode = {
+            'require (recommended)': "require",
+            'verify-full (needs a CA)': "verify-full",
+            'prefer (allows cleartext fallback)': "prefer",
+            'disable': "disable",
+        }.get(selection, "require")
+        if config.db_sslmode in {"prefer", "disable"}:
+            print(
+                level_text(
+                    "WARN",
+                    'This SSL mode allows unencrypted Odoo<->PostgreSQL traffic across the network.',
+                )
+            )
+    else:
+        config.db_sslmode = ""
+
+
+def _maybe_plan_wkhtmltopdf() -> list[Command]:
+    """Offer to install wkhtmltopdf (required for Odoo PDF reports), detecting the
+    OS codename to pick the verified patched build."""
+    os_release = detect_os_release()
+    codename = os_release.get("VERSION_CODENAME", "")
+    has_patched = resolve_wkhtmltopdf_asset(codename) is not None
+
+    print(
+        level_text(
+            "INFO",
+            'Odoo PDF reports (invoices, quotations, etc.) require wkhtmltopdf.',
+        )
+    )
+    options: list[str] = []
+    if has_patched:
+        options.append('Patched 0.12.6 (recommended, checksum-verified)')
+    options.append('Distribution package (un-patched, reduced fidelity)')
+    options.append('Skip (PDF reports will fail until installed)')
+
+    selection = choose('wkhtmltopdf installation', options, default_index=0)
+    if selection.startswith('Patched'):
+        return plan_install_wkhtmltopdf("patched", codename)
+    if selection.startswith('Distribution'):
+        return plan_install_wkhtmltopdf("distro")
+    if not has_patched and selection == "":
+        # Cancelled: treat as skip.
+        pass
+    if selection.startswith('Skip') or selection == "":
+        print(
+            level_text(
+                "WARN",
+                'wkhtmltopdf not installed: PDF report generation will fail until it is.',
+            )
+        )
+    return []
 
 
 def _collect_instance_config() -> InstanceConfig:
@@ -54,21 +190,21 @@ def _collect_instance_config() -> InstanceConfig:
         config.db_host = ask_text('DB host', config.db_host, required=True)
         config.db_port = ask_int('DB port', config.db_port)
         config.db_user = ask_text('DB user', config.instance, required=True)
-        config.db_password = ask_text('DB password', config.instance, required=True)
+        config.db_password = _prompt_secret('DB password', config.instance)
         config.db_name = ask_text(
             'DB name (optional, for validation)', "", required=False
         )
         config.app_server_ip = ask_text(
             'App-server IP for the pg_hba rule', config.app_server_ip, required=True
         )
-        config.odoo_admin_passwd = ask_text(
-            'Odoo admin_passwd', config.instance, required=True
+        config.odoo_admin_passwd = _prompt_secret(
+            'Odoo admin_passwd (master password)', config.instance
         )
         config.normalize_defaults()
+        config.ensure_strong_secrets()
 
         try:
             config.validate_identifiers()
-            return config
         except ValueError as error:
             print(level_text("ERROR", str(error)))
             print(
@@ -77,6 +213,10 @@ def _collect_instance_config() -> InstanceConfig:
                     'Re-enter the installation data using a safe format.',
                 )
             )
+            continue
+
+        _prompt_production_hardening(config)
+        return config
 
 
 def _build_partial_install_cleanup(
@@ -341,13 +481,15 @@ def install_odoo_only() -> None:
     commands: list[Command] = []
     commands.extend(plan_ensure_db_role(config))
     commands.extend(plan_odoo_base_setup(config, service_autostart=service_autostart))
+    commands.extend(_maybe_plan_wkhtmltopdf())
 
+    nginx_version = detect_nginx_version()
     nginx_mode = _choose_nginx_mode()
     if nginx_mode == 'Configure HTTP':
-        commands.extend(plan_nginx_http(config))
+        commands.extend(plan_nginx_http(config, nginx_version))
     elif nginx_mode == 'Configure HTTPS':
         commands.extend(_maybe_plan_certs(config))
-        commands.extend(plan_nginx_https(config))
+        commands.extend(plan_nginx_https(config, nginx_version))
 
     commands.extend(_maybe_plan_logrotate(config))
 
@@ -372,13 +514,15 @@ def install_odoo_and_db() -> None:
     commands: list[Command] = []
     commands.extend(plan_db_setup(config, ensure_remote_access=True))
     commands.extend(plan_odoo_base_setup(config, service_autostart=service_autostart))
+    commands.extend(_maybe_plan_wkhtmltopdf())
 
+    nginx_version = detect_nginx_version()
     nginx_mode = _choose_nginx_mode()
     if nginx_mode == 'Configure HTTP':
-        commands.extend(plan_nginx_http(config))
+        commands.extend(plan_nginx_http(config, nginx_version))
     elif nginx_mode == 'Configure HTTPS':
         commands.extend(_maybe_plan_certs(config))
-        commands.extend(plan_nginx_https(config))
+        commands.extend(plan_nginx_https(config, nginx_version))
 
     commands.extend(_maybe_plan_logrotate(config))
 
