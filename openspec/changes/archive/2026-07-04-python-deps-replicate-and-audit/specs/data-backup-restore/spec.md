@@ -43,13 +43,49 @@ database role cannot reach other instances' databases.
   auto-suggested non-colliding ports, provisions the target (base setup without starting, optional Nginx),
   seeds the database and filestore from the source, and then starts the target service
 
+#### Scenario: Replica domain must not collide with another vhost
+
+- **WHEN** the replica is configured to front Nginx and the chosen domain is already a `server_name` in an
+  enabled vhost
+- **THEN** the tool rejects it and re-prompts for a different domain, so the replica is reachable
+
 #### Scenario: Existing target is refreshed in place
 
 - **WHEN** the target instance already exists
 - **THEN** the plan stops the target service, drops and recreates its database from the source, replaces its
   filestore, applies the migration semantics, and restarts the service without recreating its config or unit
 
+#### Scenario: Operator selects the database copy method
+
+- **WHEN** the duplication plan is assembled
+- **THEN** the operator chooses a template copy or a `pg_dump | pg_restore --no-owner` copy, and the plan uses
+  the selected method
+
+#### Scenario: Template copy frees the source; dump copy leaves it untouched
+
+- **WHEN** the template method is chosen
+- **THEN** the plan blocks and terminates the source's sessions before the copy and re-enables them afterward
+  even on failure; **WHEN** the dump method is chosen, the source is read live without terminating its sessions
+
+#### Scenario: Migration semantics and phrase confirmation
+
+- **WHEN** duplication runs
+- **THEN** copied/moved and neutralize semantics are applied to the target and execution proceeds only after
+  the operator types the exact `DUPLICAR <instance>` phrase
+
 #### Scenario: Seeded database is restricted to its owner
 
 - **WHEN** the tool seeds a target database
-- **THEN** the plan revokes `CONNECT` on that database from `PUBLIC` and grants it to the owning role
+- **THEN** the plan revokes `CONNECT` on that database from `PUBLIC` and grants it to the owning role, so other
+  instances' roles cannot connect to it
+
+#### Scenario: Target data dir is owned by the target user
+
+- **WHEN** the filestore is copied into the target data directory (created as root)
+- **THEN** the plan chowns the whole target data directory to the target system user, so Odoo can create its
+  `sessions` and `filestore` entries
+
+#### Scenario: Unsafe database name is rejected
+
+- **WHEN** the source or target database name is not a safe name
+- **THEN** the plan is not built and the operation reports the problem instead of interpolating it into SQL

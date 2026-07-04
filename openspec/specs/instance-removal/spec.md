@@ -41,14 +41,18 @@ rather than fail the operation.
 
 ### Requirement: Total superuser purge
 
-The tool SHALL provide a total purge that, in addition to the scoped removal,
-deletes the instance's Linux user, its Odoo/Nginx logs, the filestore root, all
-databases discovered for the instance, and the instance's PostgreSQL roles.
+The tool SHALL provide a total purge that, in addition to the scoped removal, deletes the instance's Linux
+user, its Odoo/Nginx logs, the filestore root, all databases discovered for the instance, and the instance's
+PostgreSQL roles. Database discovery SHALL find the instance's databases by **owner** (the instance's DB user,
+which the tool prompts for) as well as by name prefix, so databases associated with the instance are cleaned
+even when their name does not start with the instance name.
 
-#### Scenario: Databases are discovered from filestore and by prefix
+#### Scenario: Databases are discovered from filestore, by prefix, and by owner
 
 - **WHEN** the purge collects databases to remove
-- **THEN** it gathers filestore-derived database names and, when admin DB access is available, names matching the `<instance>%` prefix, plus any operator-supplied extras
+- **THEN** it gathers filestore-derived database names and, when admin DB access is available, databases whose
+  name matches the `<instance>%` prefix **or** that are owned by the instance's DB role (which the operator is
+  prompted for), plus any operator-supplied extras
 
 #### Scenario: Admin DB access enables role and database deletion
 
