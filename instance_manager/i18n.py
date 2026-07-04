@@ -218,6 +218,11 @@ _ES_TO_EN: dict[str, str] = {
     "{} — {} módulo(s)": "{} — {} module(s)",
     "Base de datos a inspeccionar": "Database to inspect",
     "¿Comprobar qué módulos están instalados en una base de datos?": "Check which modules are installed in a database?",
+    "¿Mostrar solo módulos instalados (en lugar de todos)?": "Show only installed modules (instead of all)?",
+    "No hay módulos que mostrar con el filtro actual.": "No modules to show with the current filter.",
+    "¿Exportar el inventario a un archivo?": "Export the inventory to a file?",
+    "Ruta de exportación del inventario": "Inventory export path",
+    "Inventario exportado en: {}": "Inventory exported to: {}",
     "No se encontraron módulos en las rutas de addons.": "No modules found in the addons paths.",
     "No se pudo leer ir_module_module (conexión/BD); se muestra solo lo disponible.": "Could not read ir_module_module (connection/DB); showing only what's available.",
     # log rotation
