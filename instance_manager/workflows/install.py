@@ -79,9 +79,20 @@ def _prompt_production_hardening(config: InstanceConfig) -> None:
             )
         )
 
-    config.dbfilter = ask_text(
-        'dbfilter (binds host/database)', config.effective_dbfilter(), required=True
-    )
+    if ask_bool(
+        'Restrict the instance to specific database(s) with a dbfilter (recommended)?', True
+    ):
+        config.dbfilter = ask_text(
+            'dbfilter (binds host/database)', config.suggested_dbfilter(), required=True
+        )
+    else:
+        config.dbfilter = ""
+        print(
+            level_text(
+                "INFO",
+                'No dbfilter set: the instance will not filter databases (all are reachable). Recommended only when the manager is disabled or a single database is served.',
+            )
+        )
 
     cpu = detect_cpu_count()
     ram = detect_total_ram_bytes()

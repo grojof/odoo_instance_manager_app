@@ -714,6 +714,8 @@ _ES_TO_EN: dict[str, str] = {
     "El gestor de bases de datos quedará accesible por HTTP (crear/duplicar/eliminar/restaurar), protegido solo por la contraseña maestra. Mantén una contraseña maestra fuerte y un dbfilter.": "The database manager will be reachable over HTTP (create/duplicate/drop/restore), guarded only by the master password. Keep a strong master password and a dbfilter.",
     "Gestor de bases de datos desactivado (list_db = False). Crea la primera base de datos por CLI (odoo-bin -d <db> -i base --stop-after-init) o reactivándolo temporalmente.": "Database manager disabled (list_db = False). Create the first database via CLI (odoo-bin -d <db> -i base --stop-after-init) or by temporarily re-enabling it.",
     "dbfilter (vincula host/base de datos)": "dbfilter (binds host/database)",
+    "¿Restringir la instancia a una o varias bases de datos con un dbfilter (recomendado)?": "Restrict the instance to specific database(s) with a dbfilter (recommended)?",
+    "Sin dbfilter: la instancia no filtrará bases de datos (todas quedan accesibles). Recomendado solo si el gestor está desactivado o se sirve una única base de datos.": "No dbfilter set: the instance will not filter databases (all are reachable). Recommended only when the manager is disabled or a single database is served.",
     "Detectados {} CPU / {} RAM -> workers sugeridos={}, max_cron_threads={}.": "Detected {} CPU / {} RAM -> suggested workers={}, max_cron_threads={}.",
     "Workers de Odoo": "Odoo workers",
     "Modo SSL de PostgreSQL (DB remota)": "PostgreSQL SSL mode (remote DB host)",

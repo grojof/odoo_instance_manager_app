@@ -52,10 +52,22 @@ class OdooConfRenderingTests(unittest.TestCase):
         self.assertIn("longpolling_port = 8072", conf)
         self.assertNotIn("gevent_port", conf)
 
-    def test_list_db_and_dbfilter_from_config(self) -> None:
-        conf = self._conf(list_db=False, db_name="shop")
+    def test_dbfilter_written_when_set(self) -> None:
+        conf = self._conf(list_db=False, dbfilter="^shop$")
         self.assertIn("list_db = False", conf)
         self.assertIn("dbfilter = ^shop$", conf)
+
+    def test_dbfilter_omitted_when_blank(self) -> None:
+        # A blank dbfilter means "no filtering" — the key must not be written,
+        # even when a DB name is known.
+        conf = self._conf(list_db=False, db_name="shop")
+        self.assertNotIn("dbfilter", conf)
+
+    def test_suggested_dbfilter(self) -> None:
+        self.assertEqual(
+            InstanceConfig(instance="x", db_name="shop").suggested_dbfilter(), "^shop$"
+        )
+        self.assertEqual(InstanceConfig(instance="x").suggested_dbfilter(), "^%d$")
 
     def test_db_sslmode_only_for_remote_host(self) -> None:
         local = self._conf(db_host="127.0.0.1", db_sslmode="require")

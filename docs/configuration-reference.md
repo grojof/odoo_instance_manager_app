@@ -30,7 +30,7 @@ the instance name, so a single name determines the whole layout.
 | `app_server_ip` | `127.0.0.1` | IP allowed in the `pg_hba` rule for remote DB access (no firewall/UFW rule is added). |
 | `odoo_admin_passwd` | `""` → **generated** | Odoo master password; a blank value gets a **strong random secret** (never the instance name). |
 | `list_db` | `False` | Whether the web database manager is exposed. `False` is the production-recommended default. |
-| `dbfilter` | `""` → `^<db_name>$` | Binds the instance to its database(s); a blank value resolves to an exact match on `db_name` (or `^%d$`). |
+| `dbfilter` | `""` (no filter) | Optional. When set, binds the instance to its database(s). Left blank, **no** `dbfilter` key is written and Odoo serves all databases. Install suggests `^<db_name>$` but you can decline. |
 | `db_sslmode` | `""` | Written **only for a remote `db_host`** (recommended `require`). Local hosts keep Odoo's default. |
 | `workers` | `2` → derived | HTTP workers. Provisioning derives `(cpu*2)+1`, capped by RAM; the operator can override. |
 | `max_cron_threads` | `1` → derived | Cron worker threads (2 when ≥ 4 CPU). |
@@ -80,7 +80,8 @@ For an instance named `<instance>` with domain `<domain>`:
 
 `planners._odoo_conf_content` writes (among others): `admin_passwd` (a strong generated secret unless the
 operator set one), `list_db = False` (production-recommended; the operator may opt into `True` after a
-warning), `dbfilter`, `proxy_mode = True`, `http_interface = 127.0.0.1`, the live-chat port under
+warning), an optional `dbfilter` (only when the operator opts in), `proxy_mode = True`,
+`http_interface = 127.0.0.1`, the live-chat port under
 `gevent_port`/`longpolling_port` per the Odoo major, derived `workers`/`max_cron_threads`, `limit_request`
 and memory/time limits, `db_sslmode` when the DB host is remote, `logfile = /var/log/odoo/<instance>.log`,
 and an `addons_path` of `<home>/odoo/addons,<home>/addons-oca,<home>/addons-custom`.
