@@ -11,6 +11,13 @@ All notable changes to this project are documented here. The format is based on
 - **Duplicate database** (instance management): a database-only duplication with the same copy method
   (template / `pg_dump | pg_restore --role`) and copied/moved + neutralize semantics as instance duplication,
   plus an optional filestore copy — without provisioning or touching any service/config. Local PostgreSQL only.
+- **Addon Python dependency audit.** The addon inventory now reports the Python packages the instance's addons
+  declare (`external_dependencies['python']`, parsed safely) and whether each **imports in the instance venv**
+  (`OK`/`MISSING`) — so you can spot missing addon dependencies. Included in the export.
+- **Replica replicates the source venv packages.** When duplicating into a new instance, the tool offers to
+  install the source venv's Python packages into the target venv (a filtered `pip freeze`), so addon
+  dependencies the source installed beyond `requirements.txt` are present in the replica (avoiding runtime
+  errors).
 
 ### Changed
 

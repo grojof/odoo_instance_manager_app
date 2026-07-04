@@ -107,7 +107,9 @@ recommended for **production → development** with different DB users) or a fas
   wkhtmltopdf), with **auto-suggested non-colliding internal ports**. When it fronts Nginx you must give a
   **domain not already used by another instance** — instances share ports 80/443 and Nginx routes by
   `server_name`, so a duplicate domain would be silently ignored and the replica unreachable. It then seeds the
-  target with the source database (+ filestore), applies copied/moved + neutralize, and starts it.
+  target with the source database (+ filestore), optionally **replicates the source venv's Python packages**
+  (so addon dependencies beyond `requirements.txt` are present), applies copied/moved + neutralize, and starts
+  it.
 - **Target exists → refresh in place:** the tool stops the target service, replaces its database and filestore
   from the source, applies the semantics, and restarts — **without** recreating its config or service. This is
   the "keep a dev environment up to date with production" flow.

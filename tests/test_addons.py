@@ -11,8 +11,24 @@ from instance_manager.workflows.addons import (
     _classify_addon_path,
     _extract_manifest_version,
     _is_installed,
+    _manifest_python_deps,
     _modules_in_dir,
 )
+
+
+class ManifestPythonDepsTests(unittest.TestCase):
+    def test_extracts_python_external_dependencies(self) -> None:
+        manifest = "{'name': 'x', 'external_dependencies': {'python': ['ldap', 'stripe'], 'bin': ['wkhtmltopdf']}}"
+        self.assertEqual(_manifest_python_deps(manifest), ["ldap", "stripe"])
+
+    def test_no_external_dependencies(self) -> None:
+        self.assertEqual(_manifest_python_deps("{'name': 'x'}"), [])
+
+    def test_malformed_manifest_is_skipped(self) -> None:
+        self.assertEqual(_manifest_python_deps("{'name': undefined_func()}"), [])
+
+    def test_non_dict_manifest_is_empty(self) -> None:
+        self.assertEqual(_manifest_python_deps("[1, 2, 3]"), [])
 
 
 class ManifestVersionTests(unittest.TestCase):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import datetime
 import os
 import re
@@ -10,7 +11,7 @@ from ..i18n import tf
 from ..models import InstanceConfig
 from ..prompts import ask_bool, ask_text
 from ..system import read_odoo_conf, run
-from ..ui import level_text, render_table, strip_ansi, title
+from ..ui import level_tag, level_text, render_table, strip_ansi, title
 from .common import DbCredentials, _ask_db_credentials, _quote
 
 _VERSION_RE = re.compile(r"""["']version["']\s*:\s*["']([^"']+)["']""")
@@ -112,6 +113,85 @@ def _installed_modules(creds: DbCredentials, db_name: str) -> dict[str, tuple[st
     return installed
 
 
+def _manifest_python_deps(manifest_text: str) -> list[str]:
+    """The ``external_dependencies['python']`` list declared by a manifest, parsed
+    as a literal (no code execution). A manifest that isn't a plain literal, or has
+    no python deps, yields an empty list."""
+    try:
+        data = ast.literal_eval(manifest_text)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    external = data.get("external_dependencies")
+    if not isinstance(external, dict):
+        return []
+    python = external.get("python")
+    if isinstance(python, (list, tuple)):
+        return [str(item) for item in python if isinstance(item, str) and item.strip()]
+    return []
+
+
+def _collect_python_deps(config: InstanceConfig) -> dict[str, set[str]]:
+    """Map each declared Python package -> the set of addons that require it, across
+    the instance's addons-path roots."""
+    deps: dict[str, set[str]] = {}
+    for root in _addon_roots(config):
+        if not os.path.isdir(root):
+            continue
+        try:
+            entries = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for name in entries:
+            if name.startswith("."):
+                continue
+            for manifest in ("__manifest__.py", "__openerp__.py"):
+                manifest_path = os.path.join(root, name, manifest)
+                if not os.path.isfile(manifest_path):
+                    continue
+                try:
+                    with open(manifest_path, encoding="utf-8", errors="replace") as handle:
+                        for dep in _manifest_python_deps(handle.read()):
+                            deps.setdefault(dep, set()).add(name)
+                except OSError:
+                    pass
+                break
+    return deps
+
+
+def _venv_can_import(config: InstanceConfig, module: str) -> bool:
+    """True if ``module`` imports in the instance venv (run as the instance user)."""
+    if not re.fullmatch(r"[A-Za-z0-9_.]+", module):
+        return False
+    venv_python = f"{config.odoo_home}/venv/bin/python"
+    cmd = (
+        f"sudo -u {_quote(config.odoo_user)} {_quote(venv_python)} "
+        f"-c {_quote('import ' + module)} >/dev/null 2>&1"
+    )
+    return run(cmd, check=False).returncode == 0
+
+
+def _python_deps_audit_section(config: InstanceConfig) -> str | None:
+    """Render the addons' required Python packages and whether each is installed in
+    the instance venv. Returns the exportable section text, or None when none."""
+    deps = _collect_python_deps(config)
+    if not deps:
+        print(level_text("INFO", 'No additional Python packages are declared by the addons.'))
+        return None
+    rows: list[list[str]] = []
+    for module in sorted(deps):
+        requiring = sorted(deps[module])
+        sample = ", ".join(requiring[:3]) + (" …" if len(requiring) > 3 else "")
+        state = "OK" if _venv_can_import(config, module) else "MISSING"
+        rows.append([module, sample, level_tag(state)])
+    heading = tf('Required Python packages (from addon manifests) — {}', config.instance)
+    table = render_table(['Python package', 'Required by', 'In venv'], rows)
+    print(f"\n{title(heading)}")
+    print(table)
+    return f"{heading}\n{strip_ansi(table)}"
+
+
 def show_addon_inventory(config: InstanceConfig) -> None:
     print(f"\n{title(tf('Addon inventory: {}', config.instance))}")
     roots = _addon_roots(config)
@@ -151,6 +231,10 @@ def show_addon_inventory(config: InstanceConfig) -> None:
         print(f"\n{title(heading)}")
         print(table)
         sections.append(f"{heading}\n{strip_ansi(table)}")
+
+    deps_section = _python_deps_audit_section(config)
+    if deps_section:
+        sections.append(deps_section)
 
     if not sections:
         print(level_text("INFO", 'No modules to show with the current filter.'))
