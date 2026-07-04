@@ -10,7 +10,8 @@ All notable changes to this project are documented here. The format is based on
 
 - **Secure-by-default provisioning (informed choice).** Blank master/DB passwords now default to a strong
   random secret (stdlib `secrets`), never the guessable instance name; the database manager defaults to
-  `list_db = False`; a `dbfilter` is written; and remote database hosts get `db_sslmode = require`. Each
+  `list_db = False`; an optional `dbfilter` (recommended, but you can decline to leave the instance
+  unfiltered); and remote database hosts get `db_sslmode = require`. Each
   recommended default remains an explicit, warned operator choice at install.
 - **Optional wkhtmltopdf** at install: the checksum-verified Qt-patched 0.12.6.1-3 build selected for the
   detected OS codename (SHA-256 pinned; jammy build verified against Odoo's own published checksum), a distro

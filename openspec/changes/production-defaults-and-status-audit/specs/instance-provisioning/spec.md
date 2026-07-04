@@ -77,20 +77,26 @@ the computed values), and the operator MAY override the suggested tuning.
 
 ### Requirement: Database filter
 
-The tool SHALL write a `dbfilter` into the instance config to bind the instance to its database(s),
-defaulting to an exact match on the instance's database name when known (`^<db_name>$`) and to a
-host-based filter otherwise, and SHALL recommend it whenever the database manager is exposed or the
-Website app is in use.
+The tool SHALL offer to write a `dbfilter` that binds the instance to its database(s), recommending it and
+defaulting the suggested value to an exact match on the instance's database name when known (`^<db_name>$`)
+or a host-based filter otherwise. The operator MAY decline, in which case **no** `dbfilter` key is written
+and Odoo serves all databases. The tool SHALL especially recommend a `dbfilter` when the database manager is
+exposed or the Website app is in use.
 
-#### Scenario: A dbfilter is written for the instance
+#### Scenario: A dbfilter is written when the operator opts in
 
-- **WHEN** the base setup writes the instance config
-- **THEN** a `dbfilter` entry is present
+- **WHEN** the operator accepts the recommended dbfilter
+- **THEN** a `dbfilter` entry is written to the instance config
 
-#### Scenario: dbfilter binds to the known database name
+#### Scenario: Suggested dbfilter binds to the known database name
 
-- **WHEN** the operator provided a database name
-- **THEN** the written `dbfilter` matches that database name exactly (`^<db_name>$`)
+- **WHEN** the operator opts in and provided a database name
+- **THEN** the suggested `dbfilter` matches that database name exactly (`^<db_name>$`)
+
+#### Scenario: Declining writes no dbfilter
+
+- **WHEN** the operator declines the dbfilter
+- **THEN** no `dbfilter` key is written to the instance config and the instance does not filter databases
 
 ### Requirement: PostgreSQL SSL mode for remote databases
 

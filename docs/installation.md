@@ -70,7 +70,9 @@ explicit warning.
 - **Database manager (`list_db`).** Defaults to `False` (recommended); choosing `True` is warned because the
   manager becomes reachable over HTTP, guarded only by the master password. With `list_db = False` you create
   the first database via CLI (`odoo-bin -d <db> -i base --stop-after-init`) or by temporarily re-enabling it.
-- **dbfilter.** Written to bind the host to its database(s); the default is an exact match on the DB name.
+- **dbfilter.** *Optional* (recommended). If you opt in, it binds the instance to its database(s) with a
+  suggested exact match on the DB name; if you decline, **no** `dbfilter` is written and Odoo serves all
+  databases (fine for a single-database or manager-disabled instance).
 - **Workers / memory.** Derived from detected CPU/RAM as `(cpu*2)+1`, capped by RAM (with per-worker memory
   and request limits). The operator can override the suggested values.
 - **`db_sslmode`.** For a **remote** DB host it defaults to `require` (offered `require` / `verify-full` /

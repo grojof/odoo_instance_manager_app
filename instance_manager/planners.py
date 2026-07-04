@@ -65,7 +65,6 @@ def _odoo_conf_content(config: InstanceConfig) -> str:
         "[options]",
         f"admin_passwd = {config.odoo_admin_passwd}",
         f"list_db = {config.list_db}",
-        f"dbfilter = {config.effective_dbfilter()}",
         "",
         f"addons_path = {config.odoo_home}/odoo/addons,"
         f"{config.odoo_home}/addons-oca,{config.odoo_home}/addons-custom",
@@ -90,6 +89,10 @@ def _odoo_conf_content(config: InstanceConfig) -> str:
         f"db_user = {config.db_user}",
         f"db_password = {config.db_password}",
     ]
+    # A blank dbfilter means "no filtering" — omit the key entirely (Odoo then
+    # serves all databases). Only write it when the operator set one.
+    if config.dbfilter:
+        lines.insert(3, f"dbfilter = {config.dbfilter}")
     if config.is_remote_db_host and config.db_sslmode:
         lines.append(f"db_sslmode = {config.db_sslmode}")
     return "\n".join(lines) + "\n"

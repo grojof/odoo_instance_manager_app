@@ -163,9 +163,10 @@ class InstanceConfig:
         """True when a secret still equals the guessable instance-name default."""
         return self.instance in {self.db_password, self.odoo_admin_passwd}
 
-    def effective_dbfilter(self) -> str:
-        """The dbfilter to write: the explicit value, else an exact match on the
-        known DB name, else a host-based filter."""
+    def suggested_dbfilter(self) -> str:
+        """A recommended dbfilter to *propose* (never written automatically): the
+        explicit value, else an exact match on the known DB name, else a host-based
+        filter. A blank ``dbfilter`` means "no filter" and is left unwritten."""
         if self.dbfilter:
             return self.dbfilter
         if self.db_name:
