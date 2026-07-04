@@ -111,6 +111,10 @@ recommended for **production → development** with different DB users) or a fas
 The filestore always lands under the **target** instance's data directory. The template method frees the
 source of sessions (brief disconnect); the dump method reads the source live.
 
+Every seeded database is **isolated to its owner** (`CONNECT` revoked from `PUBLIC`, granted to the owning
+role) so an instance's role can't reach other instances' databases, and the target **data dir is owned by the
+target user** so Odoo can create its `sessions`/`filestore`.
+
 ## Repairing Nginx logs & venv packages
 
 - **Repair instance Nginx logs** recreates the per-instance access/error logs with correct ownership

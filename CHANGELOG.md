@@ -18,7 +18,10 @@ All notable changes to this project are documented here. The format is based on
   the "keep dev up to date with production" flow. The database copy method is selectable: robust
   `pg_dump | pg_restore --role` that reassigns ownership for cross-user targets, or a fast template copy.
   Local PostgreSQL only (use Backup + Restore for a remote DB). `plan_odoo_base_setup` gained a `start_now`
-  flag so the target is provisioned before its database exists and started after seeding.
+  flag so the target is provisioned before its database exists and started after seeding. Every seeded database
+  is **isolated to its owner** (`CONNECT` revoked from `PUBLIC`, granted to the owning role) so an instance's
+  role cannot reach other instances' databases, and the duplicated **data dir is owned by the target user** so
+  Odoo can create its `sessions`/`filestore` (fixing a `PermissionError` on first run).
 
 ## [1.1.0] - 2026-07-04
 

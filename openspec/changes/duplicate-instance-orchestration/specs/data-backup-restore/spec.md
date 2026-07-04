@@ -23,7 +23,10 @@ drop and recreate its database from the source and replace its filestore, apply 
 restart — **without** recreating the target's config, service, or system user.
 
 Migration semantics (copied vs moved, neutralize) SHALL apply in both cases, and the duplicated filestore SHALL
-be placed under the **target** instance's data directory.
+be placed under the **target** instance's data directory, which SHALL be owned by the target system user (so
+Odoo can create its `sessions`/`filestore` entries). Every database the tool seeds SHALL have its access
+**restricted to its owner** — `CONNECT` revoked from `PUBLIC` and granted to the owning role — so an instance's
+database role cannot reach other instances' databases.
 
 #### Scenario: New target is provisioned and seeded as a replica
 
@@ -61,6 +64,18 @@ be placed under the **target** instance's data directory.
 - **WHEN** duplication runs
 - **THEN** copied/moved and neutralize semantics are applied to the target and execution proceeds only after
   the operator types the exact `DUPLICAR <instance>` phrase
+
+#### Scenario: Seeded database is restricted to its owner
+
+- **WHEN** the tool seeds a target database
+- **THEN** the plan revokes `CONNECT` on that database from `PUBLIC` and grants it to the owning role, so other
+  instances' roles cannot connect to it
+
+#### Scenario: Target data dir is owned by the target user
+
+- **WHEN** the filestore is copied into the target data directory (created as root)
+- **THEN** the plan chowns the whole target data directory to the target system user, so Odoo can create its
+  `sessions` and `filestore` entries
 
 #### Scenario: Unsafe database name is rejected
 

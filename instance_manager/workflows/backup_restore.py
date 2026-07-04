@@ -42,6 +42,7 @@ from .common import (
     _is_safe_path_component,
     _pick_db_name,
     _quote,
+    _resolve_data_dir,
 )
 from .install import (
     _choose_nginx_mode,
@@ -158,9 +159,27 @@ def _post_db_mode_commands(
     return commands
 
 
+def _lock_db_access_commands(db_name: str, owner: str) -> list[Command]:
+    """Restrict a database to its owner: revoke ``CONNECT`` from ``PUBLIC`` and grant
+    it to the owning role, so an Odoo role cannot reach **other** instances'
+    databases. Names MUST be safe (:func:`_is_safe_db_name`)."""
+    psql = "sudo -u postgres psql -d postgres -v ON_ERROR_STOP=1"
+    return [
+        Command(
+            'Restrict DB access to its owner (revoke PUBLIC connect)',
+            f'{psql} -c \'REVOKE CONNECT ON DATABASE "{db_name}" FROM PUBLIC;\'',
+        ),
+        Command(
+            'Grant DB connect to the owner role',
+            f'{psql} -c \'GRANT CONNECT ON DATABASE "{db_name}" TO "{owner}";\'',
+        ),
+    ]
+
+
 def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method: str) -> list[Command]:
     """Seed ``target_db`` from ``source_db`` on the **local** server (via
-    ``sudo -u postgres``), owned by ``target_owner``.
+    ``sudo -u postgres``), owned by ``target_owner``, and lock its access down to the
+    owner.
 
     ``method="template"`` frees the source of sessions and does a fast template copy
     (correct when the target keeps the source's owner). ``method="dump"`` restores a
@@ -168,7 +187,7 @@ def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method:
     correct for a cross-user target (production→development). Names MUST be safe
     (:func:`_is_safe_db_name`)."""
     if method == "template":
-        return [
+        commands = [
             Command(
                 'Terminate connections to the source DB',
                 "sudo -u postgres psql -d postgres -c "
@@ -179,18 +198,21 @@ def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method:
                 f"sudo -u postgres createdb -T {_quote(source_db)} -O {_quote(target_owner)} {_quote(target_db)}",
             ),
         ]
-    return [
-        Command(
-            'Create empty target DB owned by the target role',
-            f"sudo -u postgres createdb -O {_quote(target_owner)} {_quote(target_db)}",
-        ),
-        Command(
-            'Seed target DB via pg_dump | pg_restore (re-owned by the target role)',
-            "set -o pipefail; "
-            f"sudo -u postgres pg_dump -Fc {_quote(source_db)} | "
-            f"sudo -u postgres pg_restore -d {_quote(target_db)} --no-owner --role={_quote(target_owner)} --no-privileges",
-        ),
-    ]
+    else:
+        commands = [
+            Command(
+                'Create empty target DB owned by the target role',
+                f"sudo -u postgres createdb -O {_quote(target_owner)} {_quote(target_db)}",
+            ),
+            Command(
+                'Seed target DB via pg_dump | pg_restore (re-owned by the target role)',
+                "set -o pipefail; "
+                f"sudo -u postgres pg_dump -Fc {_quote(source_db)} | "
+                f"sudo -u postgres pg_restore -d {_quote(target_db)} --no-owner --role={_quote(target_owner)} --no-privileges",
+            ),
+        ]
+    commands.extend(_lock_db_access_commands(target_db, target_owner))
+    return commands
 
 
 def _drop_db_commands(target_db: str) -> list[Command]:
@@ -421,11 +443,18 @@ def _filestore_copy_commands(
     target_db: str,
     overwrite: bool,
 ) -> list[Command]:
-    """Copy the source filestore into the **target** instance's data dir, owned by
-    the target user."""
+    """Copy the source filestore into the **target** instance's data dir, then hand
+    the **whole data dir** to the target user.
+
+    ``mkdir``/``cp`` run as root, so the created ``.local/share/Odoo`` tree would be
+    root-owned and Odoo (running as the target user) could not create its
+    ``sessions``/``filestore`` entries. Chowning the entire resolved data dir fixes
+    that, not just the copied filestore subdirectory."""
     source_filestore = _filestore_path(source_config, source_db)
     target_filestore = _filestore_path(target_config, target_db)
     target_parent = target_filestore.rsplit("/", 1)[0]
+    target_data_dir = _resolve_data_dir(target_config)
+    owner = f"{_quote(target_config.odoo_user)}:{_quote(target_config.odoo_user)}"
     commands = [
         Command('Create the target filestore base path', f"mkdir -p {_quote(target_parent)}")
     ]
@@ -438,8 +467,8 @@ def _filestore_copy_commands(
     )
     commands.append(
         Command(
-            'Own the target filestore',
-            f"chown -R {_quote(target_config.odoo_user)}:{_quote(target_config.odoo_user)} {_quote(target_filestore)}",
+            'Own the target data dir (filestore, sessions, …)',
+            f"chown -R {owner} {_quote(target_data_dir)}",
         )
     )
     return commands
