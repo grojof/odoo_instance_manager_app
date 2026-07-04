@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import os
 import re
 import uuid
 
@@ -10,7 +11,6 @@ from ..i18n import tf
 from ..models import InstanceConfig
 from ..planners import (
     _is_local_db_host,
-    compute_worker_tuning,
     plan_ensure_db_role,
     plan_nginx_http,
     plan_nginx_https,
@@ -27,9 +27,7 @@ from ..prompts import (
 from ..system import (
     Command,
     database_exists,
-    detect_cpu_count,
     detect_nginx_version,
-    detect_total_ram_bytes,
     path_exists,
     read_odoo_conf,
     run,
@@ -45,7 +43,14 @@ from .common import (
     _pick_db_name,
     _quote,
 )
-from .install import _choose_nginx_mode, _maybe_plan_certs, _suggest_instance_ports
+from .install import (
+    _choose_nginx_mode,
+    _maybe_plan_certs,
+    _maybe_plan_wkhtmltopdf,
+    _prompt_production_hardening,
+    _prompt_secret,
+    _suggest_instance_ports,
+)
 
 _SAFE_DB_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$")
 
@@ -383,6 +388,32 @@ def _detect_source_repo_branch(config: InstanceConfig) -> str:
     return branch if branch and branch != "HEAD" else ""
 
 
+def _nginx_server_name_in_use(domain: str, directory: str = "/etc/nginx/sites-enabled") -> bool:
+    """True if ``domain`` is already a ``server_name`` in an enabled Nginx vhost.
+
+    Nginx keeps the first vhost for a given ``server_name`` and ignores duplicates
+    (only a warning, so ``nginx -t`` still passes) — a duplicated instance sharing a
+    domain would silently be unreachable."""
+    target = (domain or "").strip()
+    if not target or not os.path.isdir(directory):
+        return False
+    for name in os.listdir(directory):
+        real = os.path.realpath(os.path.join(directory, name))
+        if not os.path.isfile(real):
+            continue
+        try:
+            with open(real, encoding="utf-8", errors="replace") as file_handle:
+                for raw_line in file_handle:
+                    line = raw_line.strip()
+                    if line.startswith("#") or not line.startswith("server_name"):
+                        continue
+                    if target in line.rstrip(";").split()[1:]:
+                        return True
+        except OSError:
+            continue
+    return False
+
+
 def _filestore_copy_commands(
     source_config: InstanceConfig,
     source_db: str,
@@ -473,7 +504,6 @@ def _plan_replica_target(
             target_config.version = match.group(0)
     target_config.repo_branch = ask_text('Odoo repo branch (from source)', target_config.repo_branch, required=True)
     target_config.version = ask_text('Odoo version', target_config.version, required=True)
-    target_config.domain = ask_text('Target public domain', target_config.domain, required=True)
 
     suggested_http, suggested_gevent = _suggest_instance_ports(
         target_config.http_port, target_config.gevent_port
@@ -482,20 +512,38 @@ def _plan_replica_target(
     target_config.gevent_port = ask_int('Target internal gevent port', suggested_gevent)
     target_config.db_host = creds.host
     target_config.db_port = creds.port
-    target_config.ensure_strong_secrets()
-    target_config.list_db = False
-    target_config.dbfilter = f"^{target_db}$"
-    tuning = compute_worker_tuning(detect_cpu_count(), detect_total_ram_bytes())
-    target_config.workers = tuning["workers"]
-    target_config.max_cron_threads = tuning["max_cron_threads"]
-    target_config.limit_memory_soft = tuning["limit_memory_soft"]
-    target_config.limit_memory_hard = tuning["limit_memory_hard"]
-    target_config.limit_request = tuning["limit_request"]
-    if target_config.is_remote_db_host:
-        target_config.db_sslmode = "require"
 
+    # Same secrets + production-hardening prompts as a fresh install, so the operator
+    # decides the secrets, list_db, dbfilter, workers and db_sslmode (not silent defaults).
+    target_config.db_password = _prompt_secret('Target DB password', target_config.instance)
+    target_config.odoo_admin_passwd = _prompt_secret(
+        'Target Odoo admin_passwd (master password)', target_config.instance
+    )
+    target_config.ensure_strong_secrets()
+    _prompt_production_hardening(target_config)
+
+    # A replica that fronts Nginx MUST use a domain not already served by another
+    # vhost: Nginx keeps the first server_name and ignores duplicates (only a
+    # warning, so `nginx -t` still passes), which would make the replica unreachable.
     nginx_version = detect_nginx_version()
     nginx_mode = _choose_nginx_mode()
+    if nginx_mode in {'Configure HTTP', 'Configure HTTPS'}:
+        while True:
+            target_config.domain = ask_text(
+                'Target public domain (must differ from other instances)', target_config.domain, required=True
+            )
+            if not _nginx_server_name_in_use(target_config.domain):
+                break
+            print(
+                level_text(
+                    "WARN",
+                    tf('The domain {} is already served by another Nginx vhost — the duplicated instance would be unreachable. Choose a different domain.', target_config.domain),
+                )
+            )
+    else:
+        target_config.domain = ask_text('Target public domain', target_config.domain, required=True)
+
+    wkhtmltopdf_plan = _maybe_plan_wkhtmltopdf()
 
     print(
         level_text(
@@ -508,6 +556,7 @@ def _plan_replica_target(
     commands.extend(plan_ensure_db_role(target_config))
     commands.extend(_seed_db_commands(source_db, target_db, target_db, method))
     commands.extend(plan_odoo_base_setup(target_config, service_autostart=True, start_now=False))
+    commands.extend(wkhtmltopdf_plan)
     if duplicate_filestore:
         commands.extend(
             _filestore_copy_commands(source_config, source_db, target_config, target_db, overwrite=False)

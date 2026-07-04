@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from instance_manager.models import InstanceConfig
 from instance_manager.workflows.backup_restore import (
@@ -10,6 +12,7 @@ from instance_manager.workflows.backup_restore import (
     _duplicate_db_command,
     _filestore_copy_commands,
     _is_safe_db_name,
+    _nginx_server_name_in_use,
     _post_db_mode_commands,
     _psql_target_local,
     _seed_db_commands,
@@ -112,6 +115,29 @@ class FilestoreCopyTests(unittest.TestCase):
         target = InstanceConfig(instance="dev")
         cmds = [c.command for c in _filestore_copy_commands(source, "prod", target, "dev", overwrite=True)]
         self.assertTrue(any("rm -rf" in c and "filestore/dev" in c for c in cmds))
+
+
+class NginxServerNameInUseTests(unittest.TestCase):
+    def _dir_with_vhost(self, tmp: str, server_names: str) -> str:
+        (Path(tmp) / "shop-https.conf").write_text(
+            f"server {{\n  listen 443 ssl;\n  server_name {server_names};\n}}\n",
+            encoding="utf-8",
+        )
+        return tmp
+
+    def test_detects_used_domain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._dir_with_vhost(tmp, "shop.example.com")
+            self.assertTrue(_nginx_server_name_in_use("shop.example.com", tmp))
+
+    def test_free_domain_is_not_in_use(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._dir_with_vhost(tmp, "shop.example.com")
+            self.assertFalse(_nginx_server_name_in_use("dev.example.com", tmp))
+
+    def test_empty_or_missing_dir_is_false(self) -> None:
+        self.assertFalse(_nginx_server_name_in_use("", "/nonexistent"))
+        self.assertFalse(_nginx_server_name_in_use("x.example.com", "/nonexistent/dir"))
 
 
 if __name__ == "__main__":

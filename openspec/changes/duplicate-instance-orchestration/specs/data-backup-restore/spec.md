@@ -12,9 +12,11 @@ that reassigns ownership to the target role (correct for a cross-user target suc
 
 When the **target instance does not exist**, duplication SHALL provision it fully before seeding: create the
 target role, run the base setup (system user, home, Odoo checkout at the source's version, virtualenv,
-`odoo.conf`, systemd unit) **without starting the service**, with the target's own domain, non-colliding ports,
-and freshly generated secrets, optionally configure Nginx, seed the database and filestore, then start the
-service.
+`odoo.conf`, systemd unit) **without starting the service**, optionally configure Nginx, seed the database and
+filestore, then start the service. The replica SHALL follow the **same production-hardening prompts as a fresh
+install** (secrets with informed choice, `list_db`, `dbfilter`, worker sizing, `db_sslmode`, wkhtmltopdf) with
+auto-suggested non-colliding internal ports, and — when it fronts Nginx — SHALL require a domain that is **not
+already served by another vhost** (or the replica would be unreachable behind a shared `server_name`).
 
 When the **target instance already exists**, duplication SHALL refresh it in place: stop the target service,
 drop and recreate its database from the source and replace its filestore, apply the migration semantics, and
@@ -26,9 +28,15 @@ be placed under the **target** instance's data directory.
 #### Scenario: New target is provisioned and seeded as a replica
 
 - **WHEN** the target instance does not exist
-- **THEN** the plan creates the target role, provisions the target (base setup without starting, optional
-  Nginx) with its own domain, non-colliding ports, and generated secrets, seeds the database and filestore
-  from the source, and then starts the target service
+- **THEN** the plan creates the target role, runs the same production-hardening prompts as a fresh install with
+  auto-suggested non-colliding ports, provisions the target (base setup without starting, optional Nginx),
+  seeds the database and filestore from the source, and then starts the target service
+
+#### Scenario: Replica domain must not collide with another vhost
+
+- **WHEN** the replica is configured to front Nginx and the chosen domain is already a `server_name` in an
+  enabled vhost
+- **THEN** the tool rejects it and re-prompts for a different domain, so the replica is reachable
 
 #### Scenario: Existing target is refreshed in place
 

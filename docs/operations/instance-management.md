@@ -98,9 +98,12 @@ Restore). You pick the **copy method**: *pg_dump → restore* (robust, reassigns
 recommended for **production → development** with different DB users) or a fast *template* copy (same DB owner).
 
 - **Target does not exist → replica:** the tool provisions the whole target instance — system user, home, Odoo
-  checkout at the **source's version**, virtualenv, `odoo.conf`, systemd service, and optionally Nginx — with
-  its own domain, **auto-suggested non-colliding ports**, and freshly generated secrets, seeds it with the
-  source database (+ filestore), applies copied/moved + neutralize, and starts it.
+  checkout at the **source's version**, virtualenv, `odoo.conf`, systemd service, and optionally Nginx —
+  following the **same prompts as a fresh install** (secrets, `list_db`, `dbfilter`, workers, `db_sslmode`,
+  wkhtmltopdf), with **auto-suggested non-colliding internal ports**. When it fronts Nginx you must give a
+  **domain not already used by another instance** — instances share ports 80/443 and Nginx routes by
+  `server_name`, so a duplicate domain would be silently ignored and the replica unreachable. It then seeds the
+  target with the source database (+ filestore), applies copied/moved + neutralize, and starts it.
 - **Target exists → refresh in place:** the tool stops the target service, replaces its database and filestore
   from the source, applies the semantics, and restarts — **without** recreating its config or service. This is
   the "keep a dev environment up to date with production" flow.
