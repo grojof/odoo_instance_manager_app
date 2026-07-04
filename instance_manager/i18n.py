@@ -721,6 +721,8 @@ _ES_TO_EN: dict[str, str] = {
     'Filestore raíz detectado': 'Filestore root detected',
     'DBs por filestore': 'DBs by filestore',
     'DBs por prefijo': 'DBs by prefix',
+    'DBs por prefijo/dueño': 'DBs by prefix/owner',
+    'Usuario de BD de la instancia (para encontrar bases asociadas)': 'Instance DB user (to find associated databases)',
     'DBs a eliminar': 'DBs to remove',
     '(ninguna)': '(none)',
     'no disponible (solo limpieza local)': 'unavailable (local cleanup only)',

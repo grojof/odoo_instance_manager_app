@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **Database listings are scoped to the instance's role.** When managing an instance (and when picking a source
+  DB), the tool now lists only databases **owned by the instance's DB role** (or named after it) instead of
+  every database on the server. The total-purge flow (main menu) prompts for the instance's DB user and
+  discovers its databases by **owner as well as name prefix**, so all associated databases are cleaned.
+
 - **Grouped instance-management menu.** The management menu is now organized into submenus — **Status &
   health**, **Configuration**, **Backups & duplication** — plus a top-level **Delete instance**, instead of one
   long flat list.

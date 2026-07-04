@@ -252,13 +252,26 @@ def list_databases(
     db_port: int,
     db_user: str,
     db_password: str,
+    owner: str = "",
 ) -> tuple[list[str], str | None]:
+    """List non-template databases. When ``owner`` is a safe role name, the list is
+    scoped to databases owned by that role or whose name starts with it — so managing
+    an instance shows only its own databases, not every database on the server."""
     quoted_password = shlex.quote(db_password)
     quoted_host = shlex.quote(db_host)
     quoted_user = shlex.quote(db_user)
+    if owner and re.fullmatch(r"[A-Za-z0-9_.-]{1,63}", owner):
+        select = (
+            "SELECT d.datname FROM pg_database d JOIN pg_roles r ON d.datdba = r.oid "
+            "WHERE d.datistemplate = false "
+            f"AND (r.rolname = '{owner}' OR d.datname LIKE '{owner}%') "
+            "ORDER BY d.datname;"
+        )
+    else:
+        select = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
     query_cmd = (
         f"PGPASSWORD={quoted_password} psql -h {quoted_host} -p {db_port} -U {quoted_user} "
-        '-d postgres -tA -c "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"'
+        f'-d postgres -tA -c "{select}"'
     )
     result = run(query_cmd, check=False)
     if result.returncode != 0:

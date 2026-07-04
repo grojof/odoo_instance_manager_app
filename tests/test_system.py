@@ -6,7 +6,9 @@ import contextlib
 import io
 import subprocess
 import unittest
+from unittest import mock
 
+from instance_manager import system
 from instance_manager.system import run_streaming
 
 
@@ -46,6 +48,33 @@ class RunStreamingTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             result = run_streaming("cat")
         self.assertEqual(result.returncode, 0)
+
+
+class ListDatabasesOwnerScopeTests(unittest.TestCase):
+    def _captured_query(self, **kwargs: object) -> str:
+        captured: dict[str, str] = {}
+
+        def fake_run(cmd: str, check: bool = False) -> subprocess.CompletedProcess:
+            captured["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0, "db1\n", "")
+
+        with mock.patch.object(system, "run", fake_run):
+            system.list_databases("127.0.0.1", 5432, "shop", "pw", **kwargs)  # type: ignore[arg-type]
+        return captured["cmd"]
+
+    def test_owner_scopes_by_role_and_prefix(self) -> None:
+        cmd = self._captured_query(owner="shop")
+        self.assertIn("r.rolname = 'shop'", cmd)
+        self.assertIn("d.datname LIKE 'shop%'", cmd)
+
+    def test_no_owner_lists_all(self) -> None:
+        cmd = self._captured_query()
+        self.assertIn("SELECT datname FROM pg_database WHERE datistemplate = false", cmd)
+        self.assertNotIn("rolname", cmd)
+
+    def test_unsafe_owner_falls_back_to_unfiltered(self) -> None:
+        cmd = self._captured_query(owner="a';DROP DATABASE x;--")
+        self.assertNotIn("rolname", cmd)
 
 
 if __name__ == "__main__":

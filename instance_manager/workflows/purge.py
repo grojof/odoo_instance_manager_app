@@ -107,14 +107,16 @@ def _db_admin_dropdb_command(session: DbAdminSession, db_name: str) -> str:
 def _list_instance_databases(
     instance: str,
     session: DbAdminSession,
+    db_user: str = "",
 ) -> tuple[list[str], str | None]:
     instance_literal = _sql_literal(instance)
+    owner_literal = _sql_literal(db_user or instance)
     sql = (
-        "SELECT datname "
-        "FROM pg_database "
-        "WHERE datistemplate = false "
-        f"AND datname LIKE '{instance_literal}%' "
-        "ORDER BY datname;"
+        "SELECT d.datname "
+        "FROM pg_database d JOIN pg_roles r ON d.datdba = r.oid "
+        "WHERE d.datistemplate = false "
+        f"AND (d.datname LIKE '{instance_literal}%' OR r.rolname = '{owner_literal}') "
+        "ORDER BY d.datname;"
     )
     query_cmd = _db_admin_psql_command(session, sql, psql_flags="-tA")
     result = run(query_cmd, check=False)
@@ -153,12 +155,14 @@ def purge_instance_superuser() -> None:
 
     filestore_dbs, filestore_root = _list_filestore_databases(config)
 
+    db_user = ask_text('Instance DB user (to find associated databases)', instance, required=True)
+
     session = _resolve_db_admin_access()
     db_names: list[str] = list(filestore_dbs)
     dbs_by_prefix: list[str] = []
     db_error: str | None = None
     if session:
-        dbs_by_prefix, db_error = _list_instance_databases(instance, session)
+        dbs_by_prefix, db_error = _list_instance_databases(instance, session, db_user)
         if db_error:
             print(tf("[WARN] Could not detect DBs by prefix '{}': {}", instance, db_error))
         for db_name in dbs_by_prefix:
@@ -272,7 +276,7 @@ def purge_instance_superuser() -> None:
         ['SSL detected', "yes" if path_exists(config.nginx_ssl_dir) else "no"],
         ['Filestore root detected', f"{'yes' if path_exists(filestore_root) else 'no'} ({filestore_root})"],
         ['DBs by filestore', ", ".join(filestore_dbs) if filestore_dbs else '(none)'],
-        ['DBs by prefix', ", ".join(dbs_by_prefix) if dbs_by_prefix else '(none)'],
+        ['DBs by prefix/owner', ", ".join(dbs_by_prefix) if dbs_by_prefix else '(none)'],
         ["Acceso admin DB", session.mode if session else 'unavailable (local cleanup only)'],
         ['DBs to remove', ", ".join(db_names) if db_names else '(none detected)'],
         ["Comandos a ejecutar", str(len(commands))],

@@ -24,7 +24,8 @@ offers four selectable entries:
 - **Status: detected resources** — the detected-state table: Linux user, home, config file, systemd service
   (present + active), DB role, data dir, and TLS certificate mode (self-signed / custom-CA / external /
   Let's Encrypt / incomplete / not configured). Optionally connect to PostgreSQL to list databases for
-  validation.
+  validation — the listing is **scoped to the instance's DB role** (databases owned by it or named after it),
+  not every database on the server.
 - **Status: config values** — useful keys read from the instance's `odoo.conf`.
 - **Status: security & production** — the production-posture view (below).
 

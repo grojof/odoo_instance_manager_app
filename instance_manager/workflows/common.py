@@ -163,7 +163,8 @@ def _probe_databases_for_management(instance: str) -> tuple[str, str | None, lis
     db_connection = _collect_db_connection(instance)
     if db_connection:
         db_host, db_port, db_user, db_password = db_connection
-        listed_dbs, db_error = list_databases(db_host, db_port, db_user, db_password)
+        # Scope the listing to the instance's own role, not every database.
+        listed_dbs, db_error = list_databases(db_host, db_port, db_user, db_password, owner=db_user)
         if db_error:
             print(tf('[WARN] Failed to query DBs: {}', db_error))
         elif listed_dbs:
@@ -226,8 +227,11 @@ def _ask_db_credentials(
 
 
 def _pick_db_name(creds: DbCredentials, label: str, required: bool = True) -> str:
-    """List databases with ``creds`` and let the operator pick one or type a name."""
-    db_names, error = list_databases(creds.host, creds.port, creds.user, creds.password)
+    """List databases with ``creds`` (scoped to the connected role) and let the
+    operator pick one or type a name."""
+    db_names, error = list_databases(
+        creds.host, creds.port, creds.user, creds.password, owner=creds.user
+    )
     if error:
         print(level_text("WARN", tf('Could not list databases: {}', error)))
     elif db_names:
