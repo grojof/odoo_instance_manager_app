@@ -172,6 +172,10 @@ _ES_TO_EN: dict[str, str] = {
     "Backups programados": "Scheduled backups",
     "Restaurar backup": "Restore backup",
     "Duplicar instancia": "Duplicate instance",
+    "Duplicar base de datos": "Duplicate database",
+    "La duplicación de base de datos requiere un PostgreSQL local (sudo -u postgres). Para una BD remota, usa Backup y luego Restaurar.": "Database duplication requires a local PostgreSQL server (sudo -u postgres). For a remote DB, use Backup then Restore.",
+    "La base de datos origen y destino deben ser distintas.": "Source and target databases must differ.",
+    "La BD destino {} existe — ¿sobrescribirla?": "The target DB {} exists — overwrite it?",
     "Eliminar instancia": "Delete instance",
     "\nEstado completo de la instancia:": "\nFull instance status:",
     # status view

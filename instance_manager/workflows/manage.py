@@ -37,7 +37,12 @@ from ..system import (
 )
 from ..ui import level_tag, level_text, render_table, title
 from .addons import show_addon_inventory
-from .backup_restore import _backup_instance, _duplicate_instance, _restore_backup
+from .backup_restore import (
+    _backup_instance,
+    _duplicate_database,
+    _duplicate_instance,
+    _restore_backup,
+)
 from .common import (
     DbCredentials,
     _ask_db_credentials,
@@ -571,6 +576,7 @@ def manage_existing_instance() -> None:
                 'Create backup',
                 'Scheduled backups',
                 'Restore backup',
+                'Duplicate database',
                 'Duplicate instance',
                 'Delete instance',
                 'Back',
@@ -614,6 +620,8 @@ def manage_existing_instance() -> None:
             manage_scheduled_backup(config)
         elif action == 'Restore backup':
             db_creds = _restore_backup(config, db_creds)
+        elif action == 'Duplicate database':
+            db_creds = _duplicate_database(config, db_creds)
         elif action == 'Duplicate instance':
             db_creds = _duplicate_instance(config, db_creds)
         elif action == 'Delete instance':

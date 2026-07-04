@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Duplicate database** (instance management): a database-only duplication with the same copy method
+  (template / `pg_dump | pg_restore --role`) and copied/moved + neutralize semantics as instance duplication,
+  plus an optional filestore copy — without provisioning or touching any service/config. Local PostgreSQL only.
+
 ### Changed
 
 - **Orchestrated instance duplication (replica or refresh).** *Duplicate instance* now creates a **fully

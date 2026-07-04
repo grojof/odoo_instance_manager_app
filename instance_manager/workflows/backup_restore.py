@@ -524,6 +524,93 @@ def _plan_replica_target(
     return commands
 
 
+def _duplicate_database(
+    config: InstanceConfig, cached: DbCredentials | None = None
+) -> DbCredentials | None:
+    """Duplicate a database only (no instance provisioning), reusing the same copy
+    method and copied/moved + neutralize semantics as instance duplication."""
+    creds = _ask_db_credentials(config.instance, cached)
+    source_db = _pick_db_name(creds, 'Source DB to duplicate', required=True)
+    if not source_db:
+        print(level_text("INFO", 'No source DB, operation cancelled.'))
+        return creds
+    if not _is_local_db_host(creds.host):
+        print(
+            level_text(
+                "WARN",
+                'Database duplication requires a local PostgreSQL server (sudo -u postgres). For a remote DB, use Backup then Restore.',
+            )
+        )
+        return creds
+
+    target_db = ask_text('Target DB', "", required=True)
+    if not _is_safe_db_name(source_db) or not _is_safe_db_name(target_db):
+        print(
+            level_text(
+                "ERROR",
+                'Unsafe database name (only letters, digits, and _ . - are allowed).',
+            )
+        )
+        return creds
+    if source_db == target_db:
+        print(level_text("ERROR", 'Source and target databases must differ.'))
+        return creds
+
+    method_choice = choose(
+        'Database copy method',
+        [
+            'Robust: pg_dump then restore (cross-user, recommended)',
+            'Fast: template copy (same DB owner)',
+        ],
+        default_index=0,
+    )
+    if not method_choice:
+        print(level_text("INFO", 'Operation cancelled.'))
+        return creds
+    method = "template" if method_choice.startswith('Fast') else "dump"
+
+    migration_mode = choose(
+        'Duplication mode',
+        ['Copied (new UUID on target)', 'Moved (keep UUID)'],
+        default_index=None,
+    )
+    if not migration_mode:
+        print(level_text("INFO", 'Operation cancelled.'))
+        return creds
+    neutralize = ask_bool('Neutralize the duplicated DB?', True)
+    duplicate_filestore = ask_bool('Also duplicate the filestore?', True)
+
+    overwrite = False
+    if database_exists(target_db):
+        overwrite = ask_bool(tf('The target DB {} exists — overwrite it?', target_db), False)
+        if not overwrite:
+            print(level_text("INFO", 'Operation cancelled.'))
+            return creds
+
+    existing = read_odoo_conf(config.odoo_conf_file)
+    target_owner = existing.get("db_user") or config.db_user or config.instance
+
+    commands: list[Command] = []
+    if overwrite:
+        commands.extend(_drop_db_commands(target_db))
+    commands.extend(_seed_db_commands(source_db, target_db, target_owner, method))
+    commands.extend(_post_db_mode_commands(_psql_target_local(target_db), migration_mode, neutralize))
+    if duplicate_filestore:
+        commands.extend(
+            _filestore_copy_commands(config, source_db, config, target_db, overwrite=overwrite)
+        )
+
+    if not confirm_with_phrase(
+        'Sensitive duplication action detected.',
+        f"DUPLICAR {config.instance}",
+    ):
+        print(level_text("INFO", 'Invalid confirmation. Operation cancelled.'))
+        return creds
+
+    _execute_plan(commands)
+    return creds
+
+
 def _duplicate_instance(
     config: InstanceConfig, cached: DbCredentials | None = None
 ) -> DbCredentials | None:

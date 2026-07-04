@@ -108,6 +108,13 @@ recommended for **production → development** with different DB users) or a fas
 The filestore always lands under the **target** instance's data directory. The template method frees the
 source of sessions (brief disconnect); the dump method reads the source live.
 
+### Duplicate database
+
+**Duplicate database** copies just a database (no instance provisioning), with the same copy method and
+copied/moved + neutralize semantics, and an optional filestore copy under the current instance's data
+directory. It touches no service or config. If the target database already exists it asks for an explicit
+overwrite. Local PostgreSQL only.
+
 ## Repairing Nginx logs & venv packages
 
 - **Repair instance Nginx logs** recreates the per-instance access/error logs with correct ownership
