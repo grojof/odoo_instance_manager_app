@@ -74,6 +74,12 @@ class SeedDbCommandsTests(unittest.TestCase):
         self.assertIn("datname = 'prod'", joined)
         self.assertIn("createdb -T prod -O dev dev", joined)
 
+    def test_seed_locks_db_access_to_owner(self) -> None:
+        for method in ("dump", "template"):
+            joined = "\n".join(c.command for c in _seed_db_commands("prod", "dev", "dev", method))
+            self.assertIn('REVOKE CONNECT ON DATABASE "dev" FROM PUBLIC;', joined)
+            self.assertIn('GRANT CONNECT ON DATABASE "dev" TO "dev";', joined)
+
 
 class DropDbCommandsTests(unittest.TestCase):
     def test_terminates_then_drops(self) -> None:
@@ -107,7 +113,8 @@ class FilestoreCopyTests(unittest.TestCase):
         self.assertIn("cp -a", joined)
         self.assertIn("/opt/odoo/prod/.local/share/Odoo/filestore/prod", joined)
         self.assertIn("/opt/odoo/dev/.local/share/Odoo/filestore/dev", joined)
-        self.assertIn("chown -R dev:dev", joined)
+        # The whole data dir is chowned (so Odoo can create sessions/), not just filestore.
+        self.assertIn("chown -R dev:dev /opt/odoo/dev/.local/share/Odoo", joined)
         self.assertNotIn("rm -rf", joined)
 
     def test_overwrite_removes_previous_target(self) -> None:
