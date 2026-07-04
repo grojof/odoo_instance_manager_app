@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **Grouped instance-management menu.** The management menu is now organized into submenus — **Status &
+  health**, **Configuration**, **Backups & duplication** — plus a top-level **Delete instance**, instead of one
+  long flat list.
 - **Orchestrated instance duplication (replica or refresh).** *Duplicate instance* now creates a **fully
   working** target instead of only copying the database. If the target does not exist it provisions the whole
   instance (system user, home, Odoo checkout at the source's version, virtualenv, config, systemd service, and

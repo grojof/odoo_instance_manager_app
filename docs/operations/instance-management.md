@@ -12,6 +12,9 @@ updated: 2026-07-04
 Once an instance exists under `/opt/odoo`, the **Manage instances** and **Instance services** menus
 handle day-2 operations. Instances are discovered automatically; you may also type a known name.
 
+The management menu is grouped into submenus — **Status & health**, **Configuration**, and **Backups &
+duplication** — plus a top-level **Delete instance**.
+
 ## Status and inspection
 
 Status is **on-demand**: the management menu no longer prints every status table on each iteration. Instead it
