@@ -15,8 +15,19 @@ from instance_manager.workflows.backup_restore import (
     _nginx_server_name_in_use,
     _post_db_mode_commands,
     _psql_target_local,
+    _replicate_venv_packages_command,
     _seed_db_commands,
 )
+
+
+class ReplicateVenvPackagesTests(unittest.TestCase):
+    def test_freezes_source_and_installs_into_target(self) -> None:
+        cmd = _replicate_venv_packages_command(
+            InstanceConfig(instance="prod"), InstanceConfig(instance="dev")
+        ).command
+        self.assertIn("sudo -u prod /opt/odoo/prod/venv/bin/pip freeze", cmd)
+        self.assertIn("grep -E '^[A-Za-z0-9_.-]+=='", cmd)
+        self.assertIn("sudo -u dev /opt/odoo/dev/venv/bin/pip install -r", cmd)
 
 
 class SafeDbNameTests(unittest.TestCase):

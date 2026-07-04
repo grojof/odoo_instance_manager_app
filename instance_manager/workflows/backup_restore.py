@@ -474,6 +474,27 @@ def _filestore_copy_commands(
     return commands
 
 
+def _replicate_venv_packages_command(
+    source_config: InstanceConfig, target_config: InstanceConfig
+) -> Command:
+    """Install the source venv's Python packages into the target venv, so addon
+    dependencies the source installed beyond ``requirements.txt`` are present in the
+    replica. The root shell captures a filtered ``pip freeze`` of the source (only
+    ``name==version`` lines, dropping editable/URL entries) and installs it into the
+    target as the target user."""
+    source_pip = f"{source_config.odoo_home}/venv/bin/pip"
+    target_pip = f"{target_config.odoo_home}/venv/bin/pip"
+    reqs = f"/tmp/{target_config.instance}_venv_reqs.txt"
+    script = (
+        f"sudo -u {_quote(source_config.odoo_user)} {_quote(source_pip)} freeze 2>/dev/null "
+        f"| grep -E '^[A-Za-z0-9_.-]+==' > {_quote(reqs)} || true; "
+        f"if [ -s {_quote(reqs)} ]; then "
+        f"sudo -u {_quote(target_config.odoo_user)} {_quote(target_pip)} install -r {_quote(reqs)}; "
+        f"fi; rm -f {_quote(reqs)}"
+    )
+    return Command('Replicate the source venv Python packages', script)
+
+
 def _plan_refresh_target(
     source_config: InstanceConfig,
     target_config: InstanceConfig,
@@ -573,6 +594,9 @@ def _plan_replica_target(
         target_config.domain = ask_text('Target public domain', target_config.domain, required=True)
 
     wkhtmltopdf_plan = _maybe_plan_wkhtmltopdf()
+    replicate_packages = ask_bool(
+        "Replicate the source instance's extra Python packages into the target venv (recommended)?", True
+    )
 
     print(
         level_text(
@@ -586,6 +610,8 @@ def _plan_replica_target(
     commands.extend(_seed_db_commands(source_db, target_db, target_db, method))
     commands.extend(plan_odoo_base_setup(target_config, service_autostart=True, start_now=False))
     commands.extend(wkhtmltopdf_plan)
+    if replicate_packages:
+        commands.append(_replicate_venv_packages_command(source_config, target_config))
     if duplicate_filestore:
         commands.extend(
             _filestore_copy_commands(source_config, source_db, target_config, target_db, overwrite=False)
