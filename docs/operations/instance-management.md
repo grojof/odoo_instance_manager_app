@@ -12,6 +12,9 @@ updated: 2026-07-04
 Once an instance exists under `/opt/odoo`, the **Manage instances** and **Instance services** menus
 handle day-2 operations. Instances are discovered automatically; you may also type a known name.
 
+The management menu is grouped into submenus — **Status & health**, **Configuration**, and **Backups &
+duplication** — plus a top-level **Delete instance**.
+
 ## Status and inspection
 
 Status is **on-demand**: the management menu no longer prints every status table on each iteration. Instead it
@@ -21,7 +24,8 @@ offers four selectable entries:
 - **Status: detected resources** — the detected-state table: Linux user, home, config file, systemd service
   (present + active), DB role, data dir, and TLS certificate mode (self-signed / custom-CA / external /
   Let's Encrypt / incomplete / not configured). Optionally connect to PostgreSQL to list databases for
-  validation.
+  validation — the listing is **scoped to the instance's DB role** (databases owned by it or named after it),
+  not every database on the server.
 - **Status: config values** — useful keys read from the instance's `odoo.conf`.
 - **Status: security & production** — the production-posture view (below).
 
@@ -103,7 +107,9 @@ recommended for **production → development** with different DB users) or a fas
   wkhtmltopdf), with **auto-suggested non-colliding internal ports**. When it fronts Nginx you must give a
   **domain not already used by another instance** — instances share ports 80/443 and Nginx routes by
   `server_name`, so a duplicate domain would be silently ignored and the replica unreachable. It then seeds the
-  target with the source database (+ filestore), applies copied/moved + neutralize, and starts it.
+  target with the source database (+ filestore), optionally **replicates the source venv's Python packages**
+  (so addon dependencies beyond `requirements.txt` are present), applies copied/moved + neutralize, and starts
+  it.
 - **Target exists → refresh in place:** the tool stops the target service, replaces its database and filestore
   from the source, applies the semantics, and restarts — **without** recreating its config or service. This is
   the "keep a dev environment up to date with production" flow.
@@ -114,6 +120,13 @@ source of sessions (brief disconnect); the dump method reads the source live.
 Every seeded database is **isolated to its owner** (`CONNECT` revoked from `PUBLIC`, granted to the owning
 role) so an instance's role can't reach other instances' databases, and the target **data dir is owned by the
 target user** so Odoo can create its `sessions`/`filestore`.
+
+### Duplicate database
+
+**Duplicate database** copies just a database (no instance provisioning), with the same copy method and
+copied/moved + neutralize semantics, and an optional filestore copy under the current instance's data
+directory. It touches no service or config. If the target database already exists it asks for an explicit
+overwrite. Local PostgreSQL only.
 
 ## Repairing Nginx logs & venv packages
 

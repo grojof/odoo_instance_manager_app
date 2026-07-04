@@ -6,8 +6,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Duplicate database** (instance management): a database-only duplication with the same copy method
+  (template / `pg_dump | pg_restore --role`) and copied/moved + neutralize semantics as instance duplication,
+  plus an optional filestore copy — without provisioning or touching any service/config. Local PostgreSQL only.
+- **Addon Python dependency audit.** The addon inventory now reports the Python packages the instance's addons
+  declare (`external_dependencies['python']`, parsed safely) and whether each **imports in the instance venv**
+  (`OK`/`MISSING`) — so you can spot missing addon dependencies. Included in the export.
+- **Replica replicates the source venv packages.** When duplicating into a new instance, the tool offers to
+  install the source venv's Python packages into the target venv (a filtered `pip freeze`), so addon
+  dependencies the source installed beyond `requirements.txt` are present in the replica (avoiding runtime
+  errors).
+
 ### Changed
 
+- **Database listings are scoped to the instance's role.** When managing an instance (and when picking a source
+  DB), the tool now lists only databases **owned by the instance's DB role** (or named after it) instead of
+  every database on the server. The total-purge flow (main menu) prompts for the instance's DB user and
+  discovers its databases by **owner as well as name prefix**, so all associated databases are cleaned.
+
+- **Grouped instance-management menu.** The management menu is now organized into submenus — **Status &
+  health**, **Configuration**, **Backups & duplication** — plus a top-level **Delete instance**, instead of one
+  long flat list.
 - **Orchestrated instance duplication (replica or refresh).** *Duplicate instance* now creates a **fully
   working** target instead of only copying the database. If the target does not exist it provisions the whole
   instance (system user, home, Odoo checkout at the source's version, virtualenv, config, systemd service, and

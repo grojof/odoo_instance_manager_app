@@ -37,7 +37,12 @@ from ..system import (
 )
 from ..ui import level_tag, level_text, render_table, title
 from .addons import show_addon_inventory
-from .backup_restore import _backup_instance, _duplicate_instance, _restore_backup
+from .backup_restore import (
+    _backup_instance,
+    _duplicate_database,
+    _duplicate_instance,
+    _restore_backup,
+)
 from .common import (
     DbCredentials,
     _ask_db_credentials,
@@ -553,68 +558,82 @@ def manage_existing_instance() -> None:
     config.db_name, db_error, listed_dbs = _probe_databases_for_management(instance)
     db_creds: DbCredentials | None = None
 
+    # Grouped into submenus so the top menu stays short; each action dispatches to
+    # the same handlers below.
+    groups: dict[str, list[str]] = {
+        'Status & health': [
+            'Status: locations & names',
+            'Status: detected resources',
+            'Status: config values',
+            'Status: security & production',
+            'Health check',
+            'Addon inventory',
+            'Disk usage and cleanup',
+        ],
+        'Configuration': [
+            'Update existing configuration',
+            'Repair instance Nginx logs',
+            'Log rotation',
+            'Install Python packages in the venv',
+        ],
+        'Backups & duplication': [
+            'Create backup',
+            'Scheduled backups',
+            'Restore backup',
+            'Duplicate database',
+            'Duplicate instance',
+        ],
+    }
+
     while True:
-        action = choose(
+        group = choose(
             tf('\nSafe instance management: {}', instance),
-            [
-                'Status: locations & names',
-                'Status: detected resources',
-                'Status: config values',
-                'Status: security & production',
-                'Health check',
-                'Update existing configuration',
-                'Repair instance Nginx logs',
-                'Log rotation',
-                'Disk usage and cleanup',
-                'Install Python packages in the venv',
-                'Addon inventory',
-                'Create backup',
-                'Scheduled backups',
-                'Restore backup',
-                'Duplicate instance',
-                'Delete instance',
-                'Back',
-            ],
+            ['Status & health', 'Configuration', 'Backups & duplication', 'Delete instance', 'Back'],
             default_index=None,
         )
-
-        if action in {"", 'Back'}:
+        if group in {"", 'Back'}:
             return
-
-        if action == 'Status: locations & names':
-            _show_locations_view(config)
-        elif action == 'Status: detected resources':
-            _show_detected_state_view(config, db_error=db_error, listed_dbs=listed_dbs)
-        elif action == 'Status: config values':
-            _show_config_values_view(config)
-        elif action == 'Status: security & production':
-            _show_posture_view(config)
-        elif action == 'Health check':
-            run_health_check(config)
-        elif action == 'Update existing configuration':
-            update_existing_configs(instance)
-            config = InstanceConfig(instance=instance)
-            config.db_name, db_error, listed_dbs = _probe_databases_for_management(
-                instance
-            )
-            config.normalize_defaults()
-        elif action == 'Repair instance Nginx logs':
-            _repair_instance_nginx_logs(config)
-        elif action == 'Log rotation':
-            manage_log_rotation(config)
-        elif action == 'Disk usage and cleanup':
-            manage_disk_usage(config)
-        elif action == 'Install Python packages in the venv':
-            _install_python_packages_in_instance_venv(config)
-        elif action == 'Addon inventory':
-            show_addon_inventory(config)
-        elif action == 'Create backup':
-            db_creds = _backup_instance(config, db_creds)
-        elif action == 'Scheduled backups':
-            manage_scheduled_backup(config)
-        elif action == 'Restore backup':
-            db_creds = _restore_backup(config, db_creds)
-        elif action == 'Duplicate instance':
-            db_creds = _duplicate_instance(config, db_creds)
-        elif action == 'Delete instance':
+        if group == 'Delete instance':
             db_creds = _delete_instance(config, db_creds)
+            continue
+
+        while True:
+            action = choose(tf('{}: {}', t(group), instance), [*groups[group], 'Back'], default_index=None)
+            if action in {"", 'Back'}:
+                break
+
+            if action == 'Status: locations & names':
+                _show_locations_view(config)
+            elif action == 'Status: detected resources':
+                _show_detected_state_view(config, db_error=db_error, listed_dbs=listed_dbs)
+            elif action == 'Status: config values':
+                _show_config_values_view(config)
+            elif action == 'Status: security & production':
+                _show_posture_view(config)
+            elif action == 'Health check':
+                run_health_check(config)
+            elif action == 'Addon inventory':
+                show_addon_inventory(config)
+            elif action == 'Disk usage and cleanup':
+                manage_disk_usage(config)
+            elif action == 'Update existing configuration':
+                update_existing_configs(instance)
+                config = InstanceConfig(instance=instance)
+                config.db_name, db_error, listed_dbs = _probe_databases_for_management(instance)
+                config.normalize_defaults()
+            elif action == 'Repair instance Nginx logs':
+                _repair_instance_nginx_logs(config)
+            elif action == 'Log rotation':
+                manage_log_rotation(config)
+            elif action == 'Install Python packages in the venv':
+                _install_python_packages_in_instance_venv(config)
+            elif action == 'Create backup':
+                db_creds = _backup_instance(config, db_creds)
+            elif action == 'Scheduled backups':
+                manage_scheduled_backup(config)
+            elif action == 'Restore backup':
+                db_creds = _restore_backup(config, db_creds)
+            elif action == 'Duplicate database':
+                db_creds = _duplicate_database(config, db_creds)
+            elif action == 'Duplicate instance':
+                db_creds = _duplicate_instance(config, db_creds)

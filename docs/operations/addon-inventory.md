@@ -29,6 +29,14 @@ If you opt in and provide a database and credentials, each module is also marked
 and **installed version**, read from `ir_module_module`. A failed connection degrades gracefully to showing
 only the available modules.
 
+## Required Python packages
+
+The inventory also audits the **Python packages the addons declare** via each manifest's
+`external_dependencies['python']` (read safely as a literal, no code execution). For each declared package it
+shows which addons require it and whether it **imports in the instance venv** (`OK` / `MISSING`) — so you can
+spot addon dependencies that aren't installed yet (a common cause of errors, e.g. after duplicating an
+instance). This audit is included in the export.
+
 ## Show only installed, or all
 
 After checking a database, the tool asks **"Show only installed modules (instead of all)?"** (default yes) —
