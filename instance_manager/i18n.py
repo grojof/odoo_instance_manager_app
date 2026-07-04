@@ -312,6 +312,8 @@ _ES_TO_EN: dict[str, str] = {
     "Ya existe filestore destino: {}": "Target filestore already exists: {}",
     "Crear ruta base filestore destino": "Create the target filestore base path",
     "Duplicar DB por plantilla": "Duplicate DB via template",
+    "Duplicar DB por plantilla (libera de sesiones activas el origen)": "Duplicate DB via template (frees the source of active sessions)",
+    "Nombre de base de datos no seguro (solo se permiten letras, dígitos y _ . -).": "Unsafe database name (only letters, digits, and _ . - are allowed).",
     "Duplicar filestore": "Duplicate the filestore",
     "Acción sensible de duplicación detectada.": "Sensitive duplication action detected.",
     "Regenerar database.uuid en destino (modo Copiada)": "Regenerate database.uuid on the target (Copied mode)",

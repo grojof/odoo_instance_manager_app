@@ -93,6 +93,12 @@ Guardrails: restore refuses to overwrite an existing target **database** (the ex
 existing target **filestore** requires an explicit overwrite confirmation. Duplication refuses if the target
 home, service, database, or filestore already exists, and copies the DB via `createdb -T <source>`.
 
+> **No manual stop needed:** a template copy requires no other sessions on the source database, so duplication
+> automatically **frees the source** — it blocks new connections, terminates existing sessions, copies, and
+> **re-enables** the source afterward (even if the copy fails). The source instance is briefly disconnected
+> during the copy, exactly like Odoo's own database-manager duplicate. It runs with the instance's own
+> database role — no superuser needed.
+
 > **Duplication scope:** *Duplicate instance* copies the database and (optionally) the filestore only — the
 > duplicated filestore lands under the **target** instance's data directory. It does **not** provision the
 > target instance's service, config, or system user; run an install for that separately.

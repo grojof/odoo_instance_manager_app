@@ -33,6 +33,15 @@ All notable changes to this project are documented here. The format is based on
 - **New doc**: [What it offers & supported platforms](docs/platforms.md) with the OS/nginx/PostgreSQL/Odoo
   support matrix.
 
+### Fixed
+
+- **Duplicating a running instance no longer fails.** A PostgreSQL template copy (`createdb -T`) requires no
+  other sessions on the source database, so duplication previously failed with *"source database … is being
+  accessed by other users"* unless the operator stopped the source service by hand. Duplication now frees the
+  source automatically — blocks new connections, terminates existing sessions, copies, and re-enables the
+  source afterward (even if the copy fails), using the instance's own database role. The source database name
+  is also validated before being used in SQL.
+
 ### Changed
 
 - **Instance status is on-demand.** The management menu no longer dumps every status table on each iteration;
