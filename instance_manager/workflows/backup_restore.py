@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 import uuid
 
 from ..i18n import tf
@@ -30,6 +31,49 @@ from .common import (
     _pick_db_name,
     _quote,
 )
+
+_SAFE_DB_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$")
+
+
+def _is_safe_db_name(name: str) -> bool:
+    """A PostgreSQL database name safe to interpolate into SQL identifiers and
+    string literals: no quotes, semicolons, or whitespace, max 63 chars."""
+    return bool(_SAFE_DB_NAME_RE.fullmatch(name or ""))
+
+
+def _duplicate_db_command(
+    db_host: str,
+    db_port: int,
+    db_user: str,
+    db_password: str,
+    source_db: str,
+    target_db: str,
+) -> str:
+    """Build the shell script that duplicates ``source_db`` into ``target_db`` via
+    a template copy, freeing the source of active sessions first.
+
+    A ``CREATE DATABASE … TEMPLATE`` needs no other sessions on the template, so we
+    block new connections, terminate existing ones, run ``createdb -T``, and — via a
+    ``trap … EXIT`` — always re-enable connections to the source (even if the copy
+    fails), so the operator never has to stop the source service. Runs as the
+    instance's own role (owner of its database); no superuser needed.
+
+    Callers MUST pass names that satisfy :func:`_is_safe_db_name`; ``source_db`` is
+    interpolated into SQL, the rest are shell-quoted. Executed via ``bash -lc``.
+    """
+    psql = f"psql -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -d postgres"
+    return "\n".join(
+        [
+            "set -e",
+            f"export PGPASSWORD={_quote(db_password)}",
+            # Always re-open the source, even if the copy below fails.
+            f"reenable() {{ {psql} -c 'ALTER DATABASE \"{source_db}\" WITH ALLOW_CONNECTIONS true;' >/dev/null 2>&1 || true; }}",
+            "trap reenable EXIT",
+            f"{psql} -v ON_ERROR_STOP=1 -c 'ALTER DATABASE \"{source_db}\" WITH ALLOW_CONNECTIONS false;'",
+            f"{psql} -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{source_db}' AND pid <> pg_backend_pid();\"",
+            f"createdb -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -T {_quote(source_db)} -O {_quote(db_user)} {_quote(target_db)}",
+        ]
+    )
 
 
 def _post_db_mode_commands(
@@ -279,6 +323,15 @@ def _duplicate_instance(
         print(level_text("ERROR", tf('Target DB already exists: {}', target_db)))
         return creds
 
+    if not _is_safe_db_name(source_db) or not _is_safe_db_name(target_db):
+        print(
+            level_text(
+                "ERROR",
+                'Unsafe database name (only letters, digits, and _ . - are allowed).',
+            )
+        )
+        return creds
+
     db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
 
     migration_mode = choose(
@@ -294,8 +347,10 @@ def _duplicate_instance(
 
     commands: list[Command] = [
         Command(
-            'Duplicate DB via template',
-            f"PGPASSWORD={_quote(db_password)} createdb -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -T {_quote(source_db)} -O {_quote(db_user)} {_quote(target_db)}",
+            'Duplicate DB via template (frees the source of active sessions)',
+            _duplicate_db_command(
+                db_host, db_port, db_user, db_password, source_db, target_db
+            ),
         )
     ]
 
