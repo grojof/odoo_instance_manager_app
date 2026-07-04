@@ -4,7 +4,7 @@ title: "Auditing a server (external report)"
 description: "Generate a read-only report of a server's Odoo instances, TLS posture, and versions."
 tags: [audit, discovery, tls, reporting]
 audience: [operator]
-updated: 2026-07-03
+updated: 2026-07-04
 ---
 
 # Auditing a server (external report)
@@ -16,8 +16,9 @@ server you are auditing or preparing to hand off.
 ## What it reports
 
 - **System overview** — hostname, OS, kernel, architecture, virtualization, uptime, IPs, and the
-  versions/paths of Python, the PostgreSQL client, and Nginx, plus the run/boot state of the PostgreSQL and
-  Nginx services and a read-only `nginx -t` config probe. Missing probes show a "not detected" marker.
+  versions/paths of Python, the PostgreSQL client, Nginx, and the host **wkhtmltopdf** version, plus the
+  run/boot state of the PostgreSQL and Nginx services and a read-only `nginx -t` config probe. Missing probes
+  show a "not detected" marker.
 - **Per-instance detail** — discovered by cross-referencing:
   - systemd units whose content references Odoo (`odoo-bin` / `Description=Odoo`),
   - valid Odoo config files (must not be backup-like and must carry at least two expected Odoo keys),
@@ -29,6 +30,9 @@ server you are auditing or preparing to hand off.
   / none) and reports certificate metadata and expiry status (OK / WARN if expiring within the threshold /
   MISSING / ERROR).
 - **Odoo version** — read from `<home>/odoo/odoo/release.py` (`version_info`) when available.
+- **Production posture** — a per-instance table that flags `list_db`, guessable default master/DB credentials,
+  wkhtmltopdf, worker sizing, remote `db_sslmode`, and `dbfilter`. Read-only, computed from each instance's
+  `odoo.conf` plus host facts (same evaluation as the **Status: security & production** view); no mutation.
 
 Instance discovery also recognizes the legacy config path `/etc/<instance>/odoo.conf` in addition to the
 default `/etc/odoo/<instance>/<instance>.conf`.

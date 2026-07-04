@@ -697,6 +697,46 @@ _ES_TO_EN: dict[str, str] = {
     ' días': ' days',
     ' días (': ' days (',
     'no disponible': 'unavailable',
+    # --- production defaults, wkhtmltopdf, version detection, status audit ---
+    # status split + posture
+    "Estado: ubicaciones y nombres": "Status: locations & names",
+    "Estado: recursos detectados": "Status: detected resources",
+    "Estado: valores de configuración": "Status: config values",
+    "Estado: seguridad y producción": "Status: security & production",
+    "Postura de seguridad y producción": "Security & production posture",
+    "Postura de producción": "Production posture",
+    "No hay un config de Odoo legible en {}.": "No readable Odoo config at {}.",
+    # secrets + list_db + hardening prompts
+    "Se generó un valor fuerte para {} — pulsa Enter para aceptarlo y anótalo ahora.": "A strong value for {} was generated — press Enter to accept it, and record it now.",
+    "Ese valor coincide con el nombre de la instancia y es fácil de adivinar; la contraseña maestra protege el gestor de bases de datos. Prefiere el valor fuerte generado.": "That value equals the instance name and is easily guessable; the master password guards the database manager. Prefer the generated strong value.",
+    "admin_passwd de Odoo (contraseña maestra)": "Odoo admin_passwd (master password)",
+    "¿Exponer el gestor de bases de datos de Odoo por HTTP (list_db)? Recomendado: No": "Expose the Odoo database manager over HTTP (list_db)? Recommended: No",
+    "El gestor de bases de datos quedará accesible por HTTP (crear/duplicar/eliminar/restaurar), protegido solo por la contraseña maestra. Mantén una contraseña maestra fuerte y un dbfilter.": "The database manager will be reachable over HTTP (create/duplicate/drop/restore), guarded only by the master password. Keep a strong master password and a dbfilter.",
+    "Gestor de bases de datos desactivado (list_db = False). Crea la primera base de datos por CLI (odoo-bin -d <db> -i base --stop-after-init) o reactivándolo temporalmente.": "Database manager disabled (list_db = False). Create the first database via CLI (odoo-bin -d <db> -i base --stop-after-init) or by temporarily re-enabling it.",
+    "dbfilter (vincula host/base de datos)": "dbfilter (binds host/database)",
+    "Detectados {} CPU / {} RAM -> workers sugeridos={}, max_cron_threads={}.": "Detected {} CPU / {} RAM -> suggested workers={}, max_cron_threads={}.",
+    "Workers de Odoo": "Odoo workers",
+    "Modo SSL de PostgreSQL (DB remota)": "PostgreSQL SSL mode (remote DB host)",
+    "require (recomendado)": "require (recommended)",
+    "verify-full (requiere CA)": "verify-full (needs a CA)",
+    "prefer (permite tráfico en claro)": "prefer (allows cleartext fallback)",
+    "Este modo SSL permite tráfico Odoo<->PostgreSQL sin cifrar por la red.": "This SSL mode allows unencrypted Odoo<->PostgreSQL traffic across the network.",
+    # wkhtmltopdf
+    "Los informes PDF de Odoo (facturas, presupuestos, etc.) requieren wkhtmltopdf.": "Odoo PDF reports (invoices, quotations, etc.) require wkhtmltopdf.",
+    "Instalación de wkhtmltopdf": "wkhtmltopdf installation",
+    "Parcheado 0.12.6 (recomendado, verificado por checksum)": "Patched 0.12.6 (recommended, checksum-verified)",
+    "Paquete de la distribución (sin parchear, fidelidad reducida)": "Distribution package (un-patched, reduced fidelity)",
+    "Omitir (los informes PDF fallarán hasta instalarlo)": "Skip (PDF reports will fail until installed)",
+    "wkhtmltopdf no instalado: la generación de informes PDF fallará hasta instalarlo.": "wkhtmltopdf not installed: PDF report generation will fail until it is.",
+    "Instalar wkhtmltopdf de la distribución (sin parchear, fidelidad reducida)": "Install distro wkhtmltopdf (un-patched, reduced fidelity)",
+    "Asegurar que curl está disponible": "Ensure curl is available",
+    "Descargar wkhtmltopdf parcheado ({})": "Download patched wkhtmltopdf ({})",
+    "Verificar SHA-256 de wkhtmltopdf (aborta si no coincide)": "Verify wkhtmltopdf SHA-256 (aborts on mismatch)",
+    "Instalar el .deb de wkhtmltopdf verificado": "Install verified wkhtmltopdf .deb",
+    "Eliminar el .deb de wkhtmltopdf descargado": "Remove downloaded wkhtmltopdf .deb",
+    # in-code labels migrated to English-canonical
+    "Disco (home)": "Disk (home)",
+    "Disco (data dir)": "Disk (data dir)",
 }
 
 # Runtime lookup: English (the in-code source) → Spanish.

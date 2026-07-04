@@ -12,7 +12,7 @@ updated: 2026-07-03
 From the main menu **Firewall (UFW)**, the tool installs and manages a UFW firewall for the server. It shows
 `ufw status verbose` each time you enter.
 
-## Instalar/config base segura
+## Configure a secure UFW baseline
 
 Applies a secure baseline:
 
@@ -28,9 +28,9 @@ Applies a secure baseline:
 
 ## Other operations
 
-- **Permitir puerto** — `ufw allow <port>/<tcp|udp>`.
-- **Eliminar regla (por número)** — lists numbered rules and deletes one.
-- **Habilitar / Deshabilitar UFW**.
+- **Allow a port** — `ufw allow <port>/<tcp|udp>`.
+- **Delete a rule (by number)** — lists numbered rules and deletes one.
+- **Enable / Disable UFW**.
 
 ## Relationship with Fail2ban
 

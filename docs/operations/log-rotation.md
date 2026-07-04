@@ -9,12 +9,12 @@ updated: 2026-07-03
 
 # Log rotation
 
-From **Gestionar instancias → Rotación de logs**, the tool configures and inspects a **system `logrotate`**
+From **Manage instances → Log rotation**, the tool configures and inspects a **system `logrotate`**
 policy for an instance's Odoo log (`/var/log/odoo/<instance>.log`).
 
 ## Configure
 
-**Configurar rotación (system logrotate)** writes `/etc/logrotate.d/odoo-<instance>` with a policy you choose:
+**Configure rotation (system logrotate)** writes `/etc/logrotate.d/odoo-<instance>` with a policy you choose:
 
 - **Frequency** — `weekly` (default), `daily`, or `monthly`.
 - **Retention** — how many rotated files to keep (default 14).
@@ -36,9 +36,9 @@ and offers to delete the line — no restart needed.
 
 ## Query
 
-**Consultar rotación actual** is read-only and shows:
+**Show current rotation** is read-only and shows:
 
-- whether rotation of the Odoo log is **ACTIVA** (a system logrotate policy covers it) or **INACTIVA**,
+- whether rotation of the Odoo log is **ACTIVE** (a system logrotate policy covers it) or **INACTIVE**,
 - the Odoo log path and current log file sizes,
 - whether a system logrotate policy exists and its full contents,
 - a `logrotate -d` dry-run preview of what would rotate,

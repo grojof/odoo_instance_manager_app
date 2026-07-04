@@ -1,9 +1,11 @@
 # Odoo Instance Manager — AI Agent Guide (CLAUDE.md)
 
 Interactive, **root-run** Python CLI to install, maintain, and audit multi-instance **Odoo Community**
-servers on Ubuntu 24.04. It never mutates the host directly: every action assembles a command **plan**,
-previews it, and applies it only after confirmation. This file is the single authored source of truth for AI
-agents working *on* this project.
+servers on the Debian/Ubuntu (apt) family — validated on Ubuntu 24.04, but the tool **detects** the OS
+codename, nginx, PostgreSQL, and Odoo major and renders version-correct configuration rather than assuming a
+single stack. It never mutates the host directly: every action assembles a command **plan**, previews it, and
+applies it only after confirmation. This file is the single authored source of truth for AI agents working
+*on* this project.
 
 ## Project boundary & paths
 
@@ -24,7 +26,11 @@ agents working *on* this project.
 - `docs/` — user/operator docs, each with frontmatter. Grown surfaces are grouped into folders
   (`docs/operations/`, `docs/security/`); setup/reference/audit pages stay flat at `docs/`; `docs/decisions/`
   holds ADRs. The README is the routable map.
-- Operator-facing strings are **Spanish** (matching the current UI); docs and specs are **English**.
+- **English is canonical.** The app UI defaults to English, and all docs and specs are English. Spanish is
+  offered only as an optional UI language through the i18n layer (`instance_manager/i18n.py`): every
+  operator-facing string goes through `t`/`tf` with the **English text as the source of truth** — never a
+  hardcoded literal, and never Spanish-first. Docs must quote the **English** UI labels; do not add a new
+  UI language without adding its i18n catalog.
 
 ## Conventions
 
@@ -47,6 +53,10 @@ agents working *on* this project.
   system without a plan. (See `docs/decisions/0001-plan-preview-apply-safety.md`.)
 - **Keep docs honest.** When behavior changes, update the affected `docs/` page and the README map in the
   same change.
+- **Keep the root `README.md` current.** It is the friendly front door *and* the routable map: a clear,
+  friendly description and usage of the utility, the architecture diagram (kept as-is), a supported-platforms
+  matrix (OS codenames, nginx, PostgreSQL, Odoo majors), and links out to `docs/`. Update it in lockstep with
+  any behavior, capability, or docs change.
 - **Keep the changelog and version in lockstep.** User-facing changes go under `## [Unreleased]` in
   `CHANGELOG.md` (Keep a Changelog format) as they land. To cut a release, follow **SemVer**: rename
   `[Unreleased]` to `[<version>] - <YYYY-MM-DD>` (leave a fresh empty `[Unreleased]` on top), bump `version`

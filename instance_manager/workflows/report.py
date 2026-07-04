@@ -16,15 +16,17 @@ from dataclasses import dataclass
 
 from ..i18n import tf
 from ..models import InstanceConfig
-from ..planners import _is_local_db_host, _sql_literal
+from ..planners import _is_local_db_host, _sql_literal, posture_rows
 from ..prompts import ask_bool, ask_int, ask_text
 from ..system import (
+    detect_cpu_count,
     list_instances,
     path_exists,
     read_odoo_conf,
     run,
     service_active,
     service_enabled,
+    wkhtmltopdf_version,
 )
 from ..ui import level_tag, level_text, render_table, strip_ansi, title
 from .common import (
@@ -57,6 +59,7 @@ def _collect_system_overview() -> list[list[str]]:
         ["Python3 path", _command_output("command -v python3") or 'not detected'],
         ["PostgreSQL client", _command_output("psql --version") or 'not detected'],
         ["Nginx", _command_output("nginx -v 2>&1") or 'not detected'],
+        ["wkhtmltopdf", wkhtmltopdf_version() or 'not detected'],
     ]
     return rows
 
@@ -935,6 +938,53 @@ def external_server_report() -> None:
     )
     print(f"\n{title('Instances: Nginx / ports')}\n{nginx_table_by_instance}")
     report_sections.append('Instances: Nginx / ports\n' + strip_ansi(nginx_table_by_instance))
+
+    # Production posture per instance (read-only): list_db, guessable credential
+    # defaults, wkhtmltopdf, worker sizing, remote db_sslmode, dbfilter.
+    host_wkhtml = wkhtmltopdf_version()
+    host_cpu = detect_cpu_count()
+    posture_matrix: list[list[str]] = []
+    for row in instance_rows:
+        conf_values = read_odoo_conf(row.conf_path) if row.conf_path else {}
+        if not conf_values:
+            continue
+        state_by: dict[str, str] = {}
+        for state, check, _detail in posture_rows(
+            instance=row.instance,
+            conf_values=conf_values,
+            wkhtmltopdf_ver=host_wkhtml,
+            cpu_count=host_cpu,
+        ):
+            if check.startswith("Database manager"):
+                state_by["list_db"] = state
+            elif check.startswith("Master password"):
+                state_by["admin"] = state
+            elif check == "wkhtmltopdf":
+                state_by["wkhtml"] = state
+            elif check == "workers":
+                state_by["workers"] = state
+            elif check.startswith("db_sslmode"):
+                state_by["sslmode"] = state
+            elif check == "dbfilter":
+                state_by["dbfilter"] = state
+        posture_matrix.append(
+            [
+                row.instance,
+                level_tag(state_by.get("list_db", "INFO")),
+                level_tag(state_by.get("admin", "INFO")),
+                level_tag(state_by.get("wkhtml", "INFO")),
+                level_tag(state_by.get("workers", "INFO")),
+                level_tag(state_by.get("sslmode", "INFO")),
+                level_tag(state_by.get("dbfilter", "INFO")),
+            ]
+        )
+    if posture_matrix:
+        posture_table = render_table(
+            ['Instance', "list_db", "admin_passwd", "wkhtmltopdf", "workers", "db_sslmode", "dbfilter"],
+            posture_matrix,
+        )
+        print(f"\n{title('Production posture')}\n{posture_table}")
+        report_sections.append('Production posture\n' + strip_ansi(posture_table))
 
     cert_details_map: dict[str, dict[str, str | set[str]]] = {}
     for row in instance_rows:

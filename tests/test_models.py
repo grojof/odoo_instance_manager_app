@@ -46,12 +46,14 @@ class ValidateIdentifiersTests(unittest.TestCase):
 
 
 class NormalizeDefaultsTests(unittest.TestCase):
-    def test_blank_credentials_default_to_instance_name(self) -> None:
+    def test_blank_db_user_defaults_to_instance_name_but_secrets_do_not(self) -> None:
+        # The DB user (an identifier) may default to the instance name; secrets
+        # must never fall back to the guessable instance name.
         config = InstanceConfig(instance="acme")
         config.normalize_defaults()
         self.assertEqual(config.db_user, "acme")
-        self.assertEqual(config.db_password, "acme")
-        self.assertEqual(config.odoo_admin_passwd, "acme")
+        self.assertEqual(config.db_password, "")
+        self.assertEqual(config.odoo_admin_passwd, "")
 
     def test_existing_credentials_are_preserved(self) -> None:
         config = InstanceConfig(instance="acme")
@@ -60,6 +62,26 @@ class NormalizeDefaultsTests(unittest.TestCase):
         config.normalize_defaults()
         self.assertEqual(config.db_user, "acme_ro")
         self.assertEqual(config.db_password, "secret")
+
+
+class EnsureStrongSecretsTests(unittest.TestCase):
+    def test_blank_secrets_get_strong_non_instance_values(self) -> None:
+        config = InstanceConfig(instance="acme")
+        config.normalize_defaults()
+        config.ensure_strong_secrets()
+        self.assertNotEqual(config.db_password, "")
+        self.assertNotEqual(config.db_password, "acme")
+        self.assertNotEqual(config.odoo_admin_passwd, "acme")
+        self.assertGreaterEqual(len(config.db_password), 20)
+        self.assertFalse(config.uses_instance_name_secret())
+
+    def test_existing_secrets_are_not_overwritten(self) -> None:
+        config = InstanceConfig(instance="acme")
+        config.db_password = "chosen"
+        config.odoo_admin_passwd = "master"
+        config.ensure_strong_secrets()
+        self.assertEqual(config.db_password, "chosen")
+        self.assertEqual(config.odoo_admin_passwd, "master")
 
 
 if __name__ == "__main__":

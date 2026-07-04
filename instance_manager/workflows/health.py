@@ -85,8 +85,8 @@ def run_health_check(config: InstanceConfig) -> None:
     db_ok, db_detail = _db_probe(config, conf)
     rows.append([level_tag("OK" if db_ok else "MISSING"), 'DB connection', db_detail])
 
-    rows.append(_disk_row("Disco (home)", config.odoo_home))
-    rows.append(_disk_row("Disco (data dir)", _resolve_data_dir(config)))
+    rows.append(_disk_row('Disk (home)', config.odoo_home))
+    rows.append(_disk_row('Disk (data dir)', _resolve_data_dir(config)))
 
     print(render_table(['State', 'Check', 'Detail'], rows))
 
