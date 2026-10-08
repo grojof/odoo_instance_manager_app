@@ -15,11 +15,20 @@ instances. The status header shows service/enabled state and tolerates a socket 
 
 ## Secure base setup
 
-**Install / configure secure baseline** installs Fail2ban and writes a base configuration with `ufw` as the ban
-action, enabling `sshd`, `nginx-http-auth`, `nginx-botsearch`, and `recidive`. You supply extra admin
-IPs/networks to ignore (loopback is always ignored) and tune `bantime`, `findtime`, `maxretry`, and the
-recidive bantime. The plan validates with `fail2ban-client -t`, enables/restarts the service, and waits for
-the socket to be ready.
+**Install / configure secure baseline** installs Fail2ban (if missing) and writes a base configuration with
+`ufw` as the ban action (for `recidive` too), enabling `sshd` and `recidive`, plus `nginx-http-auth` and
+`nginx-botsearch` **only when the host has nginx logs** — fail2ban refuses its whole configuration, the `sshd`
+jail included, when a jail's log file is missing. You supply extra admin IPs/networks to ignore (loopback is
+always ignored) and tune `bantime`, `findtime`, `maxretry`, and the recidive bantime.
+
+The file is written through a **staged step**: it is kept only if `fail2ban-client -t` accepts the whole
+configuration, otherwise the previous one is put back and the plan stops. Then the service is enabled and
+reloaded, and the plan waits for the socket.
+
+**What a ban blocks.** `sshd` and `recidive` bans block every port from the address. The web jails and the Odoo
+jail block **only the web ports**, through ufw's `Nginx Full` application profile (installed with the nginx
+package), so a mistyped Odoo password from your office never locks you out of SSH. Without that profile,
+fail2ban's ufw action blocks every port. List your admin networks in the ignore list anyway.
 
 > **UFW prerequisite:** the ban action is `ufw`, so bans only take effect if **UFW is installed and active**.
 > The tool does not install UFW — set it up separately (`apt-get install ufw && ufw enable`) or the jails will
@@ -28,8 +37,18 @@ the socket to be ready.
 ## Per-instance Odoo jail
 
 **Enable per-instance Odoo protection** installs the shared `odoo-auth` filter and writes a dedicated
-`odoo-auth-<instance>` jail bound to the instance log. Before activating, it **tests the filter** against the
-log with `fail2ban-regex`.
+`odoo-auth-<instance>` jail bound to the instance log, both through the validated staged step.
+
+The filter matches Odoo's own login-failure line, which changed in Odoo 19:
+
+- Odoo 12–18: `Login failed for db:<db> login:<login> from <ip>`;
+- Odoo 19: `Login failed for login:<login> from <ip>`.
+
+It is anchored on the `odoo.addons.base.models.res_users` logger, and only the request's performance numbers
+may follow the address. The plan **tests the filter** with `fail2ban-regex` on one line of each format and fails
+unless both match. An empty production log would prove nothing: `fail2ban-regex` succeeds with zero matches.
+
+When you purge an instance, its jail is removed with its log.
 
 ### Real-client-IP check (important behind a proxy)
 

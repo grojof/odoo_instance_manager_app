@@ -45,7 +45,7 @@ assuming a single stack:
 | OS family | Debian/Ubuntu (**apt**) | Package steps target apt. A non-apt OS is detected and warned, not driven blindly. |
 | Ubuntu | 22.04 (jammy), 24.04 (noble) | Validated primary targets. Newer releases work; the wkhtmltopdf table maps noble → the jammy build. |
 | Debian | 11 (bullseye), 12 (bookworm) | wkhtmltopdf assets pinned for both. |
-| nginx | 1.18 → 1.25+ | HTTP/2 directive form chosen by detected version; `nginx -t` passes on either. |
+| nginx | 1.18 → 1.25+ | HTTP/2 directive form chosen by detected version. `tools/verify_ops_configs.py` runs `nginx -t` on the generated vhosts with Ubuntu 24.04's nginx 1.24. `proxy_cookie_flags` is written from 1.19.8. |
 | PostgreSQL | 13+ | Local drops use `dropdb --force` (13+); Odoo's own floor per version is below. Every supported Ubuntu/Debian ships 13 or newer. |
 | Odoo Community | 12 → 19 | Per-version interpreter, setuptools, config keys — see the table below. Official Odoo or OCB. |
 | wkhtmltopdf | 0.12.6.1-3 (patched) | jammy/noble, bookworm, bullseye assets, each SHA-256-pinned; other codenames use the distro package or skip. |

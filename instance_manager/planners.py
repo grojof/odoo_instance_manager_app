@@ -246,7 +246,41 @@ def _https_listen_block(nginx_version: tuple[int, int, int] | None) -> str:
     return "  listen 443 ssl http2;"
 
 
-def _nginx_http_content(config: InstanceConfig) -> str:
+# The TLS settings and per-location headers of Odoo's own deployment guide
+# (odoo/documentation 18.0 content/administration/on_premise/deploy.rst): HSTS, and
+# the session cookie marked Secure — Odoo sets it without `secure`, so without this
+# it could travel over plain HTTP before the redirect. TLS 1.3 is kept as well.
+_ODOO_SSL_CIPHERS = (
+    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:"
+    "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
+    "DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384"
+)
+_GZIP = (
+    "  gzip on;\n"
+    "  gzip_types text/css text/scss text/plain text/xml application/xml application/json "
+    "application/javascript;\n"
+)
+
+
+def _proxy_headers(extra: str = "") -> str:
+    return (
+        "    proxy_set_header X-Forwarded-Host $http_host;\n"
+        "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+        "    proxy_set_header X-Forwarded-Proto $scheme;\n"
+        "    proxy_set_header X-Real-IP $remote_addr;\n"
+        f"{extra}"
+    )
+
+
+def _secure_location_headers(nginx_version: tuple[int, int, int] | None) -> str:
+    # add_header in a location replaces the server's, so each location carries it.
+    lines = '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains";\n'
+    if nginx_version is None or nginx_version >= (1, 19, 8):
+        lines += "    proxy_cookie_flags session_id samesite=lax secure;\n"
+    return lines
+
+
+def _upstreams(config: InstanceConfig) -> str:
     return f"""upstream odoo_{config.instance} {{
   server 127.0.0.1:{config.http_port};
 }}
@@ -259,37 +293,42 @@ map $http_upgrade $connection_upgrade {{
   default upgrade;
   ''      close;
 }}
+"""
 
+
+def _locations(config: InstanceConfig, extra: str = "") -> str:
+    return (
+        f"  location {config.live_chat_location} {{\n"
+        f"    proxy_pass http://odoochat_{config.instance};\n"
+        "    proxy_set_header Upgrade $http_upgrade;\n"
+        "    proxy_set_header Connection $connection_upgrade;\n"
+        f"{_proxy_headers(extra)}"
+        "  }\n\n"
+        "  location / {\n"
+        f"{_proxy_headers(extra)}"
+        "    proxy_redirect off;\n"
+        f"    proxy_pass http://odoo_{config.instance};\n"
+        "  }\n"
+    )
+
+
+def _nginx_http_content(config: InstanceConfig) -> str:
+    return f"""{_upstreams(config)}
 server {{
   listen 80;
   server_name {config.domain};
+
+  client_max_body_size 2048m;
 
   proxy_read_timeout 3600s;
   proxy_connect_timeout 720s;
   proxy_send_timeout 3600s;
 
-  access_log /var/log/nginx/{config.instance}.access.log;
-  error_log  /var/log/nginx/{config.instance}.error.log;
+  access_log {config.nginx_access_log};
+  error_log  {config.nginx_error_log};
 
-  location {config.live_chat_location} {{
-    proxy_pass http://odoochat_{config.instance};
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-  }}
-
-  location / {{
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_redirect off;
-    proxy_pass http://odoo_{config.instance};
-  }}
-}}
+{_locations(config)}
+{_GZIP}}}
 """
 
 
@@ -297,19 +336,7 @@ def _nginx_https_content(
     config: InstanceConfig, nginx_version: tuple[int, int, int] | None = None
 ) -> str:
     listen_block = _https_listen_block(nginx_version)
-    return f"""upstream odoo_{config.instance} {{
-  server 127.0.0.1:{config.http_port};
-}}
-
-upstream odoochat_{config.instance} {{
-  server 127.0.0.1:{config.gevent_port};
-}}
-
-map $http_upgrade $connection_upgrade {{
-  default upgrade;
-  ''      close;
-}}
-
+    return f"""{_upstreams(config)}
 server {{
   listen 80;
   server_name {config.domain};
@@ -324,36 +351,60 @@ server {{
 
   ssl_certificate     {config.ssl_fullchain_file};
   ssl_certificate_key {config.ssl_key_file};
+  ssl_session_timeout 30m;
   ssl_protocols TLSv1.2 TLSv1.3;
-  ssl_prefer_server_ciphers on;
+  ssl_ciphers {_ODOO_SSL_CIPHERS};
+  ssl_prefer_server_ciphers off;
 
   proxy_read_timeout 3600s;
   proxy_connect_timeout 720s;
   proxy_send_timeout 3600s;
 
-  access_log /var/log/nginx/{config.instance}.access.log;
-  error_log  /var/log/nginx/{config.instance}.error.log;
+  access_log {config.nginx_access_log};
+  error_log  {config.nginx_error_log};
 
-  location {config.live_chat_location} {{
-    proxy_pass http://odoochat_{config.instance};
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-  }}
-
-  location / {{
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_redirect off;
-    proxy_pass http://odoo_{config.instance};
-  }}
-}}
+{_locations(config, _secure_location_headers(nginx_version))}
+{_GZIP}}}
 """
+
+
+def _heredoc_delimiter(content: str) -> str:
+    """A heredoc delimiter that cannot occur as a line of ``content``."""
+    delimiter, n = "OIM_EOF", 0
+    lines = set(content.splitlines())
+    while delimiter in lines:
+        n += 1
+        delimiter = f"OIM_EOF_{n}"
+    return delimiter
+
+
+def staged_files_command(files: list[tuple[str, str, str]], validate: str) -> str:
+    """Put ``(path, content, mode)`` files in place and keep them only if
+    ``validate`` succeeds; otherwise every file is restored to what it was (or
+    removed when it is new) and the command fails. A configuration a service would
+    refuse at its next restart is never left enabled."""
+    lines = ['backup=$(mktemp -d)', 'restore() {']
+    for index, (path, _content, _mode) in enumerate(files):
+        q = shlex.quote(path)
+        lines.append(f'  if [ -e "$backup/{index}" ]; then cp -a "$backup/{index}" {q}; else rm -f {q}; fi')
+    lines.append('}')
+    for index, (path, content, mode) in enumerate(files):
+        q = shlex.quote(path)
+        delimiter = _heredoc_delimiter(content)
+        lines += [
+            f'if [ -e {q} ]; then cp -a {q} "$backup/{index}"; fi',
+            f"cat > {shlex.quote(path + '.oim-new')} <<'{delimiter}'",
+            content.rstrip("\n"),
+            delimiter,
+            f"chmod {mode} {shlex.quote(path + '.oim-new')}",
+            f"mv -f {shlex.quote(path + '.oim-new')} {q}",
+        ]
+    lines += [
+        f"if ! {{ {validate}; }}; then restore; rm -rf \"$backup\"; "
+        "echo '[ERROR] Validation failed: the previous configuration was restored.' >&2; exit 1; fi",
+        'rm -rf "$backup"',
+    ]
+    return "\n".join(lines)
 
 
 def write_text_file_command(
@@ -477,15 +528,38 @@ def _safe_token(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", (value or "").strip())
 
 
+# Odoo logs `Login failed for db:<db> login:<login> from <ip>` from 12.0 to 18.0
+# and `Login failed for login:<login> from <ip>` from 19.0
+# (odoo/addons/base/models/res_users.py), from the logger
+# odoo.addons.base.models.res_users, followed by the request's perf info
+# (odoo/netsvc.py format: `%(message)s %(perf_info)s`).
+ODOO_LOGIN_FAILED_SAMPLES = (
+    "2026-10-08 10:00:00,123 4321 INFO shop odoo.addons.base.models.res_users: "
+    "Login failed for db:shop login:admin from 203.0.113.7 4 0.012 0.003",
+    "2026-10-08 10:00:00,123 4321 INFO shop odoo.addons.base.models.res_users: "
+    "Login failed for login:admin from 203.0.113.7 4 0.012 0.003",
+)
+# Ports a web ban covers: ufw's application profile installed by the nginx package.
+# Without it, fail2ban's ufw action bans every port, SSH included.
+UFW_WEB_APPLICATION = "Nginx Full"
+
+
 def _fail2ban_base_content(
     ignore_ips: str,
     bantime: str,
     findtime: str,
     maxretry: int,
     recidive_bantime: str,
+    nginx_logs: bool = True,
 ) -> str:
-    return f"""[DEFAULT]
+    """The base jails. sshd bans every port (it is SSH); the web jails ban only the
+    web ports; recidive uses ufw too. The nginx jails are written only when nginx
+    logs exist: fail2ban refuses to start with a jail whose log file is missing,
+    and takes the sshd jail down with it."""
+    web = f'ufw[application="{UFW_WEB_APPLICATION}"]'
+    content = f"""[DEFAULT]
 banaction = ufw
+banaction_allports = ufw
 backend = auto
 ignoreip = {ignore_ips}
 bantime = {bantime}
@@ -494,13 +568,18 @@ maxretry = {maxretry}
 
 [sshd]
 enabled = true
-
+"""
+    if nginx_logs:
+        content += f"""
 [nginx-http-auth]
 enabled = true
+banaction = {web}
 
 [nginx-botsearch]
 enabled = true
-
+banaction = {web}
+"""
+    content += f"""
 [recidive]
 enabled = true
 logpath = /var/log/fail2ban.log
@@ -508,6 +587,7 @@ bantime = {recidive_bantime}
 findtime = 1d
 maxretry = 5
 """
+    return content
 
 
 def _fail2ban_odoo_filter_content() -> str:
@@ -515,8 +595,10 @@ def _fail2ban_odoo_filter_content() -> str:
 before = common.conf
 
 [Definition]
-failregex = ^.*(?:login|authentication)\s+failed.*from\s+<HOST>.*$
-            ^.*Login\s+failed\s+for\s+db:.*from\s+<HOST>.*$
+# Odoo 12-18: "Login failed for db:<db> login:<login> from <ip>"; 19: no db part.
+# The logger name anchors the line; the greedy login takes the last " from ",
+# and only the request's perf numbers may follow the address.
+failregex = ^\s*\d+ INFO \S+ odoo\.addons\.base\.models\.res_users: Login failed for (?:db:\S* )?login:.* from <HOST>(?: [\d.]+)*\s*$
 
 ignoreregex =
 """
@@ -535,10 +617,44 @@ filter = odoo-auth
 logpath = {log_path}
 backend = auto
 port = http,https
+banaction = ufw[application="{UFW_WEB_APPLICATION}"]
 bantime = {bantime}
 findtime = {findtime}
 maxretry = {maxretry}
 """
+
+
+_FAIL2BAN_INSTALL = (
+    "command -v fail2ban-client >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive "
+    "apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install fail2ban)"
+)
+_FAIL2BAN_WAIT = (
+    "for _ in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; "
+    "echo '[ERROR] fail2ban is active but its socket is unavailable after waiting.'; "
+    "systemctl status fail2ban --no-pager -n 50 || true; exit 1"
+)
+_FAIL2BAN_FILTER = "/etc/fail2ban/filter.d/odoo-auth.conf"
+
+
+def _fail2ban_apply_commands() -> list[Command]:
+    return [
+        Command('Enable and start fail2ban', "systemctl enable --now fail2ban"),
+        Command('Reload fail2ban', "fail2ban-client reload"),
+        Command('Wait for the fail2ban socket to be ready', _FAIL2BAN_WAIT),
+    ]
+
+
+def _filter_self_test() -> Command:
+    """The filter must match Odoo's own login-failure line of every version; an
+    empty production log proves nothing (fail2ban-regex exits 0 with 0 matches)."""
+    checks = " && ".join(
+        f"fail2ban-regex {shlex.quote(sample)} {shlex.quote(_FAIL2BAN_FILTER)} | grep -q '1 matched'"
+        for sample in ODOO_LOGIN_FAILED_SAMPLES
+    )
+    return Command(
+        'Test the Odoo filter against the login-failure line of Odoo 12-18 and 19',
+        f"{checks} || {{ echo '[ERROR] The odoo-auth filter does not match Odoo login failures.' >&2; exit 1; }}",
+    )
 
 
 def plan_fail2ban_base_setup(
@@ -547,38 +663,19 @@ def plan_fail2ban_base_setup(
     findtime: str = "10m",
     maxretry: int = 8,
     recidive_bantime: str = "24h",
+    nginx_logs: bool = True,
 ) -> list[Command]:
     jail_base_path = "/etc/fail2ban/jail.d/odoo-instance-manager.local"
-    commands: list[Command] = [
-        Command('Update packages', "apt-get update"),
-        Command('Install fail2ban', "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install fail2ban"),
+    content = _fail2ban_base_content(ignore_ips, bantime, findtime, maxretry, recidive_bantime, nginx_logs)
+    return [
+        Command('Ensure fail2ban is installed', _FAIL2BAN_INSTALL),
         Command('Create /etc/fail2ban/jail.d', "mkdir -p /etc/fail2ban/jail.d"),
+        Command(
+            tf('Write {} and keep it only if fail2ban accepts it', jail_base_path),
+            staged_files_command([(jail_base_path, content, "644")], "fail2ban-client -t"),
+        ),
+        *_fail2ban_apply_commands(),
     ]
-    commands.extend(
-        write_text_file_command(
-            jail_base_path,
-            _fail2ban_base_content(
-                ignore_ips=ignore_ips,
-                bantime=bantime,
-                findtime=findtime,
-                maxretry=maxretry,
-                recidive_bantime=recidive_bantime,
-            ),
-            "644",
-        )
-    )
-    commands.extend(
-        [
-            Command('Validate fail2ban configuration', "fail2ban-client -t"),
-            Command('Enable and start fail2ban', "systemctl enable --now fail2ban"),
-            Command('Restart fail2ban', "systemctl restart fail2ban"),
-            Command(
-                'Wait for the fail2ban socket to be ready',
-                "for i in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo '[ERROR] fail2ban is active but its socket is unavailable after waiting.'; systemctl status fail2ban --no-pager -n 50 || true; exit 1",
-            ),
-        ]
-    )
-    return commands
 
 
 def plan_fail2ban_enable_odoo_instance(
@@ -588,68 +685,35 @@ def plan_fail2ban_enable_odoo_instance(
     findtime: str = "10m",
     maxretry: int = 8,
 ) -> list[Command]:
-    instance_token = _safe_token(instance)
-    jail_name = f"odoo-auth-{instance_token}"
-    filter_path = "/etc/fail2ban/filter.d/odoo-auth.conf"
+    jail_name = f"odoo-auth-{_safe_token(instance)}"
     jail_path = f"/etc/fail2ban/jail.d/{jail_name}.local"
-
-    commands: list[Command] = [
-        Command('Ensure fail2ban is installed', "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install fail2ban"),
-        Command('Create fail2ban directories', "mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d"),
+    files = [
+        (_FAIL2BAN_FILTER, _fail2ban_odoo_filter_content(), "644"),
+        (jail_path, _fail2ban_odoo_jail_content(jail_name, log_path, bantime, findtime, maxretry), "644"),
     ]
-    commands.extend(
-        write_text_file_command(
-            filter_path,
-            _fail2ban_odoo_filter_content(),
-            "644",
-        )
-    )
-    commands.extend(
-        write_text_file_command(
-            jail_path,
-            _fail2ban_odoo_jail_content(
-                jail_name=jail_name,
-                log_path=log_path,
-                bantime=bantime,
-                findtime=findtime,
-                maxretry=maxretry,
-            ),
-            "644",
-        )
-    )
-    commands.extend(
-        [
-            Command('Validate instance log', f"test -f {shlex.quote(log_path)}"),
-            Command(
-                'Test fail2ban regex against the Odoo log',
-                f"fail2ban-regex {shlex.quote(log_path)} {shlex.quote(filter_path)}",
-            ),
-            Command('Validate fail2ban configuration', "fail2ban-client -t"),
-            Command('Enable and start fail2ban', "systemctl enable --now fail2ban"),
-            Command('Restart fail2ban', "systemctl restart fail2ban"),
-            Command(
-                'Wait for the fail2ban socket to be ready',
-                "for i in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo '[ERROR] fail2ban is active but its socket is unavailable after waiting.'; systemctl status fail2ban --no-pager -n 50 || true; exit 1",
-            ),
-        ]
-    )
-    return commands
+    return [
+        Command('Ensure fail2ban is installed', _FAIL2BAN_INSTALL),
+        Command('Create fail2ban directories', "mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d"),
+        Command('Validate instance log', f"test -f {shlex.quote(log_path)}"),
+        Command(
+            tf('Write the odoo-auth filter and the {} jail; keep them only if fail2ban accepts them', jail_name),
+            staged_files_command(files, "fail2ban-client -t"),
+        ),
+        _filter_self_test(),
+        *_fail2ban_apply_commands(),
+    ]
 
 
 def plan_fail2ban_ensure_odoo_filter() -> list[Command]:
-    filter_path = "/etc/fail2ban/filter.d/odoo-auth.conf"
-
-    commands: list[Command] = [
+    return [
         Command('Create fail2ban filters directory', "mkdir -p /etc/fail2ban/filter.d"),
+        Command(
+            'Write the odoo-auth filter and keep it only if fail2ban accepts it',
+            staged_files_command([(_FAIL2BAN_FILTER, _fail2ban_odoo_filter_content(), "644")],
+                                 "fail2ban-client -t"),
+        ),
+        _filter_self_test(),
     ]
-    commands.extend(
-        write_text_file_command(
-            filter_path,
-            _fail2ban_odoo_filter_content(),
-            "644",
-        )
-    )
-    return commands
 
 
 def plan_odoo_base_setup(
@@ -946,69 +1010,74 @@ def plan_ensure_db_role(config: InstanceConfig) -> list[Command]:
     return commands
 
 
+def _nginx_switch_command(available: str, content: str, enable: str, disable: str) -> str:
+    """Write the vhost, enable it and disable its sibling, then keep the change only
+    if ``nginx -t`` accepts the whole configuration; otherwise the vhost file and
+    both links are put back as they were. A broken vhost left enabled would stop
+    nginx — every instance on the host — at its next restart."""
+    q = shlex.quote
+    delimiter = _heredoc_delimiter(content)
+    return "\n".join([
+        "backup=$(mktemp -d)",
+        f'if [ -e {q(available)} ]; then cp -a {q(available)} "$backup/available"; fi',
+        f'if [ -L {q(enable)} ]; then cp -a {q(enable)} "$backup/enable"; fi',
+        f'if [ -L {q(disable)} ]; then cp -a {q(disable)} "$backup/disable"; fi',
+        "restore() {",
+        f'  if [ -e "$backup/available" ]; then cp -a "$backup/available" {q(available)}; else rm -f {q(available)}; fi',
+        f'  rm -f {q(enable)} {q(disable)}',
+        f'  if [ -L "$backup/enable" ]; then cp -a "$backup/enable" {q(enable)}; fi',
+        f'  if [ -L "$backup/disable" ]; then cp -a "$backup/disable" {q(disable)}; fi',
+        "}",
+        f"cat > {q(available)} <<'{delimiter}'",
+        content.rstrip("\n"),
+        delimiter,
+        f"chmod 644 {q(available)}",
+        f"rm -f {q(disable)}",
+        f"ln -sf {q(available)} {q(enable)}",
+        'if ! nginx -t; then restore; rm -rf "$backup"; '
+        "echo '[ERROR] nginx refused the configuration: the previous one was restored.' >&2; exit 1; fi",
+        'rm -rf "$backup"',
+    ])
+
+
 def plan_nginx_http(
     config: InstanceConfig, nginx_version: tuple[int, int, int] | None = None
 ) -> list[Command]:
     # nginx_version is accepted for signature parity with plan_nginx_https; the
     # plain HTTP vhost listens on port 80 only and needs no http2 adaptation.
     site_available = f"/etc/nginx/sites-available/{config.nginx_http_name}"
-    site_enabled_http = f"/etc/nginx/sites-enabled/{config.nginx_http_name}"
-    site_enabled_https = f"/etc/nginx/sites-enabled/{config.nginx_https_name}"
-
-    commands: list[Command] = [
-        Command('Install Nginx', "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install nginx"),
+    return [
+        Command('Install Nginx', "command -v nginx >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install nginx)"),
         Command('Enable Nginx', "systemctl enable --now nginx"),
+        Command(
+            'Enable the instance HTTP vhost (kept only if nginx -t accepts it)',
+            _nginx_switch_command(
+                site_available, _nginx_http_content(config),
+                f"/etc/nginx/sites-enabled/{config.nginx_http_name}",
+                f"/etc/nginx/sites-enabled/{config.nginx_https_name}",
+            ),
+        ),
+        Command('Reload Nginx', "systemctl reload nginx"),
     ]
-    commands.extend(
-        write_text_file_command(site_available, _nginx_http_content(config), "644")
-    )
-    commands.extend(
-        [
-            Command(
-                'Disable the instance HTTPS vhost',
-                f"rm -f '{site_enabled_https}'",
-            ),
-            Command(
-                'Enable the instance HTTP vhost',
-                f"ln -sf '{site_available}' '{site_enabled_http}'",
-            ),
-            Command('Validate Nginx', "nginx -t"),
-            Command('Reload Nginx', "systemctl reload nginx"),
-        ]
-    )
-    return commands
 
 
 def plan_nginx_https(
     config: InstanceConfig, nginx_version: tuple[int, int, int] | None = None
 ) -> list[Command]:
     site_available = f"/etc/nginx/sites-available/{config.nginx_https_name}"
-    site_enabled_http = f"/etc/nginx/sites-enabled/{config.nginx_http_name}"
-    site_enabled_https = f"/etc/nginx/sites-enabled/{config.nginx_https_name}"
-
-    commands: list[Command] = [
-        Command('Install Nginx', "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install nginx"),
+    return [
+        Command('Install Nginx', "command -v nginx >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install nginx)"),
         Command('Enable Nginx', "systemctl enable --now nginx"),
+        Command(
+            'Enable the instance HTTPS vhost (kept only if nginx -t accepts it)',
+            _nginx_switch_command(
+                site_available, _nginx_https_content(config, nginx_version),
+                f"/etc/nginx/sites-enabled/{config.nginx_https_name}",
+                f"/etc/nginx/sites-enabled/{config.nginx_http_name}",
+            ),
+        ),
+        Command('Reload Nginx', "systemctl reload nginx"),
     ]
-    commands.extend(
-        write_text_file_command(
-            site_available, _nginx_https_content(config, nginx_version), "644"
-        )
-    )
-    commands.extend(
-        [
-            Command(
-                'Disable the instance HTTP vhost', f"rm -f '{site_enabled_http}'"
-            ),
-            Command(
-                'Enable the instance HTTPS vhost',
-                f"ln -sf '{site_available}' '{site_enabled_https}'",
-            ),
-            Command('Validate Nginx', "nginx -t"),
-            Command('Reload Nginx', "systemctl reload nginx"),
-        ]
-    )
-    return commands
 
 
 def plan_copy_custom_certs(
@@ -1371,10 +1440,15 @@ def plan_ufw_allow_port(port: int, proto: str) -> list[Command]:
     return [Command(tf('Allow {}/{}', int(port), proto), f"ufw allow {int(port)}/{proto}")]
 
 
-def plan_ufw_delete_rule(number: int) -> list[Command]:
+def plan_ufw_delete_rule(number: int, expected_line: str) -> list[Command]:
+    """Delete rule ``number`` only if it is still the rule the operator saw. fail2ban
+    prepends its bans to the list, so the numbers shift while the operator reads:
+    without the check, "delete #5" can delete the SSH allow that moved to #5."""
     return [
         Command(
             tf('Delete UFW rule #{}', int(number)),
+            f"ufw status numbered | grep -qxF -- {shlex.quote(expected_line)} || "
+            "{ echo '[ERROR] The rule list changed since it was shown; nothing was deleted.' >&2; exit 1; } && "
             f"ufw --force delete {int(number)}",
         )
     ]

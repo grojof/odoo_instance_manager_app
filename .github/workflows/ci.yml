@@ -30,6 +30,14 @@ jobs:
       - name: Byte-compile all sources
         run: python -m compileall -q odoo_instance_manager.py instance_manager
 
+      - name: Build the wheel and import it from a clean venv
+        run: |
+          pip install build
+          python -m build --wheel --outdir dist
+          python -m venv /tmp/wheel-check
+          /tmp/wheel-check/bin/pip install dist/*.whl
+          cd /tmp && /tmp/wheel-check/bin/python -c "import odoo_instance_manager, instance_manager.workflows.manage, instance_manager.support, instance_manager.neutralise"
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:

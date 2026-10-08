@@ -50,6 +50,12 @@ jobs:
       - name: Check the built artifacts
         run: twine check dist/*
 
+      - name: Import the wheel from a clean venv
+        run: |
+          python -m venv /tmp/wheel-check
+          /tmp/wheel-check/bin/pip install dist/*.whl
+          cd /tmp && /tmp/wheel-check/bin/python -c "import odoo_instance_manager, instance_manager.workflows.manage, instance_manager.support, instance_manager.neutralise"
+
       - name: Extract release notes from CHANGELOG
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -59,7 +65,8 @@ jobs:
             f
           ' CHANGELOG.md > release_notes.md
           if [ ! -s release_notes.md ]; then
-            echo "Release $GITHUB_REF_NAME." > release_notes.md
+            echo "CHANGELOG.md has no section for $VERSION: the tag, the version and the changelog must agree." >&2
+            exit 1
           fi
           {
             echo

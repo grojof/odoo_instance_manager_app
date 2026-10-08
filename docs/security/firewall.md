@@ -18,7 +18,8 @@ Applies a secure baseline:
 
 1. Installs UFW if missing.
 2. `default deny incoming`, `default allow outgoing`.
-3. Allows the **SSH port** you specify — **before** enabling UFW, so you are not locked out.
+3. Allows the **SSH port** — **before** enabling UFW, so you are not locked out. The tool proposes the port SSH
+   listens on (`sshd -T`, and `ssh.socket` on Ubuntu 24.04), and asks for confirmation if you choose another.
 4. Allows **HTTP (80)** and **HTTPS (443)** if chosen.
 5. Optionally allows **PostgreSQL (5432)** from a single app-server IP.
 6. Enables UFW (last step).
@@ -29,7 +30,9 @@ Applies a secure baseline:
 ## Other operations
 
 - **Allow a port** — `ufw allow <port>/<tcp|udp>`.
-- **Delete a rule (by number)** — lists numbered rules and deletes one.
+- **Delete a rule (by number)** — lists numbered rules and deletes one, only if that number still shows the
+  same rule when the plan runs. fail2ban adds its bans at the top of the list, so the numbers can shift while you
+  read; without the check, deleting "#5" could delete the SSH allow.
 - **Enable / Disable UFW**.
 
 ## Relationship with Fail2ban

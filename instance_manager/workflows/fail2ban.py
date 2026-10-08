@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 
 from ..i18n import tf
@@ -202,6 +203,7 @@ def manage_fail2ban() -> None:
                 findtime=findtime,
                 maxretry=maxretry,
                 recidive_bantime=recidive_bantime,
+                nginx_logs=os.path.isdir("/var/log/nginx"),
             )
             _execute_plan(commands)
             continue

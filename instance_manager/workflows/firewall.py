@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 from ..i18n import tf
 from ..planners import plan_ufw_allow_port, plan_ufw_base_setup, plan_ufw_delete_rule
 from ..prompts import ask_bool, ask_int, ask_text, choose
-from ..system import Command, run
+from ..system import Command, detect_ssh_ports, run
 from ..ui import level_text, title
 from .common import _execute_plan
 
@@ -28,7 +30,17 @@ def _configure_base(config_hint_ip: str = "") -> None:
             'Make sure the SSH port is correct before enabling: a wrong rule can lock you out of the server.',
         )
     )
-    ssh_port = ask_int('SSH port to allow', 22)
+    detected = detect_ssh_ports()
+    if detected:
+        print(level_text("INFO", tf('SSH listens on: {}', ", ".join(str(port) for port in detected))))
+    else:
+        print(level_text("WARN", 'Could not detect the SSH port (sshd -T / ssh.socket).'))
+    ssh_port = ask_int('SSH port to allow', detected[0] if detected else 22)
+    if detected and ssh_port not in detected and not ask_bool(
+        tf('SSH does not listen on {}: enabling UFW would lock new SSH sessions out. Continue anyway?', ssh_port),
+        False,
+    ):
+        return
     allow_http = ask_bool('Allow HTTP (80)?', True)
     allow_https = ask_bool('Allow HTTPS (443)?', True)
     pg_from_ip = ""
@@ -52,14 +64,27 @@ def _allow_port() -> None:
     _execute_plan(plan_ufw_allow_port(port, proto))
 
 
+def _numbered_rule_line(status: str, number: int) -> str | None:
+    """The exact line of rule ``number`` in ``ufw status numbered`` output."""
+    for line in status.splitlines():
+        match = re.match(r"^\[\s*(\d+)\]", line)
+        if match and int(match.group(1)) == number:
+            return line
+    return None
+
+
 def _delete_rule() -> None:
     result = run("ufw status numbered 2>&1", check=False)
     print(f"\n{title('UFW rules')}\n{result.stdout.strip() or '(no rules)'}")
     if result.returncode != 0:
         print(level_text("INFO", 'Could not list the rules (is UFW installed/active?).'))
         return
-    number = ask_int('Rule number to delete', 1)
-    _execute_plan(plan_ufw_delete_rule(number))
+    number = ask_int('Rule number to delete', 1, min_value=1, max_value=9999)
+    expected = _numbered_rule_line(result.stdout, number)
+    if expected is None:
+        print(level_text("ERROR", tf('There is no rule #{}.', number)))
+        return
+    _execute_plan(plan_ufw_delete_rule(number, expected))
 
 
 def _toggle(enable: bool) -> None:

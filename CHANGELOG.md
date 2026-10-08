@@ -31,6 +31,19 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **The v1.2.0 wheel did not run**: it left out `instance_manager.workflows`. Packages are now found, and CI and
+  the release build the wheel and import it from a clean venv; the release fails when the changelog has no
+  section for the tag.
+- **fail2ban**: a missing log (nginx jails without nginx) made fail2ban refuse its whole configuration, sshd jail
+  included; jails were written before being validated. They are now staged and kept only if
+  `fail2ban-client -t` accepts them, and nginx jails are written only with nginx logs. The Odoo filter missed
+  Odoo 19's line and its test passed with no match; it now matches 12–19 and the test needs a match. Web and Odoo
+  bans block only the web ports (ufw's `Nginx Full`), never SSH.
+- **UFW**: deleting by number could delete the SSH allow after fail2ban shifted the list; the delete now checks
+  the rule is unchanged. The SSH port is detected.
+- **nginx**: a vhost was enabled before `nginx -t`, so a failed change stayed enabled; it is now rolled back.
+  The HTTP vhost limited uploads to 1 MB. The HTTPS vhost now follows Odoo's deployment guide (HSTS, Secure
+  session cookie, TLS settings, gzip).
 - **Copies were not neutralised.** Only crons, mail servers and fetchmail were switched off, each failure
   ignored; with no mail server active Odoo falls back to `odoo.conf`'s `smtp_server` and a local MTA relayed real
   mail, and payment providers, carriers, OAuth, calendars, webhooks, IAP, EDI/SII and the base URL stayed live. The

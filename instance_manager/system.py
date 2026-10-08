@@ -206,6 +206,22 @@ def detect_arch() -> str:
     return platform.machine()
 
 
+def detect_ssh_ports() -> list[int]:
+    """The ports SSH listens on: sshd's effective ``Port`` (``sshd -T``) and, on
+    socket-activated hosts (Ubuntu 24.04's ``ssh.socket``), the socket's
+    ``ListenStream``. Empty when neither can be read."""
+    ports: list[int] = []
+    result = run("sshd -T 2>/dev/null", check=False)
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "port" and parts[1].isdigit():
+            ports.append(int(parts[1]))
+    result = run("systemctl show -p Listen ssh.socket 2>/dev/null", check=False)
+    for match in re.finditer(r"[:\]](\d{1,5}) \(Stream\)", result.stdout):
+        ports.append(int(match.group(1)))
+    return sorted(set(port for port in ports if 1 <= port <= 65535))
+
+
 def detect_cpu_count() -> int:
     """Detected CPU count via ``nproc``, falling back to 1 when unavailable."""
     result = run("nproc", check=False)
