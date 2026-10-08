@@ -189,9 +189,9 @@ to the menu rather than terminating with an uncaught error.
 
 ### Requirement: Host text cannot drive the terminal
 
-Text that comes from the host — database, file and service names, a command's output, values read from files —
-SHALL be printed with every control character except tab and newline, and every escape sequence except colour
-(SGR), shown as `?`; a command's streamed output keeps its carriage returns. A value the operator types SHALL be
+The tool SHALL print text that comes from the host (database, file and service names, a command's output,
+values read from files) with every control character except tab and newline, and every escape sequence except
+colour (SGR), shown as `?`; a command's streamed output keeps its carriage returns. A value the operator types SHALL be
 refused when it holds a control character, so a pasted carriage return or escape never reaches `odoo.conf`, a
 unit, or a shell line.
 
