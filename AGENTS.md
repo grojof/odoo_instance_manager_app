@@ -1,4 +1,4 @@
-# Odoo Instance Manager — AI Agent Guide (CLAUDE.md)
+# Odoo Instance Manager — AI Agent Guide (AGENTS.md)
 
 Interactive, **root-run** Python CLI to install, maintain, and audit multi-instance **Odoo Community**
 servers on the Debian/Ubuntu (apt) family — validated on Ubuntu 24.04, but the tool **detects** the OS
@@ -54,8 +54,8 @@ applies it only after confirmation. This file is the single authored source of t
 - **Keep docs honest.** When behavior changes, update the affected `docs/` page and the README map in the
   same change.
 - **Keep the root `README.md` current.** It is the friendly front door *and* the routable map: a clear,
-  friendly description and usage of the utility, the architecture diagram (kept as-is), a supported-platforms
-  matrix (OS codenames, nginx, PostgreSQL, Odoo majors), and links out to `docs/`. Update it in lockstep with
+  friendly description and usage of the utility, a diagram of what it does (in the colour classes of
+  `docs/architecture.md`, *Diagram conventions*), a link to the supported-platforms matrix in `docs/platforms.md`, and links out to `docs/`. Update it in lockstep with
   any behavior, capability, or docs change.
 - **Keep the changelog and version in lockstep.** User-facing changes go under `## [Unreleased]` in
   `CHANGELOG.md` (Keep a Changelog format) as they land. To cut a release, follow **SemVer**: rename

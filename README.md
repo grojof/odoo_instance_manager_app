@@ -9,8 +9,10 @@ tool is for you. If you use Odoo's SaaS/Online or a managed host, you don't need
 
 ## What it does for you
 
-- **Set up a new Odoo site in minutes** — creates the system user, clones Odoo, builds the virtualenv, writes
-  the config and systemd service, and optionally sets up PostgreSQL, Nginx, and TLS.
+- **Set up a new Odoo site, any version from 12 to 19** — creates the system user, clones official Odoo or
+  OCA's **OCB**, builds the virtualenv with the Python and setuptools that version needs (installing a matching
+  Python with uv when the server's own cannot build it), writes the config and systemd service, and optionally
+  sets up PostgreSQL, Nginx, and TLS.
 - **Run many sites on one server** — each instance is isolated (its own service, ports, config, and database),
   all derived from a name, so they don't collide.
 - **Keep them secure by default** — strong random master/DB passwords, a hidden database manager
@@ -22,8 +24,10 @@ tool is for you. If you use Odoo's SaaS/Online or a managed host, you don't need
   writes version-correct config (see [Supported platforms](docs/platforms.md)).
 - **Keep them healthy** — a one-look health check (service, HTTP, database, disk), disk-usage reports, and log
   rotation.
-- **Never lose data** — manual or **scheduled automatic backups**, plus restore and duplicate, all with
-  retention.
+- **Never lose data** — manual or **scheduled automatic backups** with retention per database, plus restore
+  and duplicate.
+- **Copy production safely** — a restored or duplicated database is **neutralised** before any Odoo can see it:
+  no mail leaves, no cron, payment, EDI or webhook runs as production, and a check confirms it.
 - **Know what you have** — a read-only whole-server audit and an addon inventory (Odoo core / OCA / custom,
   with versions and which are installed).
 
@@ -52,25 +56,39 @@ sudo python3 odoo_instance_manager.py
 
 Then pick an action from the main menu — for example **Installation menu** to create a new Odoo site, or
 **Manage instances** to manage an existing one. Every action shows its full command plan and waits for your
-confirmation before touching the system.
+confirmation before touching the system; a destructive action also asks you to type a confirmation phrase.
 
 ```mermaid
 flowchart LR
-    op["You (root)"] --> menu["Main menu"]
-    menu --> install["Install / provision"]
-    menu --> manage["Manage instances<br/>(backup · health · logs · addons)"]
-    menu --> sec["Security<br/>(Fail2ban · UFW)"]
-    menu --> audit["Server audit (read-only)"]
-    install & manage & sec --> plan["Plan → preview → confirm → apply"]
-    plan --> host["Ubuntu host"]
-    audit -. "read-only" .-> host
+    op(["You (root)"]) --> menu{"Main menu"}
+    menu --> install["Install<br/>Odoo 12–19 · PostgreSQL"]
+    menu --> manage["Manage instances<br/>status · backups · duplicate"]
+    menu --> services["Instance services<br/>start · stop · restart"]
+    menu --> sec["Fail2ban · Firewall"]
+    menu --> remove["Remove instances"]
+    menu --> report[("Server report<br/>read-only")]
+    install & manage & services & sec & remove --> plan["Plan → preview"]
+    plan --> confirm{"Confirm"}
+    confirm -- yes --> apply["Apply in order"]
+    confirm -- no --> menu
+    classDef step fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef ask fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef guard fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef data fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    class op,install,manage,services,plan,apply step
+    class menu,confirm ask
+    class sec guard
+    class remove stop
+    class report data
 ```
 
 ## Documentation
 
 **Set up**
 
-- [Installing and provisioning instances](docs/installation.md) — install modes, ports, Nginx, TLS.
+- [Installing and provisioning instances](docs/installation.md) — install modes, Odoo version and core, Python,
+  ports, Nginx, TLS.
 - [Configuration reference](docs/configuration-reference.md) — every field, default, and derived path.
 - [What it offers & supported platforms](docs/platforms.md) — capabilities and the OS/nginx/PostgreSQL/Odoo
   support matrix.
@@ -78,7 +96,7 @@ flowchart LR
 **Daily operations** ([docs/operations/](docs/operations/))
 
 - [Managing existing instances](docs/operations/instance-management.md) — status, updates, services,
-  backup/restore, duplicate, removal.
+  backup/restore, duplicate and neutralise, removal.
 - [Instance health check](docs/operations/health-check.md) — read-only check of service, HTTP, database, disk.
 - [Scheduled backups](docs/operations/scheduled-backups.md) — unattended backups on a systemd timer.
 - [Disk usage & retention](docs/operations/disk-usage.md) — instance footprint and pruning old backups.
@@ -103,7 +121,7 @@ flowchart LR
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md). Non-trivial changes are spec-first via the
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Non-trivial changes are spec-first via the
 OpenSpec flow; keep planners pure and never weaken a safety control. Security policy: [SECURITY.md](SECURITY.md).
 
 ## License

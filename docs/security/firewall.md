@@ -4,7 +4,7 @@ title: "Firewall (UFW)"
 description: "Install and manage a UFW firewall baseline for an Odoo server."
 tags: [security, firewall, ufw]
 audience: [operator]
-updated: 2026-07-03
+updated: 2026-10-08
 ---
 
 # Firewall (UFW)
@@ -12,7 +12,7 @@ updated: 2026-07-03
 From the main menu **Firewall (UFW)**, the tool installs and manages a UFW firewall for the server. It shows
 `ufw status verbose` each time you enter.
 
-## Configure a secure UFW baseline
+## Install / configure secure baseline
 
 Applies a secure baseline:
 
@@ -30,9 +30,8 @@ Applies a secure baseline:
 ## Other operations
 
 - **Allow a port** — `ufw allow <port>/<tcp|udp>`.
-- **Delete a rule (by number)** — lists numbered rules and deletes one, only if that number still shows the
-  same rule when the plan runs. fail2ban adds its bans at the top of the list, so the numbers can shift while you
-  read; without the check, deleting "#5" could delete the SSH allow.
+- **Delete a rule (by number)** — lists the numbered rules and deletes one only if that number still shows the
+  same rule when the plan runs: fail2ban adds its bans at the top of the list, which shifts the numbers.
 - **Enable / Disable UFW**.
 
 ## Relationship with Fail2ban

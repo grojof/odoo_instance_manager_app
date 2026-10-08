@@ -4,7 +4,7 @@ title: "Auditing a server (external report)"
 description: "Generate a read-only report of a server's Odoo instances, TLS posture, and versions."
 tags: [audit, discovery, tls, reporting]
 audience: [operator]
-updated: 2026-07-04
+updated: 2026-10-08
 ---
 
 # Auditing a server (external report)
@@ -30,9 +30,9 @@ server you are auditing or preparing to hand off.
   / none) and reports certificate metadata and expiry status (OK / WARN if expiring within the threshold /
   MISSING / ERROR).
 - **Odoo version** — read from `<home>/odoo/odoo/release.py` (`version_info`) when available.
-- **Production posture** — a per-instance table that flags `list_db`, guessable default master/DB credentials,
-  wkhtmltopdf, worker sizing, remote `db_sslmode`, and `dbfilter`. Read-only, computed from each instance's
-  `odoo.conf` plus host facts (same evaluation as the **Status: security & production** view); no mutation.
+- **Production posture** — a per-instance table of the checks listed under
+  [security & production posture](operations/instance-management.md#security--production-posture), computed
+  from each instance's `odoo.conf` plus host facts; read-only.
 
 Instance discovery also recognizes the legacy config path `/etc/<instance>/odoo.conf` in addition to the
 default `/etc/odoo/<instance>/<instance>.conf`.

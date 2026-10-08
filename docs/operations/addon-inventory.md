@@ -4,12 +4,12 @@ title: "Addon inventory"
 description: "List an instance's addon modules by origin with versions, and which are installed."
 tags: [addons, modules, inventory]
 audience: [operator]
-updated: 2026-07-04
+updated: 2026-10-08
 ---
 
 # Addon inventory
 
-From **Manage instances → Addon inventory**, the tool lists an instance's addon modules — read-only.
+From **Manage instances → Status & health → Addon inventory**, the tool lists an instance's addon modules — read-only.
 
 ## What it shows
 
@@ -33,14 +33,15 @@ only the available modules.
 
 The inventory also audits the **Python packages the addons declare** via each manifest's
 `external_dependencies['python']` (read safely as a literal, no code execution). For each declared package it
-shows which addons require it and whether it **imports in the instance venv** (`OK` / `MISSING`) — so you can
+shows which addons require it and whether the instance venv has it (`OK` / `MISSING`) — checked as Odoo does,
+by distribution name first (`python-stdnum`, `pdfminer.six`), then as an importable module — so you can
 spot addon dependencies that aren't installed yet (a common cause of errors, e.g. after duplicating an
 instance). This audit is included in the export.
 
 ## Show only installed, or all
 
-After checking a database, the tool asks **"Show only installed modules (instead of all)?"** (default yes) —
-handy because the full list is long. Only-installed hides not-installed modules and any origin group left
+After checking a database, the tool asks **"Show only installed modules (instead of all)?"** (default yes),
+since the full list is long. Only-installed hides not-installed modules and any origin group left
 empty; choose *no* to keep the complete inventory.
 
 ## Export (optional)

@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **Docs refreshed against the code**, with diagrams in shared semantic colours (`docs/architecture.md`,
+  *Diagram conventions*): the main menu, the layers, the plan flow (the phrase is asked before the preview), the
+  per-version install, the neutralised copy, and what each fail2ban jail blocks. Pages follow the menu's
+  submenus; the glossary defines terms and links to their pages instead of repeating lists.
+- `AGENTS.md` is the agent instruction file (`CLAUDE.md` is a one-line `@AGENTS.md` bridge), and CI checks the
+  docs with eunomai v0.6.1.
 - **Interface text is English throughout**, with Spanish only through the catalog: about twenty Spanish labels
   left in the code (report headers, certificate states, prompts) are now English keys. The catalog is written
   English → Spanish, the direction it is read; written the other way and inverted, it silently merged English
@@ -37,6 +43,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **A failed install could drop a PostgreSQL role it had not created.** The cleanup of the PostgreSQL and
+  Odoo + PostgreSQL installs dropped the instance's role even when it existed before; it now drops it only when
+  this run created it.
+- The fail2ban page suggested `ufw enable` without allowing SSH first; it now points to the Firewall menu, which
+  does.
 - **Passwords were visible to every local user.** Each database password went into the command text
   (`PGPASSWORD=… psql`), so it was in the arguments of the running step, which `ps` shows any user (another
   instance's Odoo user included), and it was printed in the plan preview and in a failed step's error, as were

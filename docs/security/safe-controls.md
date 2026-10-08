@@ -4,7 +4,7 @@ title: "Safe controls"
 description: "Runtime guardrails (eunomai PreToolUse hooks) and the recommended permissions baseline for this repo."
 tags: [safe-controls, hooks, security, permissions]
 audience: [contributor]
-updated: 2026-07-03
+updated: 2026-10-08
 ---
 
 # Safe controls
@@ -36,7 +36,7 @@ safety gate to ask before your shell runs a matching command.
 ## Recommended permissions baseline
 
 Static path rules use Claude Code's native `permissions`, already seeded in
-[`../.claude/settings.json`](../../.claude/settings.json):
+[`.claude/settings.json`](../../.claude/settings.json):
 
 ```json
 {

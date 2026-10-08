@@ -4,7 +4,7 @@ title: "Configuration reference"
 description: "InstanceConfig fields, defaults, validation patterns, and every path derived from an instance name."
 tags: [reference, configuration, paths]
 audience: [operator, contributor]
-updated: 2026-07-04
+updated: 2026-10-08
 ---
 
 # Configuration reference
@@ -50,12 +50,21 @@ instance name. See [Installing and provisioning instances](installation.md#produ
 
 ## Validation
 
-Identifiers are checked by `validate_identifiers()` **before** any command is built:
+Every value that reaches a shell command, SQL or a configuration file is checked by `validate_identifiers()`
+**before** any command is built, and the prompts ask again for a refused value (patterns in
+`instance_manager/models.py`):
 
-| Value | Pattern | Meaning |
-|-------|---------|---------|
+| Value | Accepted | Meaning |
+|-------|----------|---------|
 | `instance` | `^[a-z][a-z0-9_]{0,31}$` | Lowercase first letter, then `[a-z0-9_]`, max 32 chars. |
 | `db_user` | `^[a-z_][a-z0-9_]{0,62}$` | PostgreSQL identifier, max 63 chars. |
+| database names | `^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,62}$` | Odoo's own `DBNAME_PATTERN`: no leading symbol, no quote, `$` or space. |
+| `version` | `12`–`19`, optionally `.0` | A version the [support matrix](platforms.md#odoo-versions) knows. |
+| `repo_branch` | a plain ref name | Letters, digits, `.`, `_`, `/`, `-`; no `..`, never an option. |
+| `domain` | DNS labels, optional leading `*.` | What nginx `server_name` and a certificate CN accept. |
+| `db_host` | host name, IP or socket directory | Empty means Odoo's local socket. |
+| `app_server_ip` | an IPv4 or IPv6 address | Written as `/32` or `/128` in `pg_hba`. |
+| `core` / `python` / `data_dir` | `odoo` or `ocb` / `3.N` / an absolute path | |
 
 ## Derived paths
 
@@ -76,6 +85,12 @@ For an instance named `<instance>` with domain `<domain>`:
 | `ssl_key_file` | `<ssl_dir>/<domain_token>.server.key` |
 | `ssl_intermediate_file` | `<ssl_dir>/<domain_token>.intermediate.crt` |
 | `ssl_fullchain_file` | `<ssl_dir>/<domain_token>.fullchain.crt` |
+| `managed_data_dir` | `/var/lib/odoo/<instance>` (new installs' `data_dir`) |
+| `logrotate_config_file` | `/etc/logrotate.d/odoo-<instance>` |
+| `nginx_access_log` / `nginx_error_log` | `/var/log/nginx/<instance>.access.log` / `.error.log` |
+| scheduled backup | `/usr/local/sbin/odoo-backup-<instance>.sh`, `odoo-backup-<instance>.service` / `.timer` |
+| fail2ban | `/etc/fail2ban/jail.d/odoo-auth-<instance>.local`, shared filter `/etc/fail2ban/filter.d/odoo-auth.conf` |
+| uv interpreters (shared) | `/opt/odoo-python` |
 
 `domain_token` is the lowercased domain with `*` → `wildcard` and any other unsafe character replaced by `_`.
 
@@ -93,7 +108,7 @@ an `addons_path` of `<home>/odoo/addons,<home>/addons-oca,<home>/addons-custom`,
 > **Security note:** the recommended defaults are secure — `list_db = False`, a strong random master
 > password, a `dbfilter`, and `db_sslmode = require` for remote databases. The operator can still choose the
 > convenient options (exposed manager, chosen password) after an explicit warning, and the current posture is
-> surfaced by the **Status ▸ Security & production** view and the server-audit report.
+> surfaced by the **Status: security & production** view and the server-audit report.
 
 ## Related
 

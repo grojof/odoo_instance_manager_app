@@ -64,7 +64,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: grojof/eunomai
-          ref: v0.4.0
+          ref: v0.6.1
           path: .eunomai
 
       - name: Docs check
