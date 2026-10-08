@@ -55,7 +55,7 @@ class ListDatabasesOwnerScopeTests(unittest.TestCase):
     def _captured_query(self, **kwargs: object) -> str:
         captured: dict[str, str] = {}
 
-        def fake_run(cmd: str, check: bool = False) -> subprocess.CompletedProcess:
+        def fake_run(cmd: str, check: bool = False, env=None) -> subprocess.CompletedProcess:
             captured["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, 0, "db1\n", "")
 
@@ -64,7 +64,7 @@ class ListDatabasesOwnerScopeTests(unittest.TestCase):
         return captured["cmd"]
 
     def test_owner_scopes_by_role_and_exact_name(self) -> None:
-        cmd = self._captured_query(owner="shop")
+        cmd = shlex.split(self._captured_query(owner="shop"))[-1]
         self.assertIn("r.rolname = 'shop'", cmd)
         self.assertIn("d.datname = 'shop'", cmd)
         # No name prefix: instance `shop` must not list `shop2` or `shop_eu`.
@@ -86,7 +86,7 @@ class ProbeQuotingTests(unittest.TestCase):
     def _captured(self, probe, value: str) -> str:
         captured: dict[str, str] = {}
 
-        def fake_run(cmd: str, check: bool = False) -> subprocess.CompletedProcess:
+        def fake_run(cmd: str, check: bool = False, env=None) -> subprocess.CompletedProcess:
             captured["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, 1, "", "")
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
 import unittest
 
 from instance_manager import support
@@ -187,7 +186,11 @@ class UpdateConfigTests(unittest.TestCase):
         text = "\n".join(c.command for c in commands)
         for absent in ("apt-get", "git clone", "pip install"):
             self.assertNotIn(absent, text)
-        self.assertIn(shlex.quote("ALTER ROLE shop WITH PASSWORD 'pw';"), text)
+        alter = next(c for c in commands if "OIM_SQL" in c.command)
+        self.assertEqual(alter.env["OIM_SQL"], "ALTER ROLE shop WITH PASSWORD 'pw';")
+        # The password is in no command text and the preview masks it.
+        self.assertNotIn("'pw'", text)
+        self.assertNotIn("'pw'", "\n".join(c.shown for c in commands))
         self.assertIn("systemctl restart shop", text)
 
     def test_no_password_change_no_role_change(self) -> None:

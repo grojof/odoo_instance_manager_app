@@ -10,7 +10,7 @@ import re
 from ..i18n import tf
 from ..models import InstanceConfig
 from ..prompts import ask_bool, ask_text
-from ..system import read_odoo_conf, run
+from ..system import pg_env, read_odoo_conf, run
 from ..ui import level_tag, level_text, render_table, strip_ansi, title
 from .common import DbCredentials, _ask_db_credentials, _quote
 
@@ -99,10 +99,10 @@ def _installed_modules(creds: DbCredentials, db_name: str) -> dict[str, tuple[st
     """name -> (state, installed_version) from ir_module_module, or empty on error."""
     sql = "SELECT name, state, coalesce(latest_version, '') FROM ir_module_module"
     cmd = (
-        f"PGPASSWORD={_quote(creds.password)} psql -h {_quote(creds.host)} -p {creds.port} "
+        f"psql -X -h {_quote(creds.host)} -p {int(creds.port)} "
         f"-U {_quote(creds.user)} -d {_quote(db_name)} -tAF'|' -c {_quote(sql)}"
     )
-    result = run(cmd, check=False)
+    result = run(cmd, check=False, env=pg_env(creds.password))
     installed: dict[str, tuple[str, str]] = {}
     if result.returncode != 0:
         return installed
@@ -160,14 +160,26 @@ def _collect_python_deps(config: InstanceConfig) -> dict[str, set[str]]:
     return deps
 
 
+# Odoo's own check (odoo/modules/module.py, check_python_external_dependency):
+# the distribution name first — what a manifest is meant to name, e.g.
+# `python-stdnum` or `pdfminer.six` — then, failing that, an importable module.
+_DEPENDENCY_PROBE = (
+    "import importlib, importlib.metadata as m, sys\n"
+    "name = sys.argv[1]\n"
+    "try:\n    m.version(name)\n"
+    "except m.PackageNotFoundError:\n    importlib.import_module(name)\n"
+)
+
+
 def _venv_can_import(config: InstanceConfig, module: str) -> bool:
-    """True if ``module`` imports in the instance venv (run as the instance user)."""
-    if not re.fullmatch(r"[A-Za-z0-9_.]+", module):
+    """True if ``module`` is installed in the instance venv, as Odoo checks it: by
+    distribution name, else by import (run as the instance user)."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", module):
         return False
     venv_python = f"{config.odoo_home}/venv/bin/python"
     cmd = (
         f"sudo -u {_quote(config.odoo_user)} {_quote(venv_python)} "
-        f"-c {_quote('import ' + module)} >/dev/null 2>&1"
+        f"-c {_quote(_DEPENDENCY_PROBE)} {_quote(module)} >/dev/null 2>&1"
     )
     return run(cmd, check=False).returncode == 0
 
@@ -254,10 +266,13 @@ def _maybe_export_inventory(config: InstanceConfig, sections: list[str]) -> None
     default_path = f"./reports/addons_{config.instance}_{now}.txt"
     export_path = ask_text('Inventory export path', default_path, required=True)
 
-    export_dir = os.path.dirname(export_path) or "."
-    os.makedirs(export_dir, exist_ok=True)
     header = tf('Addon inventory: {}', config.instance)
-    with open(export_path, "w", encoding="utf-8") as file_handle:
-        file_handle.write(f"{header}\n\n" + "\n\n".join(sections) + "\n")
+    try:
+        os.makedirs(os.path.dirname(export_path) or ".", exist_ok=True)
+        with open(export_path, "w", encoding="utf-8") as file_handle:
+            file_handle.write(f"{header}\n\n" + "\n\n".join(sections) + "\n")
+    except OSError as error:
+        print(level_text("ERROR", tf('Could not write {}: {}', export_path, error.strerror or error)))
+        return
 
     print(level_text("OK", tf('Inventory exported to: {}', export_path)))

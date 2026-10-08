@@ -6,7 +6,7 @@ import shlex
 from . import support
 from .i18n import tf
 from .models import InstanceConfig, host_cidr
-from .system import Command
+from .system import Command, mask, pg_env
 
 
 def _sql_literal(value: str) -> str:
@@ -43,14 +43,16 @@ def _db_role_create_if_missing_sql(config: InstanceConfig) -> str:
     )
 
 
-def _db_connectivity_check_command(config: InstanceConfig) -> str:
+def _db_connectivity_check(config: InstanceConfig) -> Command:
+    """Log in as the instance's role, the way Odoo will (TCP for a local host)."""
     check_host = config.db_host
     if _is_local_db_host(check_host):
         check_host = "127.0.0.1"
-    return (
-        f"PGPASSWORD={shlex.quote(config.db_password)} "
-        f"psql -h {shlex.quote(check_host)} -p {config.db_port} -U {shlex.quote(config.db_user)} "
-        "-d postgres -tAc \"SELECT 1;\" >/dev/null"
+    return Command(
+        'Validate DB user login',
+        f"psql -X -h {shlex.quote(check_host)} -p {int(config.db_port)} -U {shlex.quote(config.db_user)} "
+        "-d postgres -tAc 'SELECT 1;' >/dev/null",
+        env=pg_env(config.db_password),
     )
 
 
@@ -158,7 +160,11 @@ def plan_update_instance_config(
     an Odoo that needs it pinned. A new DB password is set on the local role too, or
     the next start could not connect. The service is restarted when it runs, since
     ``systemctl start`` on a running unit loads nothing."""
-    commands = write_text_file_command(config.odoo_conf_file, render_merged_odoo_conf(config, existing), "640")
+    commands = write_text_file_command(
+        config.odoo_conf_file, render_merged_odoo_conf(config, existing), "640",
+        secrets=(config.odoo_admin_passwd, config.db_password,
+                 *(value for key, value in existing.items() if "pass" in key or "secret" in key)),
+    )
     commands.append(
         Command("Owner config Odoo", f"chown root:{shlex.quote(config.odoo_user)} {shlex.quote(config.odoo_conf_file)}")
     )
@@ -168,9 +174,9 @@ def plan_update_instance_config(
     if new_db_password and not config.is_remote_db_host:
         sql = f"ALTER ROLE {config.db_user} WITH PASSWORD '{_sql_literal(config.db_password)}';"
         commands.append(
-            Command(
+            _psql_stdin_command(
+                "sudo -u postgres psql -X -q -v ON_ERROR_STOP=1", sql, (config.db_password,),
                 'Set the new password on the local PostgreSQL role',
-                f"sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -c {shlex.quote(sql)}",
             )
         )
     if restart:
@@ -408,18 +414,34 @@ def staged_files_command(files: list[tuple[str, str, str]], validate: str) -> st
 
 
 def write_text_file_command(
-    target_path: str, content: str, mode: str = "640"
+    target_path: str, content: str, mode: str = "640", secrets: tuple[str, ...] = ()
 ) -> list[Command]:
+    """Write ``content`` to ``target_path`` atomically with ``mode``: a private
+    temporary file in the same directory, chmod, then rename — the file is never
+    seen half-written or with the wrong mode. The content travels in the step's
+    environment, so a file holding secrets (odoo.conf) is not in any process's
+    arguments, and the preview shows it with ``secrets`` masked."""
+    target = shlex.quote(target_path)
+    command = (
+        f'umask 077 && tmp=$(mktemp "$(dirname {target})/.oim-write.XXXXXX") && '
+        f'printf \'%s\' "$OIM_FILE_CONTENT" > "$tmp" && chmod {mode} "$tmp" && mv -f "$tmp" {target}'
+    )
+    body = content if content.endswith("\n") else content + "\n"
     return [
         Command(
-            description=tf("Write {}", target_path),
-            command=f"cat > '{target_path}' <<'EOF'\n{content}\nEOF",
-        ),
-        Command(
-            description=tf('Permissions {} on {}', mode, target_path),
-            command=f"chmod {mode} '{target_path}'",
-        ),
+            description=tf('Write {} (mode {})', target_path, mode),
+            command=command,
+            env={"OIM_FILE_CONTENT": body},
+            display=f"{command}\n--- {target_path} ---\n{mask(body, secrets)}",
+        )
     ]
+
+
+def _psql_stdin_command(psql: str, sql: str, secrets: tuple[str, ...], description: str) -> Command:
+    """``sql`` fed to ``psql`` on stdin from the step's environment: a statement
+    holding a password is in no process's arguments, and the preview masks it."""
+    command = f'{psql} <<<"$OIM_SQL"'
+    return Command(description, command, env={"OIM_SQL": sql}, display=f"{command}\n{mask(sql, secrets)}")
 
 
 def _logrotate_content(
@@ -768,7 +790,8 @@ def plan_odoo_base_setup(
 
     commands.extend(
         write_text_file_command(
-            config.odoo_conf_file, _odoo_conf_content(config), "640"
+            config.odoo_conf_file, _odoo_conf_content(config), "640",
+            secrets=(config.odoo_admin_passwd, config.db_password),
         )
     )
     commands.extend(
@@ -951,14 +974,11 @@ def plan_db_setup(
         ),
         Command('Enable and start PostgreSQL', "systemctl enable --now postgresql"),
         *_postgres_floor_commands(config),
-        Command(
+        _psql_stdin_command(
+            "sudo -u postgres psql -X -v ON_ERROR_STOP=1", role_sql, (config.db_password,),
             'Ensure PostgreSQL role (create if missing)',
-            f"sudo -u postgres psql -v ON_ERROR_STOP=1 -c {shlex.quote(role_sql)}",
         ),
-        Command(
-            'Validate DB user login',
-            _db_connectivity_check_command(config),
-        ),
+        _db_connectivity_check(config),
     ]
 
     if ensure_remote_access:
@@ -988,9 +1008,9 @@ def plan_ensure_db_role(config: InstanceConfig) -> list[Command]:
     if _is_local_db_host(config.db_host):
         role_sql = _db_role_create_if_missing_sql(config)
         commands.append(
-            Command(
+            _psql_stdin_command(
+                "sudo -u postgres psql -X -v ON_ERROR_STOP=1", role_sql, (config.db_password,),
                 'Ensure local PostgreSQL role (create if missing)',
-                f"sudo -u postgres psql -v ON_ERROR_STOP=1 -c {shlex.quote(role_sql)}",
             )
         )
     else:
@@ -1001,12 +1021,7 @@ def plan_ensure_db_role(config: InstanceConfig) -> list[Command]:
             )
         )
 
-    commands.append(
-        Command(
-            'Validate DB user login',
-            _db_connectivity_check_command(config),
-        )
-    )
+    commands.append(_db_connectivity_check(config))
     return commands
 
 

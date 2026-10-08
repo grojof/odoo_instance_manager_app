@@ -31,6 +31,16 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **Passwords were visible to every local user.** Each database password went into the command text
+  (`PGPASSWORD=… psql`), so it was in the arguments of the running step, which `ps` shows any user (another
+  instance's Odoo user included), and it was printed in the plan preview and in a failed step's error, as were
+  `odoo.conf`'s passwords. Steps now carry secrets in their environment, SQL with a password goes to psql on
+  stdin, files are written atomically with their content in the environment, the preview masks secrets, and a
+  failure names the step. Database probes give up after 10 seconds instead of minutes.
+- The addon dependency check reported packages declared by their distribution name (`python-stdnum`) as
+  missing; it now asks by distribution name first, as Odoo does. The health check now reaches a Unix-socket
+  database (`db_host = False`), a failed export no longer crashes the CLI, and the server report's database
+  list no longer matches by name prefix.
 - **The v1.2.0 wheel did not run**: it left out `instance_manager.workflows`. Packages are now found, and CI and
   the release build the wheel and import it from a clean venv; the release fails when the changelog has no
   section for the tag.

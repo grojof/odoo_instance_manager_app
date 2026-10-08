@@ -466,7 +466,7 @@ def _list_local_postgres_databases(instance: str, db_user: str) -> list[str]:
         "FROM pg_database d "
         "JOIN pg_roles r ON d.datdba = r.oid "
         "WHERE d.datistemplate = false "
-        f"AND (d.datname LIKE '{instance_literal}%' OR r.rolname = '{db_user_literal}') "
+        f"AND (d.datname = '{instance_literal}' OR r.rolname = '{db_user_literal}') "
         "ORDER BY d.datname;"
     )
     result = run(
@@ -1092,9 +1092,12 @@ def external_server_report() -> None:
     default_path = f"./reports/{host}_{now}.txt"
     export_path = ask_text('Report export path', default_path, required=True)
 
-    export_dir = os.path.dirname(export_path) or "."
-    os.makedirs(export_dir, exist_ok=True)
-    with open(export_path, "w", encoding="utf-8") as file_handle:
-        file_handle.write("\n\n".join(report_sections) + "\n")
+    try:
+        os.makedirs(os.path.dirname(export_path) or ".", exist_ok=True)
+        with open(export_path, "w", encoding="utf-8") as file_handle:
+            file_handle.write("\n\n".join(report_sections) + "\n")
+    except OSError as error:
+        print(level_text("ERROR", tf('Could not write {}: {}', export_path, error.strerror or error)))
+        return
 
     print(level_text("OK", tf('Report exported to: {}', export_path)))

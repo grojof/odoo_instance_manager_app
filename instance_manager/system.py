@@ -6,7 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .i18n import t, tf
 from .ui import level_text, style, title, wrap_plain_block
@@ -14,17 +14,53 @@ from .ui import level_text, style, title, wrap_plain_block
 
 @dataclass
 class Command:
+    """One plan step. ``env`` carries what must not be in the command text —
+    passwords, file contents holding secrets — into the step's environment, which
+    only root can read (``/proc/<pid>/environ``), unlike a process's arguments,
+    which every local user sees in ``ps``. ``display`` is what the preview shows
+    instead of ``command`` when the step was written for it (secrets masked)."""
+
     description: str
     command: str
+    env: dict[str, str] = field(default_factory=dict)
+    display: str = ""
+
+    @property
+    def shown(self) -> str:
+        return self.display or self.command
 
 
-def run(command: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+# A remote PostgreSQL that drops packets would otherwise hold a probe (and the
+# menu) until the TCP connect gives up, minutes later.
+PG_CONNECT_TIMEOUT = "10"
+
+
+def pg_env(password: str) -> dict[str, str]:
+    """The environment a libpq client takes its password from: never its argv."""
+    return {"PGPASSWORD": password or "", "PGCONNECT_TIMEOUT": PG_CONNECT_TIMEOUT}
+
+
+def mask(text: str, secrets: tuple[str, ...] | list[str]) -> str:
+    """``text`` with every non-empty secret replaced by ``********``."""
+    for secret in sorted((s for s in secrets if s), key=len, reverse=True):
+        text = text.replace(secret, "********")
+    return text
+
+
+def _environment(env: dict[str, str] | None) -> dict[str, str] | None:
+    return {**os.environ, **env} if env else None
+
+
+def run(
+    command: str, check: bool = False, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         ["bash", "-lc", command],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=_environment(env),
     )
     if check and result.returncode != 0:
         raise RuntimeError(
@@ -36,7 +72,7 @@ def run(command: str, check: bool = False) -> subprocess.CompletedProcess[str]:
     return result
 
 
-def run_streaming(command: str) -> subprocess.CompletedProcess[str]:
+def run_streaming(command: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """Run a command, forwarding its output live while also capturing it.
 
     stdlib-only (``subprocess.Popen``): stderr is merged into stdout so combined
@@ -53,6 +89,7 @@ def run_streaming(command: str) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        env=_environment(env),
     )
     captured: list[str] = []
     assert process.stdout is not None
@@ -139,7 +176,7 @@ def preview_commands(commands: list[Command]) -> None:
     body_width = max(20, shutil.get_terminal_size((100, 24)).columns - len(indent))
     for index, item in enumerate(commands, start=1):
         print(f"\n{style(f'[{index:02d}]', 'blue', 'bold')} {t(item.description)}")
-        for chunk in wrap_plain_block(item.command, body_width):
+        for chunk in wrap_plain_block(item.shown, body_width):
             print(style(f"{indent}{chunk}", "dim"))
 
 
@@ -147,11 +184,13 @@ def apply_commands(commands: list[Command], stop_on_error: bool = True) -> None:
     for index, item in enumerate(commands, start=1):
         print(f"\n{style(f'[{index}/{len(commands)}]', 'blue', 'bold')} {t(item.description)}")
         # Stream output live so long steps (apt/pip/pg_restore) aren't silent.
-        result = run_streaming(item.command)
+        result = run_streaming(item.command, item.env)
         if result.returncode != 0:
             print(level_text("ERROR", tf('Command finished with code {}.', result.returncode)))
             if stop_on_error:
-                raise RuntimeError(f"Failed running: {item.command}")
+                # The description, not the command: the command may hold what the
+                # preview masked.
+                raise RuntimeError(tf('Failed running: {}', t(item.description)))
 
 
 def list_dirs(base_path: str) -> list[str]:
@@ -310,7 +349,6 @@ def list_databases(
     instance shows only its own databases. A name prefix is not used: instance
     ``shop`` would otherwise list ``shop2`` and ``shop_eu``, and ``_`` is a LIKE
     wildcard."""
-    quoted_password = shlex.quote(db_password)
     quoted_host = shlex.quote(db_host)
     quoted_user = shlex.quote(db_user)
     if owner and re.fullmatch(r"[A-Za-z0-9_.-]{1,63}", owner):
@@ -323,10 +361,10 @@ def list_databases(
     else:
         select = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
     query_cmd = (
-        f"PGPASSWORD={quoted_password} psql -h {quoted_host} -p {db_port} -U {quoted_user} "
-        f'-d postgres -tA -c "{select}"'
+        f"psql -X -h {quoted_host} -p {int(db_port)} -U {quoted_user} "
+        f"-d postgres -tA -c {shlex.quote(select)}"
     )
-    result = run(query_cmd, check=False)
+    result = run(query_cmd, check=False, env=pg_env(db_password))
     if result.returncode != 0:
         error_text = (
             result.stderr.strip()
