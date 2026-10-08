@@ -72,8 +72,12 @@ command through the preview/confirm/apply flow.
 **Create backup** exports the database and/or filestore into a timestamped file in your chosen backup
 directory:
 
-- Database → `pg_dump -Fc` → `<instance>_<timestamp>.dump`
-- Filestore → gzipped tar → `<instance>_<timestamp>.filestore.tar.gz`
+- Database → `pg_dump -Fc` → `<instance>--<db>--<timestamp>.dump`
+- Filestore → gzipped tar → `<instance>--<db>--<timestamp>.filestore.tar.gz`
+
+The name carries the database, so retention keeps N backups of each database. The backup directory is made
+private (`700`) and the files are readable by root only: a dump holds password hashes, API keys and mail or
+payment secrets.
 
 **Scheduled backups** sets up unattended backups on a systemd timer — see [Scheduled backups](scheduled-backups.md).
 
@@ -84,7 +88,7 @@ directory:
 ## Restore and duplicate — copied vs moved
 
 Both **Restore backup** and **Duplicate instance** apply Odoo's migration semantics and require an exact
-confirmation phrase (`RESTORE <instance>` / `DUPLICAR <instance>`):
+confirmation phrase (`RESTORE <instance>` / `DUPLICATE <instance>`):
 
 - **Copied (new UUID on target)** — regenerates `database.uuid` on the target so it is a distinct
   database from the source.
@@ -93,13 +97,16 @@ confirmation phrase (`RESTORE <instance>` / `DUPLICAR <instance>`):
   and `fetchmail_server` in the target so a copy can't send mail or run jobs meant for production.
 
 Guardrails: restore refuses to overwrite an existing target **database**; an existing target **filestore**
-requires an explicit overwrite confirmation.
+requires an explicit overwrite confirmation, and is then moved aside to `<filestore>.replaced-<timestamp>`
+rather than deleted. The restored files are handed to the instance user.
 
 ### Duplicate instance — replica or refresh
 
 *Duplicate instance* is **existence-aware and end-to-end** (local PostgreSQL; for a remote DB use Backup +
 Restore). You pick the **copy method**: *pg_dump → restore* (robust, reassigns ownership to the target role —
-recommended for **production → development** with different DB users) or a fast *template* copy (same DB owner).
+recommended for **production → development** with different DB users) or a fast *template* copy, which the
+tool only allows when the target role already owns the source database (a template copy keeps the source role
+as owner of every table).
 
 - **Target does not exist → replica:** the tool provisions the whole target instance — system user, home, Odoo
   checkout at the **source's version**, virtualenv, `odoo.conf`, systemd service, and optionally Nginx —
@@ -112,10 +119,13 @@ recommended for **production → development** with different DB users) or a fas
   it.
 - **Target exists → refresh in place:** the tool stops the target service, replaces its database and filestore
   from the source, applies the semantics, and restarts — **without** recreating its config or service. This is
-  the "keep a dev environment up to date with production" flow.
+  the "keep a dev environment up to date with production" flow. The target's database is dropped only when it
+  belongs to the target's own role (from its `odoo.conf`) and you confirm the overwrite; the source instance or
+  database can never be the target.
 
-The filestore always lands under the **target** instance's data directory. The template method frees the
-source of sessions (brief disconnect); the dump method reads the source live.
+The filestore always lands under the **target** instance's data directory. The template method closes the
+source to new sessions, terminates its sessions (brief disconnect), copies, and reopens it even if the copy
+fails; the dump method reads the source live.
 
 Every seeded database is **isolated to its owner** (`CONNECT` revoked from `PUBLIC`, granted to the owning
 role) so an instance's role can't reach other instances' databases, and the target **data dir is owned by the
@@ -126,7 +136,7 @@ target user** so Odoo can create its `sessions`/`filestore`.
 **Duplicate database** copies just a database (no instance provisioning), with the same copy method and
 copied/moved + neutralize semantics, and an optional filestore copy under the current instance's data
 directory. It touches no service or config. If the target database already exists it asks for an explicit
-overwrite. Local PostgreSQL only.
+overwrite, and it refuses a target database owned by another role. Local PostgreSQL only.
 
 ## Repairing Nginx logs & venv packages
 
@@ -147,12 +157,19 @@ Two levels, both phrase-gated:
 
 | Action | Removes | Phrase |
 |--------|---------|--------|
-| **Delete instance** (in *Manage instances*) | Service, config, home, Nginx vhosts, SSL; optionally the database and filestore | `DELETE <instance>` |
-| **Remove instances** (main menu → total purge) | Everything above **plus** the Linux user, logs, filestore root, all `<instance>%` databases, and the PostgreSQL roles | `DELETE-ALL <instance>` |
+| **Delete instance** (in *Manage instances*) | Service, backup timer, config, home, Nginx vhosts, SSL; optionally the database and one database's filestore | `DELETE <instance>` |
+| **Remove instances** (main menu → total purge) | Everything above **plus** the Linux user, logs, fail2ban jail, filestore root, the instance's databases, and the PostgreSQL roles | `DELETE-ALL <instance>` |
 
-The total purge discovers databases from the filestore and (with admin DB access) by name prefix, shows a
-summary of what it detected, and — without admin DB access — performs local cleanup only (skipping DB/role
-deletion). See the [removal spec](../../openspec/specs/instance-removal/spec.md) for the full contract.
+**Delete instance** keeps the filestores you did not ask to delete. Without a `data_dir` in `odoo.conf`, Odoo
+keeps them inside the instance home, so the plan first moves the data dir to
+`/var/backups/<instance>/kept-data-dir-<timestamp>` and only then removes the home.
+
+The total purge selects the databases its DB role owns and the one named exactly like the instance (plus those
+found in the filestore and any you add). Databases whose name merely starts with the instance name (`shop2`,
+`shop_eu` when purging `shop`) are listed as **not selected**; add them yourself if they belong to it. When
+another instance connects with the same DB role, the purge says so, selects nothing by owner and keeps the role. Without
+admin DB access it performs local cleanup only (skipping DB/role deletion). See the
+[removal spec](../../openspec/specs/instance-removal/spec.md) for the full contract.
 
 ## Related
 

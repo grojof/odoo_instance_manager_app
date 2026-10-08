@@ -8,7 +8,61 @@ from __future__ import annotations
 
 import unittest
 
-from instance_manager.models import InstanceConfig
+from instance_manager.models import (
+    InstanceConfig,
+    branch_error,
+    db_host_error,
+    domain_error,
+    host_cidr,
+    ip_error,
+    is_valid_db_name,
+    version_error,
+)
+
+
+class OperatorValueTests(unittest.TestCase):
+    """Values that reach a root shell, nginx or odoo.conf are refused unless plain."""
+
+    HOSTILE = ["x'$(id)'", "a b", "a;b", "a`id`", "$(id)", "a\nb", ""]
+
+    def test_domain(self) -> None:
+        for good in ("odooprodserver.local", "erp.example.com", "*.example.com", "localhost"):
+            self.assertIsNone(domain_error(good), good)
+        for bad in [*self.HOSTILE, "-x.com", "a..b", "*.*.com", "x.com;"]:
+            self.assertIsNotNone(domain_error(bad), bad)
+
+    def test_branch_and_version(self) -> None:
+        for good in ("18.0", "17.0", "saas-17.4", "feature/x"):
+            self.assertIsNone(branch_error(good), good)
+        for bad in [*self.HOSTILE, "-b", "a..b", "x.lock", "18.0/"]:
+            self.assertIsNotNone(branch_error(bad), bad)
+        for good in ("18", "18.0", "9"):
+            self.assertIsNone(version_error(good), good)
+        for bad in [*self.HOSTILE, "18.1", "v18", "100"]:
+            self.assertIsNotNone(version_error(bad), bad)
+
+    def test_ip_and_db_host(self) -> None:
+        self.assertIsNone(ip_error("10.0.0.5"))
+        self.assertIsNone(ip_error("2001:db8::1"))
+        for bad in self.HOSTILE:
+            self.assertIsNotNone(ip_error(bad), bad)
+        self.assertEqual(host_cidr("10.0.0.5"), "10.0.0.5/32")
+        self.assertEqual(host_cidr("2001:db8::1"), "2001:db8::1/128")
+        for good in ("", "127.0.0.1", "db.example.com", "/var/run/postgresql", "False"):
+            self.assertIsNone(db_host_error(good), good)
+        for bad in [h for h in self.HOSTILE if h]:
+            self.assertIsNotNone(db_host_error(bad), bad)
+
+    def test_db_name_is_odoos_pattern(self) -> None:
+        self.assertTrue(is_valid_db_name("prod-2024.copy_1"))
+        for bad in ["-x", "_x", "a", "a b", "a'b", "x" * 64]:
+            self.assertFalse(is_valid_db_name(bad), bad)
+
+    def test_validate_identifiers_refuses_a_hostile_branch(self) -> None:
+        config = InstanceConfig(instance="shop", repo_branch="18.0' $(id) '")
+        config.normalize_defaults()
+        with self.assertRaises(ValueError):
+            config.validate_identifiers()
 
 
 class ValidateIdentifiersTests(unittest.TestCase):

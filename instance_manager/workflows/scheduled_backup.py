@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 from ..i18n import tf
-from ..models import InstanceConfig
+from ..models import InstanceConfig, is_valid_db_name
 from ..planners import plan_remove_scheduled_backup, plan_scheduled_backup
 from ..prompts import ask_bool, ask_int, ask_text, choose
 from ..system import run
 from ..ui import level_text, title
-from .common import _execute_plan, _filestore_path, _is_safe_path_component
+from .common import _execute_plan, _filestore_path
 
 _ONCALENDAR = {
     'Daily (02:30)': "*-*-* 02:30:00",
     'Weekly (Sunday 03:00)': "Sun *-*-* 03:00:00",
     'Monthly (day 1, 03:30)': "*-*-01 03:30:00",
 }
+
+
+def _backup_dir_error(path: str) -> str | None:
+    """An absolute directory path: it is written into a root-run script."""
+    if path.startswith("/") and "\n" not in path and ".." not in path.split("/"):
+        return None
+    return 'Use an absolute directory path.'
 
 
 def _configure_schedule(config: InstanceConfig) -> None:
@@ -26,10 +33,15 @@ def _configure_schedule(config: InstanceConfig) -> None:
         )
     )
     db_name = ask_text('Database to back up', config.db_name or config.instance, required=True)
-    if not _is_safe_path_component(db_name):
+    if not is_valid_db_name(db_name):
         print(level_text("ERROR", 'Invalid database name.'))
         return
-    backup_dir = ask_text('Destination directory', f"/var/backups/{config.instance}", required=True)
+    backup_dir = ask_text(
+        'Destination directory',
+        f"/var/backups/{config.instance}",
+        required=True,
+        validate=_backup_dir_error,
+    )
     include_filestore = ask_bool('Include the filestore as well?', True)
     keep = ask_int('How many backups to keep (retention)?', 7, min_value=1, max_value=365)
     schedule = choose('Frequency', [*list(_ONCALENDAR), 'Back'], default_index=0)

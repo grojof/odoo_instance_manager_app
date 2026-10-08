@@ -51,11 +51,11 @@ Terms as they are used in this project.
   the real client IP (via forwarded headers) or Fail2ban would ban your own infrastructure. See
   [Fail2ban security](security/security-fail2ban.md).
 
-- **Phrase confirmation** — typing an exact phrase (e.g. `ELIMINAR <instance>`) to authorize a destructive
+- **Phrase confirmation** — typing an exact phrase (e.g. `DELETE <instance>`) to authorize a destructive
   action, on top of the normal confirm step.
 
 - **Total purge** — the most destructive action: removes an instance plus its Linux user, logs, filestore
-  root, all `<instance>%` databases, and PostgreSQL roles. Gated by `ELIMINAR-TODO <instance>`.
+  root, the databases its role owns (or named like it), and PostgreSQL roles. Gated by `DELETE-ALL <instance>`.
 
 - **Capability spec** — an OpenSpec specification under `openspec/specs/<capability>/spec.md` describing a
   slice of behavior as requirements and scenarios; the behavior source of truth.

@@ -5,11 +5,12 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from instance_manager.models import InstanceConfig
+from instance_manager.workflows import backup_restore
 from instance_manager.workflows.backup_restore import (
     _drop_db_commands,
-    _duplicate_db_command,
     _filestore_copy_commands,
     _is_safe_db_name,
     _nginx_server_name_in_use,
@@ -17,6 +18,7 @@ from instance_manager.workflows.backup_restore import (
     _psql_target_local,
     _replicate_venv_packages_command,
     _seed_db_commands,
+    _template_copy_script,
 )
 
 
@@ -32,41 +34,37 @@ class ReplicateVenvPackagesTests(unittest.TestCase):
 
 class SafeDbNameTests(unittest.TestCase):
     def test_accepts_typical_names(self) -> None:
-        for name in ("odoo18test", "a", "shop_prod", "a-b.c_d", "db01"):
+        for name in ("odoo18test", "ab", "shop_prod", "a-b.c_d", "db01", "Shop2"):
             self.assertTrue(_is_safe_db_name(name), name)
 
     def test_rejects_unsafe_names(self) -> None:
-        for name in ("", "bad name", "a;drop", 'a"b', "a'b", "a`b", "x" * 64, "-lead"):
+        # Odoo's DBNAME_PATTERN: no leading symbol (a leading '-' would be read as an
+        # option by createdb/dropdb), at least two characters, nothing a shell or SQL
+        # string could misread.
+        for name in ("", "a", "bad name", "a;drop", 'a"b', "a'b", "a`b", "a$(id)", "x" * 64, "-lead", "_lead", ".x"):
             self.assertFalse(_is_safe_db_name(name), name)
 
 
-class DuplicateDbCommandTests(unittest.TestCase):
+class TemplateCopyScriptTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.cmd = _duplicate_db_command(
-            "127.0.0.1", 5432, "shop", "s3cr3t", "shop", "shopdev"
-        )
+        self.script = _template_copy_script("shop", "shopdev", "shop")
 
-    def test_frees_the_source_before_copy(self) -> None:
-        # Blocks new connections, terminates sessions, then copies.
-        self.assertIn('ALTER DATABASE "shop" WITH ALLOW_CONNECTIONS false;', self.cmd)
-        self.assertIn("pg_terminate_backend(pid)", self.cmd)
-        self.assertIn("datname = 'shop'", self.cmd)
-        self.assertIn("pid <> pg_backend_pid()", self.cmd)
+    def test_closes_the_source_before_copy(self) -> None:
+        lines = self.script.splitlines()
+        close = next(i for i, line in enumerate(lines) if 'ALLOW_CONNECTIONS false' in line)
+        terminate = next(i for i, line in enumerate(lines) if "pg_terminate_backend" in line)
+        copy = next(i for i, line in enumerate(lines) if "createdb -T shop" in line)
+        self.assertLess(close, terminate)
+        self.assertLess(terminate, copy)
+        self.assertIn("datname = 'shop'", self.script)
 
-    def test_template_copy(self) -> None:
-        self.assertIn("createdb", self.cmd)
-        self.assertIn("-T shop", self.cmd)  # shlex.quote leaves safe tokens bare
-        self.assertIn("shopdev", self.cmd)
+    def test_always_reopens_the_source(self) -> None:
+        self.assertIn("trap reopen EXIT", self.script)
+        self.assertIn('ALTER DATABASE "shop" WITH ALLOW_CONNECTIONS true;', self.script)
 
-    def test_always_re_enables_source(self) -> None:
-        # A trap on EXIT re-opens the source even if createdb fails.
-        self.assertIn("trap reenable EXIT", self.cmd)
-        self.assertIn('ALTER DATABASE "shop" WITH ALLOW_CONNECTIONS true;', self.cmd)
-
-    def test_password_is_shell_quoted(self) -> None:
-        # A value that needs quoting is shell-quoted, not interpolated raw.
-        cmd = _duplicate_db_command("127.0.0.1", 5432, "shop", "p@ss w0rd", "shop", "shopdev")
-        self.assertIn("export PGPASSWORD='p@ss w0rd'", cmd)
+    def test_seed_uses_it(self) -> None:
+        joined = "\n".join(c.command for c in _seed_db_commands("shop", "shopdev", "shop", "template"))
+        self.assertIn(self.script, joined)
 
 
 class SeedDbCommandsTests(unittest.TestCase):
@@ -93,12 +91,30 @@ class SeedDbCommandsTests(unittest.TestCase):
 
 
 class DropDbCommandsTests(unittest.TestCase):
-    def test_terminates_then_drops(self) -> None:
-        cmds = [c.command for c in _drop_db_commands("dev")]
-        joined = "\n".join(cmds)
-        self.assertIn("pg_terminate_backend", joined)
-        self.assertIn("datname = 'dev'", joined)
-        self.assertIn("dropdb --if-exists dev", joined)
+    def test_drops_with_force(self) -> None:
+        # --force closes the sessions and refuses new ones in the same statement.
+        joined = "\n".join(c.command for c in _drop_db_commands("dev"))
+        self.assertIn("dropdb --if-exists --force dev", joined)
+
+
+class DuplicateGuardTests(unittest.TestCase):
+    def _owners(self, owners: dict[str, str]):
+        return mock.patch.object(backup_restore, "database_owner", side_effect=owners.get)
+
+    def test_existing_target_of_another_role_is_refused(self) -> None:
+        # Typing production's name as the refresh target must not drop it.
+        with self._owners({"prod": "prod"}):
+            self.assertIsNotNone(backup_restore._existing_target_error("prod", "dev"))
+
+    def test_target_of_its_own_role_or_absent_is_allowed(self) -> None:
+        with self._owners({"dev": "dev"}):
+            self.assertIsNone(backup_restore._existing_target_error("dev", "dev"))
+            self.assertIsNone(backup_restore._existing_target_error("absent", "dev"))
+
+    def test_template_copy_needs_the_same_owner(self) -> None:
+        with self._owners({"prod": "prod"}):
+            self.assertIsNotNone(backup_restore._template_owner_error("prod", "dev"))
+            self.assertIsNone(backup_restore._template_owner_error("prod", "prod"))
 
 
 class PostDbModeLocalTests(unittest.TestCase):

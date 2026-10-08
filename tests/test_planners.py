@@ -9,6 +9,7 @@ from instance_manager.planners import (
     _logrotate_content,
     _nginx_logrotate_content,
     _odoo_conf_content,
+    backup_basename,
     plan_backup_retention,
     plan_logrotate_config,
     plan_odoo_base_setup,
@@ -58,7 +59,17 @@ class ScheduledBackupTests(unittest.TestCase):
         self.assertIn("/etc/systemd/system/odoo-backup-odoo18.service", text)
         self.assertIn("/etc/systemd/system/odoo-backup-odoo18.timer", text)
         self.assertIn("OnCalendar=*-*-* 02:30:00", text)
-        self.assertIn("sudo -u postgres pg_dump -Fc acme", text)
+        self.assertIn("DB=acme", text)
+        self.assertIn('sudo -u postgres pg_dump -Fc -- "$DB"', text)
+        self.assertIn("UMask=0077", text)
+
+    def test_script_fails_closed_and_quotes_values(self) -> None:
+        text = self._plan_text(backup_dir="/var/backups/x$(touch /tmp/pwned)")
+        self.assertIn("BACKUP_DIR='/var/backups/x$(touch /tmp/pwned)'", text)
+        for needle in ("set -euo pipefail", "umask 077", "trap cleanup EXIT", 'pg_restore --list "$PARTIAL"'):
+            self.assertIn(needle, text)
+        # The dump is a plain command, so `set -e` stops the script when it fails.
+        self.assertNotIn("pg_dump -Fc acme >", text)
         self.assertIn("systemctl enable --now odoo-backup-odoo18.timer", text)
 
     def test_filestore_excluded_when_declined(self) -> None:
@@ -97,14 +108,25 @@ class UfwPlanTests(unittest.TestCase):
 
 
 class BackupRetentionTests(unittest.TestCase):
-    def test_keeps_n_newest_of_each_kind(self) -> None:
-        commands = plan_backup_retention(_config(), "/var/backups/odoo18", keep=5)
+    STAMP = "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]"
+
+    def test_keeps_n_newest_of_each_kind_per_database(self) -> None:
+        commands = plan_backup_retention(_config(), "/var/backups/odoo18", keep=5, db_names=["acme", "test"])
         text = "\n".join(c.command for c in commands)
-        # Two stanzas (dumps + filestore archives), each keeping the 5 newest.
-        self.assertIn("odoo18_*.dump", text)
-        self.assertIn("odoo18_*.filestore.tar.gz", text)
+        for db in ("acme", "test"):
+            self.assertIn(f"odoo18--{db}--{self.STAMP}.dump", text)
+            self.assertIn(f"odoo18--{db}--{self.STAMP}.filestore.tar.gz", text)
         self.assertIn("tail -n +6", text)  # keep 5 -> remove from the 6th onward
-        self.assertIn("/var/backups/odoo18/", text)
+        self.assertIn("find /var/backups/odoo18 -maxdepth 1", text)
+
+    def test_old_names_are_matched_exactly(self) -> None:
+        # The old `<instance>_*` glob also matched instance `odoo18_eu`'s files.
+        text = "\n".join(c.command for c in plan_backup_retention(_config(), "/b", keep=1, db_names=[]))
+        self.assertIn(f"odoo18_{self.STAMP}.dump", text)
+        self.assertNotIn("odoo18_*", text)
+
+    def test_backup_names_carry_instance_and_database(self) -> None:
+        self.assertEqual(backup_basename("shop", "shop_eu", "20261008_020000"), "shop--shop_eu--20261008_020000")
 
 
 class OdooConfContentTests(unittest.TestCase):

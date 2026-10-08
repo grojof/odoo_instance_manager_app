@@ -6,7 +6,16 @@ import os
 import re
 
 from ..i18n import tf
-from ..models import InstanceConfig, generate_secret
+from ..models import (
+    InstanceConfig,
+    branch_error,
+    db_host_error,
+    domain_error,
+    generate_secret,
+    ip_error,
+    is_valid_db_name,
+    version_error,
+)
 from ..planners import (
     compute_worker_tuning,
     plan_copy_custom_certs,
@@ -34,6 +43,12 @@ from ..system import (
 )
 from ..ui import level_text
 from .common import _execute_plan, _odoo_conf_candidates, _quote
+
+
+def _db_name_error(name: str) -> str | None:
+    if is_valid_db_name(name):
+        return None
+    return "invalid DB name. Use letters, digits, '_', '.' and '-' (2-63, no leading symbol)."
 
 
 def _prompt_secret(label: str, instance: str) -> str:
@@ -180,9 +195,9 @@ def _collect_instance_config() -> InstanceConfig:
     while True:
         instance = ask_text('Instance name', "odoo18", required=True)
         config = InstanceConfig(instance=instance)
-        config.version = ask_text('Odoo version', config.version, required=True)
-        config.repo_branch = ask_text('Odoo repo branch', config.repo_branch, required=True)
-        config.domain = ask_text('Public domain', config.domain, required=True)
+        config.version = ask_text('Odoo version', config.version, required=True, validate=version_error)
+        config.repo_branch = ask_text('Odoo repo branch', config.repo_branch, required=True, validate=branch_error)
+        config.domain = ask_text('Public domain', config.domain, required=True, validate=domain_error)
 
         suggested_http, suggested_gevent = _suggest_instance_ports(
             base_http=config.http_port,
@@ -198,15 +213,15 @@ def _collect_instance_config() -> InstanceConfig:
 
         config.http_port = ask_int('Internal Odoo HTTP port', suggested_http)
         config.gevent_port = ask_int('Internal Odoo gevent port', suggested_gevent)
-        config.db_host = ask_text('DB host', config.db_host, required=True)
+        config.db_host = ask_text('DB host', config.db_host, required=True, validate=db_host_error)
         config.db_port = ask_int('DB port', config.db_port)
         config.db_user = ask_text('DB user', config.instance, required=True)
         config.db_password = _prompt_secret('DB password', config.instance)
         config.db_name = ask_text(
-            'DB name (optional, for validation)', "", required=False
+            'DB name (optional, for validation)', "", required=False, validate=_db_name_error
         )
         config.app_server_ip = ask_text(
-            'App-server IP for the pg_hba rule', config.app_server_ip, required=True
+            'App-server IP for the pg_hba rule', config.app_server_ip, required=True, validate=ip_error
         )
         config.odoo_admin_passwd = _prompt_secret(
             'Odoo admin_passwd (master password)', config.instance

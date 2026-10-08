@@ -46,7 +46,13 @@ pip install -e ".[dev]"      # editable install + pytest, ruff
 ruff check                   # lint (config in pyproject.toml)
 pytest                       # unit tests (tests/)
 openspec validate --specs    # specs are well-formed
+python3 tools/verify_data_safety.py  # run the generated backup/retention/delete/copy commands
 ```
+
+`tools/verify_data_safety.py` is not part of CI: it executes the generated scheduled-backup script, the
+retention prune and the delete step against stub binaries, and the template copy, forced drop and purge
+discovery against a PostgreSQL cluster of its own (it needs `initdb` and refuses to run as root). Run it after
+changing any of those.
 
 CI (`.github/workflows/ci.yml`) runs ruff, pytest, a byte-compile, `openspec validate`, and the eunomai
 `docs-check` / `provenance-check` gates on every push and PR to `main`.
