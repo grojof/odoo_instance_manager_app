@@ -43,8 +43,9 @@ assuming a single stack:
 | Component | Supported | Notes |
 |-----------|-----------|-------|
 | OS family | Debian/Ubuntu (**apt**) | Package steps target apt. A non-apt OS is detected and warned, not driven blindly. |
-| Ubuntu | 22.04 (jammy), 24.04 (noble) | Validated primary targets. Newer releases work; the wkhtmltopdf table maps noble → the jammy build. |
-| Debian | 11 (bullseye), 12 (bookworm) | wkhtmltopdf assets pinned for both. |
+| Ubuntu | 22.04 (jammy), 24.04 (noble) | 24.04 is validated end to end. For 22.04 the version-specific parts are checked against its own tools (fail2ban 0.11.2, nginx 1.18 rules, Python 3.10). The wkhtmltopdf table maps noble → the jammy build. |
+| Debian | 11 (bullseye), 12 (bookworm) | Same checks against their tools (fail2ban 0.11.2 / 1.0.2, PostgreSQL 13's md5 default, no `auth.log` on 12). wkhtmltopdf assets pinned for both. |
+| Python (to run the manager) | 3.9+ | The host's `python3`: 3.9 on Debian 11, 3.10 on Ubuntu 22.04, 3.11 on Debian 12, 3.12 on Ubuntu 24.04. CI runs the unit suite on 3.9 and 3.12. |
 | nginx | 1.18 → 1.25+ | HTTP/2 directive form chosen by detected version; `proxy_cookie_flags` written from 1.19.3. The version is the installed nginx's, or the one apt would install when the plan installs it; when neither is known the vhost is written for an older nginx. `tools/verify_ops_configs.py` runs `nginx -t` on the generated vhosts with the nginx the host distribution ships (1.24 on Ubuntu 24.04). |
 | PostgreSQL | 13+ | Local drops use `dropdb --force` (13+); Odoo's own floor per version is below. Every supported Ubuntu/Debian ships 13 or newer. |
 | Odoo Community | 12 → 19 | Per-version interpreter, setuptools, config keys — see the table below. Official Odoo or OCB. |

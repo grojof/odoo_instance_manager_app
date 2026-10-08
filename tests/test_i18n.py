@@ -9,6 +9,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import io
+import re
 import unittest
 
 from instance_manager import prompts
@@ -134,3 +135,48 @@ class CatalogTests(unittest.TestCase):
         spanish_only = {"á", "é", "í", "ó", "ú", "¿", "¡", "ñ"}
         suspicious = [k for k in i18n._ES if k != "Español" and any(ch in k for ch in spanish_only)]
         self.assertFalse(suspicious, f"these keys look Spanish: {suspicious}")
+
+
+class BuiltRowsTests(unittest.TestCase):
+    """Rows built in code reach render_table, which translates each cell: every
+    fixed label must be a catalog key (values from the host are data)."""
+
+    def test_posture_rows_and_paths_are_translatable(self) -> None:
+        from instance_manager import i18n, planners
+        from instance_manager.models import InstanceConfig
+
+        data = {"^x$", "True", "5", "disable", "require", "0.12.6 (with patched qt)"}
+        cells: set[str] = set()
+        for conf in ({}, {"list_db": "True", "admin_passwd": "shop", "db_password": "shop", "workers": "0",
+                          "db_host": "10.0.0.5", "db_sslmode": "disable", "proxy_mode": "False"},
+                     {"list_db": "False", "admin_passwd": "$x", "db_password": "y", "dbfilter": "^x$",
+                      "workers": "5", "db_host": "10.0.0.5", "db_sslmode": "require", "proxy_mode": "True"}):
+            for version in (None, "0.12.6 (with patched qt)"):
+                for _state, check, detail in planners.posture_rows(
+                        instance="shop", conf_values=conf, wkhtmltopdf_ver=version, cpu_count=None):
+                    cells.update({check, detail})
+        cells.update(label for label, _value in planners.pretty_paths(InstanceConfig(instance="shop")))
+        # A cell built with tf() fills a catalog template.
+        templates = [re.compile(re.escape(key).replace(r"\{\}", ".*")) for key in i18n._ES if "{}" in key]
+        missing = sorted(cell for cell in cells - data
+                         if cell not in i18n._ES and not any(t.fullmatch(cell) for t in templates))
+        self.assertEqual(missing, [])
+
+
+class DeadEntriesTests(unittest.TestCase):
+    def test_every_catalog_key_is_still_used(self) -> None:
+        # A key no code names any more is a translation nobody sees.
+        import ast
+        from pathlib import Path
+
+        from instance_manager import i18n
+
+        root = Path(__file__).resolve().parent.parent
+        literals: set[str] = set()
+        for path in [*root.joinpath("instance_manager").rglob("*.py"), root / "odoo_instance_manager.py"]:
+            if path.name == "i18n.py":
+                continue
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    literals.add(node.value)
+        self.assertEqual(sorted(key for key in i18n._ES if key not in literals), [])

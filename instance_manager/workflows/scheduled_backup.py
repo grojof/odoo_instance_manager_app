@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from ..i18n import tf
-from ..models import InstanceConfig, is_valid_db_name
+from ..models import LOCAL_DB_HOSTS, InstanceConfig, is_valid_db_name
 from ..planners import plan_remove_scheduled_backup, plan_scheduled_backup
 from ..prompts import ask_bool, ask_int, ask_text, choose
-from ..system import run
+from ..system import database_exists, read_odoo_conf, run
 from ..ui import level_text, title
 from .common import _backup_dir_error, _execute_plan, _filestore_path
 
@@ -25,9 +25,20 @@ def _configure_schedule(config: InstanceConfig) -> None:
             "The backup runs as root using 'sudo -u postgres pg_dump' (local DB, no password).",
         )
     )
+    db_host = read_odoo_conf(config.odoo_conf_file).get("db_host", "").strip().lower()
+    if db_host not in LOCAL_DB_HOSTS:
+        # The script dumps the local server: it would back up nothing of a remote one.
+        print(level_text("ERROR", tf(
+            'The instance uses a remote database ({}): schedule the backup on that server, or use Create backup.',
+            db_host,
+        )))
+        return
     db_name = ask_text('Database to back up', config.db_name or config.instance, required=True)
     if not is_valid_db_name(db_name):
         print(level_text("ERROR", 'Invalid database name.'))
+        return
+    if not database_exists(db_name):
+        print(level_text("ERROR", tf('No database {} on the local server.', db_name)))
         return
     backup_dir = ask_text(
         'Destination directory',
@@ -61,6 +72,15 @@ def _show_schedule_status(config: InstanceConfig) -> None:
     nxt = run(f"systemctl list-timers {name}.timer --no-pager 2>&1", check=False)
     if nxt.stdout.strip():
         print("\n" + nxt.stdout.strip())
+    # Whether the last run made a backup: the timer firing says nothing about that.
+    last = run(f"systemctl show {name}.service -p Result -p ExecMainStatus -p ExecMainExitTimestamp 2>&1",
+               check=False).stdout
+    values = dict(line.split("=", 1) for line in last.splitlines() if "=" in line)
+    if values.get("ExecMainExitTimestamp"):
+        ok = values.get("Result") == "success" and values.get("ExecMainStatus") == "0"
+        print(level_text("OK" if ok else "ERROR", tf('Last run: {} (result {}, exit {}).',
+                                                    values["ExecMainExitTimestamp"], values.get("Result", "?"),
+                                                    values.get("ExecMainStatus", "?"))))
 
 
 def _remove_schedule(config: InstanceConfig) -> None:

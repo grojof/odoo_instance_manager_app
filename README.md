@@ -35,14 +35,16 @@ tool is for you. If you use Odoo's SaaS/Online or a managed host, you don't need
 
 - **You approve every change.** Each action shows the exact list of commands and runs them only after you
   confirm; anything destructive also requires typing a confirmation phrase.
-- **Nothing to install.** Pure **Python 3.12 standard library** — no pip packages, no runtime dependencies.
-- **Self-cleaning.** If an install fails partway, it rolls back its own residues so you can retry cleanly.
+- **Nothing to install.** Pure **Python standard library** (3.9+) — no pip packages, no runtime dependencies.
+- **Undo of a failed install.** If an install fails partway, it shows the steps that undo what that run made
+  and asks before running them, so you can retry cleanly. Copies are one step: done whole, or dropped.
 
 ## Requirements
 
 - A **Debian/Ubuntu (apt) server**, run as **root** (`sudo`) — validated on **Ubuntu 24.04**, and
   version-adaptive across other releases (see [Supported platforms](docs/platforms.md)).
-- **Python 3.12+** (ships with 24.04). Nothing else.
+- **Python 3.9+** as `python3` — what Debian 11 (3.9), Ubuntu 22.04 (3.10), Debian 12 (3.11) and Ubuntu 24.04
+  (3.12) ship. Nothing else.
 
 The interface is available in **English** (default) or **Spanish** — chosen at startup or via `OIM_LANG=en|es`
 (see [Interface language](docs/language.md)).

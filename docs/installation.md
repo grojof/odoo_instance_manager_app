@@ -16,7 +16,8 @@ plan before applying — see [Architecture](architecture.md).
 
 - A **Debian/Ubuntu (apt) family** server, validated on Ubuntu 24.04. Configuration is version-adaptive, so
   other apt releases work too — see [supported platforms](platforms.md).
-- Python 3.12+ available as `python3` (the tool uses 3.12 syntax).
+- Python 3.9+ available as `python3` — every supported release ships one (Debian 11: 3.9, Ubuntu 22.04: 3.10,
+  Debian 12: 3.11, Ubuntu 24.04: 3.12). The interpreter each Odoo version needs is chosen separately.
 - Run as root: the tool refuses to start otherwise.
 
 ```bash

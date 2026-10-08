@@ -13,6 +13,9 @@ applies it only after confirmation. This file is the single authored source of t
 - `odoo_instance_manager.py` — entry point (root check, UTF-8 console, main menu).
 - `instance_manager/` — the package, in strict layers (see `docs/architecture.md`):
   - `models.py` — `InstanceConfig`, identifier validation, path derivation.
+  - `support.py` — per-version facts (Python range and its evidence, setuptools, uv pin, PostgreSQL floor,
+    cores). Pure data, declared once.
+  - `neutralise.py` — the catalogue of a copy's neutralisation, each rule cited to its source. Builds SQL only.
   - `planners.py` — **pure** builders returning `list[Command]` (odoo.conf, systemd, nginx, fail2ban, TLS).
     No I/O, no execution.
   - `system.py` — execution primitives, existence probes, `preview_commands`/`apply_commands`.
@@ -34,7 +37,8 @@ applies it only after confirmation. This file is the single authored source of t
 
 ## Conventions
 
-- Python 3.12+, `from __future__ import annotations`, **standard library only** (no third-party runtime deps).
+- Python 3.9+ (the host's `python3`, down to Debian 11), `from __future__ import annotations`, **standard library
+  only** (no third-party runtime deps).
 - Files are UTF-8, newlines LF, final newline at EOF.
 - Conventional Commits, imperative mood, one logical change per commit. No AI-attribution trailers.
 - Match the surrounding code: small functions, early returns, type hints.
@@ -86,6 +90,13 @@ applies it only after confirmation. This file is the single authored source of t
 Structural, read-only gates (run from the project root):
 
 ```bash
-openspec validate --specs        # every capability spec is well-formed
+python -m ruff check .           # lint (target py39: the manager runs on the host's python3)
+python -m pytest -q              # unit tests (also on Python 3.9 in CI)
+openspec validate --specs        # every capability spec is well-formed (CI pins openspec 1.4.1)
 # eunomai docs-check / provenance-check via the installed plugin/CLI
 ```
+
+Text that runs is verified by running it: the `tools/verify_*.py` scripts execute what the planners generate
+(against stubs, throwaway PostgreSQL clusters, real nginx / fail2ban / logrotate / openssl, and real Odoo for the
+manual ones). Which run in CI, what each needs and when to run it is stated once, in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). A verifier that verifies nothing fails.

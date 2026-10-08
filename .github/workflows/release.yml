@@ -9,7 +9,12 @@ permissions:
   contents: write # create the release and upload assets
 
 jobs:
+  # Every check CI runs (lint, tests on 3.9 and 3.12, the verify tools, specs, docs).
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - name: Checkout project
@@ -23,7 +28,15 @@ jobs:
           python-version: "3.12"
 
       - name: Install project (with dev deps) + build tooling
-        run: python -m pip install --upgrade pip && pip install -e ".[dev]" build twine
+        run: python -m pip install --upgrade pip && pip install -e ".[dev]" build==1.6.1 twine==7.0.0
+
+      - name: Verify the tag is on main
+        run: |
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME is not on main"
+            exit 1
+          fi
 
       - name: Verify the tag matches the pyproject version
         run: |
@@ -81,9 +94,14 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
             gh release edit "$GITHUB_REF_NAME" --notes-file release_notes.md
           else
+            # A pre-release (v1.3.0-rc1) never becomes the latest release.
+            case "$GITHUB_REF_NAME" in
+              *-*) kind="--prerelease" ;;
+              *) kind="--latest" ;;
+            esac
             gh release create "$GITHUB_REF_NAME" dist/* \
               --title "$GITHUB_REF_NAME" \
               --notes-file release_notes.md \
-              --latest \
+              "$kind" \
               --verify-tag
           fi

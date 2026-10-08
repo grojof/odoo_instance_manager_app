@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
+from importlib import metadata
 
 from instance_manager.i18n import set_language, t, tf
 from instance_manager.prompts import choose, clear_screen
+from instance_manager.ui import sanitize
 from instance_manager.workflows import (
     external_server_report,
     install_db_only,
@@ -57,16 +59,44 @@ def _select_language() -> None:
     set_language("es" if lang == "Español" else "en")
 
 
-def main() -> int:
+_USAGE = """usage: odoo-instance-manager [--help | --version]
+
+Interactive installer and manager of Odoo instances on a Debian/Ubuntu host. Run it
+as root, with no arguments: every action is a plan you preview and confirm.
+OIM_LANG=es (or en) chooses the language without asking."""
+
+
+def _version() -> str:
+    try:
+        return metadata.version("odoo-instance-manager")
+    except metadata.PackageNotFoundError:
+        return "unknown (not installed)"
+
+
+def main(argv: list[str] | None = None) -> int:
     _configure_utf8_console()
+    args = sys.argv[1:] if argv is None else argv
+    if args and args[0] in {"-h", "--help"}:
+        print(_USAGE)
+        return 0
+    if args and args[0] == "--version":
+        print(f"odoo-instance-manager {_version()}")
+        return 0
+    if args:
+        print(_USAGE, file=sys.stderr)
+        return 2
 
     if os.geteuid() != 0:
         print(t('This manager requires administrative privileges.'))
-        print(t('Run with: sudo python3 odoo_instance_manager.py'))
+        print(t('Run it as root: sudo odoo-instance-manager (or sudo python3 odoo_instance_manager.py from a checkout).'))
         return 1
 
     clear_screen()
-    _select_language()
+    try:
+        _select_language()
+    except (KeyboardInterrupt, EOFError):
+        print("\nExiting.")
+        return 0
     print(t("Odoo Instance Manager"))
     print(t('- Interactive per-instance installation'))
     print(t('- Supports an Odoo instance + PostgreSQL user, PostgreSQL, or both'))
@@ -124,6 +154,12 @@ def main() -> int:
             # A command in a plan failed (already reported by apply_commands):
             # surface it and return to the menu instead of crashing the CLI.
             print(tf('\n[ERROR] The operation did not complete: {}', error))
+            continue
+        except Exception as error:  # noqa: BLE001 - the last resort keeps the session
+            # Anything else (an unreadable file, a host answering unexpectedly) is
+            # reported by name and the menu stays, rather than a traceback.
+            print(tf('\n[ERROR] Unexpected error ({}): {}. Returning to the menu.',
+                     type(error).__name__, sanitize(str(error))))
             continue
 
 

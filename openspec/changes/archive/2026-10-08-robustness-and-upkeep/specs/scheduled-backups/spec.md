@@ -1,9 +1,4 @@
-# scheduled-backups Specification
-
-## Purpose
-Back up an instance's database, and optionally its filestore, on a systemd timer: private files, a run that fails whenever the dump, its check or the archive fails, and retention per database — with the timer's status and removal at hand.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Configure a scheduled backup
 
