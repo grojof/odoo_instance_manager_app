@@ -629,7 +629,7 @@ _FAIL2BAN_INSTALL = (
     "apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install fail2ban)"
 )
 _FAIL2BAN_WAIT = (
-    "for i in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; "
+    "for _ in $(seq 1 15); do fail2ban-client ping >/dev/null 2>&1 && exit 0; sleep 1; done; "
     "echo '[ERROR] fail2ban is active but its socket is unavailable after waiting.'; "
     "systemctl status fail2ban --no-pager -n 50 || true; exit 1"
 )
