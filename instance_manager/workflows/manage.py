@@ -39,6 +39,7 @@ from ..ui import level_tag, level_text, render_table, title
 from .addons import show_addon_inventory
 from .backup_restore import (
     _backup_instance,
+    _check_neutralisation,
     _duplicate_database,
     _duplicate_instance,
     _restore_backup,
@@ -606,6 +607,7 @@ def manage_existing_instance() -> None:
             'Status: config values',
             'Status: security & production',
             'Health check',
+            'Check a copy is neutralised',
             'Addon inventory',
             'Disk usage and cleanup',
         ],
@@ -651,6 +653,8 @@ def manage_existing_instance() -> None:
                 _show_posture_view(config)
             elif action == 'Health check':
                 run_health_check(config)
+            elif action == 'Check a copy is neutralised':
+                db_creds = _check_neutralisation(config, db_creds)
             elif action == 'Addon inventory':
                 show_addon_inventory(config)
             elif action == 'Disk usage and cleanup':

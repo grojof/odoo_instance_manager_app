@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,7 +48,7 @@ class SafeDbNameTests(unittest.TestCase):
 
 class TemplateCopyScriptTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.script = _template_copy_script("shop", "shopdev", "shop")
+        self.script = _template_copy_script("shop", "shopdev")
 
     def test_closes_the_source_before_copy(self) -> None:
         lines = self.script.splitlines()
@@ -71,7 +72,9 @@ class SeedDbCommandsTests(unittest.TestCase):
     def test_dump_method_reassigns_ownership(self) -> None:
         cmds = [c.command for c in _seed_db_commands("prod", "dev", "dev", "dump")]
         joined = "\n".join(cmds)
-        self.assertIn("sudo -u postgres createdb -O dev dev", joined)
+        # Owned by postgres until handed over: no Odoo lists it before then.
+        self.assertIn("sudo -u postgres createdb dev", joined)
+        self.assertNotIn("createdb -O", joined)
         self.assertIn("sudo -u postgres pg_dump -Fc prod", joined)
         self.assertIn("pg_restore -d dev --no-owner --role=dev --no-privileges", joined)
         self.assertIn("set -o pipefail", joined)
@@ -81,7 +84,7 @@ class SeedDbCommandsTests(unittest.TestCase):
         joined = "\n".join(cmds)
         self.assertIn("pg_terminate_backend", joined)
         self.assertIn("datname = 'prod'", joined)
-        self.assertIn("createdb -T prod -O dev dev", joined)
+        self.assertIn("createdb -T prod dev", joined)
 
     def test_seed_locks_db_access_to_owner(self) -> None:
         for method in ("dump", "template"):
@@ -118,17 +121,26 @@ class DuplicateGuardTests(unittest.TestCase):
 
 
 class PostDbModeLocalTests(unittest.TestCase):
+    URL = "http://127.0.0.1:8070"
+
     def test_copied_and_neutralize_via_local_superuser(self) -> None:
-        cmds = [c.command for c in _post_db_mode_commands(_psql_target_local("dev"), "Copied (new UUID on target)", True)]
-        joined = "\n".join(cmds)
-        self.assertIn("sudo -u postgres psql -d dev", joined)
-        self.assertIn("database.uuid", joined)
-        self.assertIn("UPDATE ir_cron SET active = false;", joined)
-        self.assertIn("UPDATE ir_mail_server SET active = false;", joined)
+        cmds = _post_db_mode_commands(_psql_target_local("dev"), "Copied (new UUID on target)", True, self.URL)
+        joined = "\n".join(c.command for c in cmds)
+        self.assertIn("sudo -u postgres psql -d dev -X -q -v ON_ERROR_STOP=1 -c", joined)
+        self.assertIn("database.secret", joined)
+        self.assertIn("UPDATE ir_cron t SET active = false", joined)
+        self.assertIn("ir_mail_server", joined)
+        self.assertIn("can still act on the outside", joined)
+        # No step may swallow its own failure.
+        self.assertNotIn("|| true", joined)
 
     def test_moved_without_neutralize_is_empty(self) -> None:
-        cmds = _post_db_mode_commands(_psql_target_local("dev"), "Moved (keep UUID)", False)
+        cmds = _post_db_mode_commands(_psql_target_local("dev"), "Moved (keep UUID)", False, self.URL)
         self.assertEqual(cmds, [])
+
+    def test_hand_over_gives_the_database_to_its_role(self) -> None:
+        [cmd] = backup_restore._hand_over_commands("dev", "dev")
+        self.assertIn('ALTER DATABASE "dev" OWNER TO "dev";', shlex.split(cmd.command)[-1])
 
 
 class FilestoreCopyTests(unittest.TestCase):

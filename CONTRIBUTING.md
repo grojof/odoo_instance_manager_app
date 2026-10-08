@@ -48,6 +48,7 @@ pytest                       # unit tests (tests/)
 openspec validate --specs    # specs are well-formed
 python3 tools/verify_data_safety.py  # run the generated backup/retention/delete/copy commands
 python3 tools/verify_install_runtime.py --clone 14=/path/odoo-14.0 --clone 16=/path/odoo-16.0
+python3 tools/verify_neutralisation.py --odoo 18=/path/venv/bin/python:/path/odoo-18.0
 ```
 
 `tools/verify_data_safety.py` is not part of CI: it executes the generated scheduled-backup script, the
@@ -60,6 +61,11 @@ checksum), installs the interpreter the matrix picks, builds a real venv for eac
 starts `odoo-bin --version`; for Odoo <= 16 it also shows the unpinned setuptools breaks it. It needs network
 access and the build dependencies, and writes only to a temp directory. Run it after changing
 `instance_manager/support.py` or the venv steps.
+
+`tools/verify_neutralisation.py` installs real Odoo databases (an Odoo venv and checkout per version) in a
+PostgreSQL cluster of its own, arms them like production, runs the duplication's own seed, neutralisation,
+check and hand-over commands, and has Odoo itself try to send a mail from the copy. Run it after changing
+`instance_manager/neutralise.py` or the duplication/restore plans.
 
 CI (`.github/workflows/ci.yml`) runs ruff, pytest, a byte-compile, `openspec validate`, and the eunomai
 `docs-check` / `provenance-check` gates on every push and PR to `main`.
