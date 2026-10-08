@@ -135,6 +135,12 @@ class InstanceConfig:
     app_server_ip: str = "127.0.0.1"
     odoo_admin_passwd: str = ""
 
+    # The certificate and key an HTTPS vhost names when they are not the tool's own
+    # (Let's Encrypt, or the ones an existing vhost already names). Empty: the files
+    # under nginx_ssl_dir.
+    tls_cert: str = ""
+    tls_key: str = ""
+
     # Production-posture settings (rendered into odoo.conf).
     list_db: bool = False
     dbfilter: str = ""

@@ -1,13 +1,4 @@
-# fail2ban-protection Specification
-
-## Purpose
-
-Install and operate Fail2ban to protect the server and individual Odoo
-instances: a secure base configuration, per-instance Odoo auth jails, assessment
-of whether the Odoo log carries the real client IP, and operational actions
-(status, jail detail, unban, regex testing).
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Secure base setup
 
@@ -67,28 +58,6 @@ web ports (the `ufw-odoo-web` action), so an Odoo login failure never bans SSH.
 - **THEN** the plan verifies the log exists, writes the `odoo-auth` filter and the `odoo-auth-<instance>` jail
   through a validated staged step, runs `fail2ban-regex` on Odoo's line of 12-18 and of 19 requiring one match
   each, and reloads Fail2ban
-
-### Requirement: Real-client-IP assessment
-
-Before or independent of enabling an Odoo jail, the tool SHALL assess the last lines of an Odoo log to determine
-whether public client IPs are present, and warn when only private/gateway IPs are visible. The assessment
-inspects the last 300 log lines and matches IPv4 addresses only.
-
-#### Scenario: Private-only log warns and gates activation
-
-- **WHEN** the assessed log shows only private/loopback/link-local IPv4 addresses
-- **THEN** the tool warns of the risk of banning the gateway/proxy and requires explicit confirmation before
-  enabling the instance jail
-
-#### Scenario: Public IPs present are reported as safe
-
-- **WHEN** the assessed log contains public IPv4 addresses
-- **THEN** the tool reports the log carries real client IPs and does not gate activation
-
-#### Scenario: Missing or unreadable log does not gate
-
-- **WHEN** the log is missing, unreadable, or contains no parseable IPv4 address
-- **THEN** the tool reports an unknown result and warns, but does not by itself block enabling the jail
 
 ### Requirement: Fail2ban operations
 

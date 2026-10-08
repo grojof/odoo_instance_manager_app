@@ -1,9 +1,4 @@
-# firewall-ufw Specification
-
-## Purpose
-Put a UFW baseline on the host without locking the operator out (SSH allowed on the port it listens on, before UFW is enabled) and operate its rules safely, including deleting a rule only while it is still the one shown.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: UFW secure baseline
 

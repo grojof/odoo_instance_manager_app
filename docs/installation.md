@@ -136,9 +136,9 @@ For HTTPS you pick a certificate strategy:
 
 | Strategy | Behavior |
 |----------|----------|
-| **Leave certificates untouched** | Adds no certificate commands. |
+| **Leave certificates untouched** | Adds no certificate commands; the vhost names the certificate the current vhost names (certbot's included), else the tool's own. HTTPS is not configured when those files are missing. |
 | **Self-signed** | Reuses an existing key/fullchain or generates a 2048-bit self-signed cert for the domain. |
-| **Let's Encrypt (managed externally)** | Adds no certificate commands — you manage LE outside the tool. |
+| **Let's Encrypt (managed externally)** | Adds no certificate commands; the vhost names `/etc/letsencrypt/live/<domain>/fullchain.pem` and `privkey.pem`, which must exist — obtain the certificate first. |
 | **Copy your own certificates** | Copies your CRT/KEY (+ optional intermediate) beside the live files, builds the fullchain, and **checks that the key matches the certificate** before they replace the current ones (kept as `.previous`); a wrong file never reaches Nginx. |
 
 ## The instance name must be free

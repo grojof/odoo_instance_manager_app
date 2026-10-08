@@ -195,10 +195,26 @@ def plan_update_instance_config(
     """Rewrite an existing instance's ``odoo.conf`` (merged) and unit, and apply them.
 
     Nothing is reinstalled — no apt, clone or pip, which could move setuptools under
-    an Odoo that needs it pinned. A new DB password is set on the local role too, or
-    the next start could not connect. The service is restarted when it runs, since
-    ``systemctl start`` on a running unit loads nothing."""
-    commands = write_text_file_command(
+    an Odoo that needs it pinned. A new DB password is set on the local role first,
+    then the instance's login is checked with the new values (host, port, user,
+    password, SSL mode): only then is anything written, so a typo leaves the running
+    configuration as it was. The service is restarted when it runs, since
+    ``systemctl start`` on a running unit loads nothing — except with a new password
+    for a remote role, which only that server's administrator can set: the restart
+    waits for it."""
+    remote_password = new_db_password and config.is_remote_db_host
+    commands: list[Command] = []
+    if new_db_password and not config.is_remote_db_host:
+        sql = f"{SCRAM}ALTER ROLE \"{config.db_user}\" WITH PASSWORD '{_sql_literal(config.db_password)}';"
+        commands.append(
+            _psql_stdin_command(
+                f"{_local_psql(config)} -q -v ON_ERROR_STOP=1", sql, (config.db_password,),
+                'Set the new password on the local PostgreSQL role',
+            )
+        )
+    if not remote_password:
+        commands.append(_db_connectivity_check(config))
+    commands += write_text_file_command(
         config.odoo_conf_file, render_merged_odoo_conf(config, existing, other_sections), "640",
         secrets=(config.odoo_admin_passwd, config.db_password,
                  *(value for key, value in existing.items() if "pass" in key or "secret" in key)),
@@ -209,15 +225,7 @@ def plan_update_instance_config(
     service_path = f"/etc/systemd/system/{config.odoo_service}.service"
     commands += write_text_file_command(service_path, _systemd_content(config), "644")
     commands.append(Command('Reload systemd', "systemctl daemon-reload"))
-    if new_db_password and not config.is_remote_db_host:
-        sql = f"{SCRAM}ALTER ROLE \"{config.db_user}\" WITH PASSWORD '{_sql_literal(config.db_password)}';"
-        commands.append(
-            _psql_stdin_command(
-                f"{_local_psql(config)} -q -v ON_ERROR_STOP=1", sql, (config.db_password,),
-                'Set the new password on the local PostgreSQL role',
-            )
-        )
-    if restart:
+    if restart and not remote_password:
         commands.append(
             Command('Restart the Odoo service to load the configuration', f"systemctl restart {shlex.quote(config.odoo_service)}")
         )
@@ -395,8 +403,8 @@ server {{
 
   client_max_body_size 2048m;
 
-  ssl_certificate     {config.ssl_fullchain_file};
-  ssl_certificate_key {config.ssl_key_file};
+  ssl_certificate     {config.tls_cert or config.ssl_fullchain_file};
+  ssl_certificate_key {config.tls_key or config.ssl_key_file};
   ssl_session_timeout 30m;
   ssl_protocols TLSv1.2 TLSv1.3;
   ssl_ciphers {_ODOO_SSL_CIPHERS};
@@ -428,26 +436,38 @@ def staged_files_command(files: list[tuple[str, str, str]], validate: str) -> st
     """Put ``(path, content, mode)`` files in place and keep them only if
     ``validate`` succeeds; otherwise every file is restored to what it was (or
     removed when it is new) and the command fails. A configuration a service would
-    refuse at its next restart is never left enabled."""
-    lines = ['backup=$(mktemp -d)', 'restore() {']
+    refuse at its next restart is never left enabled.
+
+    Every file is backed up before the first is written, any failed write or an
+    interruption restores them all, and nothing is touched when no backup
+    directory can be made."""
+    lines = [
+        "backup=$(mktemp -d) || exit 1",
+        "restore() {",
+    ]
     for index, (path, _content, _mode) in enumerate(files):
         q = shlex.quote(path)
-        lines.append(f'  if [ -e "$backup/{index}" ]; then cp -a "$backup/{index}" {q}; else rm -f {q}; fi')
-    lines.append('}')
-    for index, (path, content, mode) in enumerate(files):
+        lines.append(f'  if [ -e "$backup/{index}" ]; then cp -a "$backup/{index}" {q}; '
+                     f'elif [ -e "$backup/{index}.absent" ]; then rm -f {q}; fi')
+    lines += [
+        "}",
+        'fail() { restore; rm -rf "$backup"; echo "[ERROR] $1: the previous configuration was restored." >&2; exit 1; }',
+        "trap 'fail Interrupted' INT TERM",
+    ]
+    for index, (path, _content, _mode) in enumerate(files):
         q = shlex.quote(path)
+        lines.append(f'if [ -e {q} ]; then cp -a {q} "$backup/{index}" || fail "Backup failed"; '
+                     f'else touch "$backup/{index}.absent"; fi')
+    for path, content, mode in files:
+        q, new = shlex.quote(path), shlex.quote(path + ".oim-new")
         delimiter = _heredoc_delimiter(content)
         lines += [
-            f'if [ -e {q} ]; then cp -a {q} "$backup/{index}"; fi',
-            f"cat > {shlex.quote(path + '.oim-new')} <<'{delimiter}'",
+            f"cat > {new} <<'{delimiter}' && chmod {mode} {new} && mv -f {new} {q} || fail \"Writing {path} failed\"",
             content.rstrip("\n"),
             delimiter,
-            f"chmod {mode} {shlex.quote(path + '.oim-new')}",
-            f"mv -f {shlex.quote(path + '.oim-new')} {q}",
         ]
     lines += [
-        f"if ! {{ {validate}; }}; then restore; rm -rf \"$backup\"; "
-        "echo '[ERROR] Validation failed: the previous configuration was restored.' >&2; exit 1; fi",
+        f'{{ {validate}; }} || fail "Validation failed"',
         'rm -rf "$backup"',
     ]
     return "\n".join(lines)
@@ -564,13 +584,16 @@ def plan_logrotate_config(
             "command -v logrotate >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install logrotate)",
         ),
     ]
-    commands.extend(
-        write_text_file_command(config.logrotate_config_file, content, "644")
-    )
+    # Kept only if logrotate's dry run accepts it: a policy it refuses stops the
+    # daily run at that file. The previous policy is put back otherwise.
+    path = shlex.quote(config.logrotate_config_file)
     commands.append(
         Command(
-            'Validate logrotate configuration (dry-run)',
-            f"logrotate -d {shlex.quote(config.logrotate_config_file)}",
+            tf('Write {} and keep it only if logrotate accepts it', config.logrotate_config_file),
+            staged_files_command(
+                [(config.logrotate_config_file, content, "644")],
+                f'out=$(logrotate -d {path} 2>&1) || {{ printf "%s\\n" "$out" | grep -i error >&2; false; }}',
+            ),
         )
     )
     if remove_obsolete_odoo_key:
@@ -601,8 +624,24 @@ ODOO_LOGIN_FAILED_SAMPLES = (
     "Login failed for login:admin from 203.0.113.7 4 0.012 0.003",
 )
 # Ports a web ban covers: ufw's application profile installed by the nginx package.
-# Without it, fail2ban's ufw action bans every port, SSH included.
 UFW_WEB_APPLICATION = "Nginx Full"
+
+# The action web and Odoo bans use: ufw rejecting the address on the web ports only.
+# fail2ban's own `ufw[application=…]` cannot be used: 0.11.2 (Ubuntu 22.04, Debian
+# 11) passes the name unquoted (`app Nginx Full`, which ufw refuses, so no ban
+# applies), and 1.0+ bans every port, SSH included, when the profile is missing.
+FAIL2BAN_WEB_ACTION = "ufw-odoo-web"
+_FAIL2BAN_WEB_ACTION_PATH = f"/etc/fail2ban/action.d/{FAIL2BAN_WEB_ACTION}.conf"
+
+
+def _fail2ban_web_action_content() -> str:
+    return """[Definition]
+actionstart =
+actionstop =
+actioncheck =
+actionban = ufw prepend reject from <ip> to any port 80,443 proto tcp
+actionunban = ufw delete reject from <ip> to any port 80,443 proto tcp
+"""
 
 
 def _fail2ban_base_content(
@@ -612,16 +651,20 @@ def _fail2ban_base_content(
     maxretry: int,
     recidive_bantime: str,
     nginx_logs: bool = True,
+    sshd_systemd: bool = False,
 ) -> str:
     """The base jails. sshd bans every port (it is SSH); the web jails ban only the
     web ports; recidive uses ufw too. The nginx jails are written only when nginx
     logs exist: fail2ban refuses to start with a jail whose log file is missing,
-    and takes the sshd jail down with it."""
-    web = f'ufw[application="{UFW_WEB_APPLICATION}"]'
+    and takes the sshd jail down with it.
+
+    ``backend`` is set per jail, never in ``[DEFAULT]``, which every packaged jail
+    inherits: sshd reads the journal (``sshd_systemd``) on a host with no
+    ``/var/log/auth.log`` (Debian 12, a system without rsyslog), the file jails
+    ``auto``."""
     content = f"""[DEFAULT]
 banaction = ufw
 banaction_allports = ufw
-backend = auto
 ignoreip = {ignore_ips}
 bantime = {bantime}
 findtime = {findtime}
@@ -630,15 +673,19 @@ maxretry = {maxretry}
 [sshd]
 enabled = true
 """
+    if sshd_systemd:
+        content += "backend = systemd\n"
     if nginx_logs:
         content += f"""
 [nginx-http-auth]
 enabled = true
-banaction = {web}
+backend = auto
+banaction = {FAIL2BAN_WEB_ACTION}
 
 [nginx-botsearch]
 enabled = true
-banaction = {web}
+backend = auto
+banaction = {FAIL2BAN_WEB_ACTION}
 """
     content += f"""
 [recidive]
@@ -678,7 +725,7 @@ filter = odoo-auth
 logpath = {log_path}
 backend = auto
 port = http,https
-banaction = ufw[application="{UFW_WEB_APPLICATION}"]
+banaction = {FAIL2BAN_WEB_ACTION}
 bantime = {bantime}
 findtime = {findtime}
 maxretry = {maxretry}
@@ -725,15 +772,25 @@ def plan_fail2ban_base_setup(
     maxretry: int = 8,
     recidive_bantime: str = "24h",
     nginx_logs: bool = True,
+    sshd_systemd: bool = False,
 ) -> list[Command]:
     jail_base_path = "/etc/fail2ban/jail.d/odoo-instance-manager.local"
-    content = _fail2ban_base_content(ignore_ips, bantime, findtime, maxretry, recidive_bantime, nginx_logs)
+    content = _fail2ban_base_content(ignore_ips, bantime, findtime, maxretry, recidive_bantime, nginx_logs,
+                                     sshd_systemd)
+    files = [(_FAIL2BAN_WEB_ACTION_PATH, _fail2ban_web_action_content(), "644"), (jail_base_path, content, "644")]
+    journal = (
+        [Command('Install the journal reader fail2ban needs (python3-systemd)',
+                 "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold "
+                 "-o DPkg::Lock::Timeout=600 install python3-systemd")]
+        if sshd_systemd else []
+    )
     return [
         Command('Ensure fail2ban is installed', _FAIL2BAN_INSTALL),
-        Command('Create /etc/fail2ban/jail.d', "mkdir -p /etc/fail2ban/jail.d"),
+        *journal,
+        Command('Create fail2ban directories', "mkdir -p /etc/fail2ban/jail.d /etc/fail2ban/action.d"),
         Command(
             tf('Write {} and keep it only if fail2ban accepts it', jail_base_path),
-            staged_files_command([(jail_base_path, content, "644")], "fail2ban-client -t"),
+            staged_files_command(files, "fail2ban-client -t"),
         ),
         *_fail2ban_apply_commands(),
     ]
@@ -750,11 +807,13 @@ def plan_fail2ban_enable_odoo_instance(
     jail_path = f"/etc/fail2ban/jail.d/{jail_name}.local"
     files = [
         (_FAIL2BAN_FILTER, _fail2ban_odoo_filter_content(), "644"),
+        (_FAIL2BAN_WEB_ACTION_PATH, _fail2ban_web_action_content(), "644"),
         (jail_path, _fail2ban_odoo_jail_content(jail_name, log_path, bantime, findtime, maxretry), "644"),
     ]
     return [
         Command('Ensure fail2ban is installed', _FAIL2BAN_INSTALL),
-        Command('Create fail2ban directories', "mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d"),
+        Command('Create fail2ban directories',
+                "mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d /etc/fail2ban/action.d"),
         Command('Validate instance log', f"test -f {shlex.quote(log_path)}"),
         Command(
             tf('Write the odoo-auth filter and the {} jail; keep them only if fail2ban accepts them', jail_name),
@@ -762,18 +821,6 @@ def plan_fail2ban_enable_odoo_instance(
         ),
         _filter_self_test(),
         *_fail2ban_apply_commands(),
-    ]
-
-
-def plan_fail2ban_ensure_odoo_filter() -> list[Command]:
-    return [
-        Command('Create fail2ban filters directory', "mkdir -p /etc/fail2ban/filter.d"),
-        Command(
-            'Write the odoo-auth filter and keep it only if fail2ban accepts it',
-            staged_files_command([(_FAIL2BAN_FILTER, _fail2ban_odoo_filter_content(), "644")],
-                                 "fail2ban-client -t"),
-        ),
-        _filter_self_test(),
     ]
 
 
@@ -1115,30 +1162,30 @@ def plan_ensure_db_role(config: InstanceConfig, reset_password: bool = False) ->
 
 def _nginx_switch_command(available: str, content: str, enable: str, disable: str) -> str:
     """Write the vhost, enable it and disable its sibling, then keep the change only
-    if ``nginx -t`` accepts the whole configuration; otherwise the vhost file and
-    both links are put back as they were. A broken vhost left enabled would stop
-    nginx — every instance on the host — at its next restart."""
+    if ``nginx -t`` accepts the whole configuration; otherwise — or on a failed
+    write, or an interruption — the vhost file and both links are put back as they
+    were. A broken vhost left enabled would stop nginx — every instance on the host
+    — at its next restart."""
     q = shlex.quote
     delimiter = _heredoc_delimiter(content)
     return "\n".join([
-        "backup=$(mktemp -d)",
-        f'if [ -e {q(available)} ]; then cp -a {q(available)} "$backup/available"; fi',
-        f'if [ -L {q(enable)} ]; then cp -a {q(enable)} "$backup/enable"; fi',
-        f'if [ -L {q(disable)} ]; then cp -a {q(disable)} "$backup/disable"; fi',
+        "backup=$(mktemp -d) || exit 1",
+        f'if [ -e {q(available)} ]; then cp -a {q(available)} "$backup/available" || exit 1; fi',
+        f'if [ -L {q(enable)} ]; then cp -a {q(enable)} "$backup/enable" || exit 1; fi',
+        f'if [ -L {q(disable)} ]; then cp -a {q(disable)} "$backup/disable" || exit 1; fi',
         "restore() {",
         f'  if [ -e "$backup/available" ]; then cp -a "$backup/available" {q(available)}; else rm -f {q(available)}; fi',
         f'  rm -f {q(enable)} {q(disable)}',
         f'  if [ -L "$backup/enable" ]; then cp -a "$backup/enable" {q(enable)}; fi',
         f'  if [ -L "$backup/disable" ]; then cp -a "$backup/disable" {q(disable)}; fi',
         "}",
-        f"cat > {q(available)} <<'{delimiter}'",
+        'fail() { restore; rm -rf "$backup"; echo "[ERROR] $1: the previous configuration was restored." >&2; exit 1; }',
+        "trap 'fail Interrupted' INT TERM",
+        f"cat > {q(available)} <<'{delimiter}' && chmod 644 {q(available)} || fail 'Writing the vhost failed'",
         content.rstrip("\n"),
         delimiter,
-        f"chmod 644 {q(available)}",
-        f"rm -f {q(disable)}",
-        f"ln -sf {q(available)} {q(enable)}",
-        'if ! nginx -t; then restore; rm -rf "$backup"; '
-        "echo '[ERROR] nginx refused the configuration: the previous one was restored.' >&2; exit 1; fi",
+        f"rm -f {q(disable)} && ln -sf {q(available)} {q(enable)} || fail 'Enabling the vhost failed'",
+        "nginx -t || fail 'nginx refused the configuration'",
         'rm -rf "$backup"',
     ])
 

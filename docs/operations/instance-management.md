@@ -60,7 +60,10 @@ Rewrites the instance's `odoo.conf` and systemd unit with new values, and option
 - **Nothing is reinstalled** — no apt, clone or pip run — so the venv's pinned setuptools stays as it is.
 - The Odoo version is read from the instance's checkout and the domain from its vhost.
 - Passwords are kept unless you choose to set new ones; a new DB password is also set on the local role.
-- A running service is **restarted**, so the change is live when the plan ends. Autostart is left as it was.
+- A new DB password is set on the local role first; then the login is checked with the new values, and only
+  then are the files written — a typo leaves the running configuration as it was.
+- A running service is **restarted**, so the change is live when the plan ends. Autostart is left as it was. With
+  a new password for a **remote** role the service is not restarted: set the password there, then restart it.
 
 To go back, copy the files from the `config_preupdate/<timestamp>` directory and restart the service.
 

@@ -497,7 +497,7 @@ def update_existing_configs(instance: str) -> None:
         )
     )
     if new_db_password and config.is_remote_db_host:
-        print(level_text("WARN", 'The DB is remote: set the same password on its role there before the next restart.'))
+        print(level_text("WARN", 'The DB is remote: the service is not restarted. Set the same password on its role there, then restart the service.'))
 
     nginx_version = detect_nginx_version()
     nginx_mode = choose(
@@ -508,11 +508,18 @@ def update_existing_configs(instance: str) -> None:
     if nginx_mode == 'Yes - HTTP':
         commands.extend(plan_nginx_http(config, nginx_version))
     elif nginx_mode == 'Yes - HTTPS':
-        commands.extend(_maybe_plan_certs(config))
+        certs = _maybe_plan_certs(config)
+        if certs is None:
+            print(level_text("INFO", 'Operation cancelled.'))
+            return
+        commands.extend(certs)
         commands.extend(plan_nginx_https(config, nginx_version))
 
-    _execute_plan(commands)
-    print(level_text("INFO", tf('Configuration backup (if the plan ran) at: {}', backup_dest)))
+    try:
+        _execute_plan(commands)
+    finally:
+        # Also when a step fails: the files to go back to are there.
+        print(level_text("INFO", tf('Configuration backup (if the plan ran) at: {}', backup_dest)))
 
 
 def _delete_instance(

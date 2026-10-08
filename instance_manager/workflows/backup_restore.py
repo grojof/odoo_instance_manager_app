@@ -946,7 +946,11 @@ def _plan_replica_target(
     if nginx_mode == 'Configure HTTP':
         commands.extend(plan_nginx_http(target_config, nginx_version))
     elif nginx_mode == 'Configure HTTPS':
-        commands.extend(_maybe_plan_certs(target_config))
+        certs = _maybe_plan_certs(target_config)
+        if certs is None:
+            print(level_text("INFO", 'Operation cancelled.'))
+            return None
+        commands.extend(certs)
         commands.extend(plan_nginx_https(target_config, nginx_version))
     return commands
 

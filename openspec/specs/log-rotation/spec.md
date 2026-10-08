@@ -7,7 +7,9 @@ Keep an instance's Odoo log, and optionally its nginx logs, bounded with a syste
 
 The tool SHALL configure a system `logrotate` policy for an instance's Odoo log at
 `/etc/logrotate.d/odoo-<instance>`, with operator-chosen frequency, retention count, optional compression, and
-optional size threshold, using `copytruncate` so the running service is not restarted.
+optional size threshold (a number with an optional `k`, `M` or `G`), using `copytruncate` so the running service
+is not restarted. The policy SHALL be kept only if `logrotate -d` accepts it; otherwise the previous one is put
+back.
 
 #### Scenario: Rotation policy is written and validated
 

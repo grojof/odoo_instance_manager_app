@@ -43,6 +43,23 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **fail2ban web and Odoo bans never applied on Ubuntu 22.04 and Debian 11.** fail2ban 0.11.2 split the
+  `Nginx Full` profile name, and ufw refused it. They now use the tool's own `ufw-odoo-web` action (ports 80
+  and 443), checked on fail2ban 0.11.2, 1.0.2 and 1.1.0.
+- **The fail2ban base setup was rolled back on Debian 12.** The `backend` set for every jail sent `sshd` to an
+  `auth.log` that does not exist; `sshd` now reads the journal there.
+- **Let's Encrypt and "leave certificates untouched"** pointed the vhost at files that may not exist, and a
+  certbot-managed vhost was swapped back to self-signed. Both now name the files that are there. A missing
+  certificate or a cancelled file pick writes no HTTPS vhost.
+- **Update configuration** now checks the new values before writing anything. With a new password for a remote
+  role it no longer restarts the service before that role has the password.
+- **Safer configuration changes.**
+  - Staged writes of fail2ban, logrotate and nginx configuration can no longer leave half a configuration after
+    a failed write or an interruption.
+  - Enabling UFW allows SSH first, and deleting the SSH rule asks first.
+  - Durations, networks and the logrotate size are validated, and "Test the Odoo regex" no longer writes the
+    filter.
+
 - **Installs that failed on supported hosts.**
   - **Python.** Odoo 15 on Debian 12 (Python 3.11) and Odoo 14 on a host Python 3.10 hit the `gevent==21.8.0` pin,
     which has no wheel there and no longer builds; they now get uv's interpreter.

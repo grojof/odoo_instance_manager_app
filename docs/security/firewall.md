@@ -31,13 +31,18 @@ Applies a secure baseline:
 
 - **Allow a port** — `ufw allow <port>/<tcp|udp>`.
 - **Delete a rule (by number)** — lists the numbered rules and deletes one only if that number still shows the
-  same rule when the plan runs: fail2ban adds its bans at the top of the list, which shifts the numbers.
-- **Enable / Disable UFW**.
+  same rule when the plan runs: fail2ban adds its bans at the top of the list, which shifts the numbers. A rule
+  that lets SSH in (its port, or the `OpenSSH` profile) is deleted only after you confirm the risk.
+- **Enable / Disable UFW** — enabling allows the ports SSH listens on first; when none is detected, you confirm
+  before it goes up.
+
+The PostgreSQL rule takes one address (the app server's), never a network or `any`.
 
 ## Relationship with Fail2ban
 
-[Fail2ban](security-fail2ban.md) is configured with `banaction = ufw`, so its bans only take effect when UFW
-is installed and active — this menu is how you make that true.
+[Fail2ban](security-fail2ban.md) bans through UFW (`ufw` for SSH and recidive, the tool's `ufw-odoo-web` for
+the web ports), so its bans only take effect when UFW is installed and active — this menu is how you make that
+true.
 
 ## Related
 

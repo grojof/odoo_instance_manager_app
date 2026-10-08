@@ -23,8 +23,8 @@ policy for an instance's Odoo log (`/var/log/odoo/<instance>.log`).
 
 The policy uses **`copytruncate`**, so Odoo keeps writing to the same file and does **not** need a restart.
 `/var/log/odoo` belongs to root and each instance owns only its own log, so root rotates it with no `su`
-directive. The plan installs `logrotate` if missing and validates the file with `logrotate -d` before
-finishing.
+directive. The plan installs `logrotate` if missing and keeps the policy only if `logrotate -d` accepts it; the
+previous one is put back otherwise. The size threshold takes a number with `k`, `M` or `G`.
 
 Log rotation is also offered **at install time** (recommended, default yes), so a fresh instance starts with a
 rotation policy in place.
