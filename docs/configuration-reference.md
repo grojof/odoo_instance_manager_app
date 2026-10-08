@@ -17,8 +17,11 @@ the instance name, so a single name determines the whole layout.
 | Field | Default | Notes |
 |-------|---------|-------|
 | `instance` | — (required) | Instance name; drives every derived path. Validated (see below). |
-| `version` | `18` | Odoo major version. Drives version-adaptive rendering (`gevent_port` vs `longpolling_port`, Nginx live-chat location). |
-| `repo_branch` | `18.0` | Git branch cloned from `github.com/odoo/odoo`. |
+| `version` | `18` | Odoo major version (12–19). Drives version-adaptive rendering (`gevent_port` vs `longpolling_port`, Nginx live-chat location, `without_demo`) and the interpreter/setuptools choice. |
+| `repo_branch` | `<version>.0` | Git branch cloned from the chosen core. |
+| `core` | `odoo` | `odoo` (github.com/odoo/odoo) or `ocb` (github.com/OCA/OCB). |
+| `python` / `python_source` | host `python3` | The venv's interpreter: the host's when it can build the version, else uv's (see [installation](installation.md)). |
+| `data_dir` | `/var/lib/odoo/<instance>` | Odoo's data dir (filestores, sessions) for new installs; instances without it keep Odoo's default `<home>/.local/share/Odoo`. |
 | `domain` | `odooprodserver.local` | Public server name for Nginx vhosts and TLS subject. |
 | `http_port` | `8069` | Internal Odoo HTTP port (auto-suggested to avoid collisions). |
 | `gevent_port` | `8072` | Internal live-chat/bus port. Written as `gevent_port` (Odoo ≥ 16) or `longpolling_port` (≤ 15). |
@@ -84,7 +87,8 @@ warning), an optional `dbfilter` (only when the operator opts in), `proxy_mode =
 `http_interface = 127.0.0.1`, the live-chat port under
 `gevent_port`/`longpolling_port` per the Odoo major, derived `workers`/`max_cron_threads`, `limit_request`
 and memory/time limits, `db_sslmode` when the DB host is remote, `logfile = /var/log/odoo/<instance>.log`,
-and an `addons_path` of `<home>/odoo/addons,<home>/addons-oca,<home>/addons-custom`.
+an `addons_path` of `<home>/odoo/addons,<home>/addons-oca,<home>/addons-custom`, `data_dir` when set, and
+`without_demo = all` for Odoo 18 and older.
 
 > **Security note:** the recommended defaults are secure — `list_db = False`, a strong random master
 > password, a `dbfilter`, and `db_sslmode = require` for remote databases. The operator can still choose the

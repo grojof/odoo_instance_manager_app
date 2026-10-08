@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import re
 
-from ..i18n import tf
+from .. import support
+from ..i18n import t, tf
 from ..models import (
     InstanceConfig,
     branch_error,
@@ -22,18 +23,22 @@ from ..planners import (
     plan_db_setup,
     plan_ensure_db_role,
     plan_ensure_self_signed_certs,
+    plan_ensure_uv,
     plan_install_wkhtmltopdf,
     plan_logrotate_config,
     plan_nginx_http,
     plan_nginx_https,
     plan_odoo_base_setup,
+    plan_uv_python,
     resolve_wkhtmltopdf_asset,
 )
 from ..prompts import ask_bool, ask_int, ask_text, choose, select_file_path
 from ..system import (
     Command,
     apply_commands,
+    detect_arch,
     detect_cpu_count,
+    detect_host_python,
     detect_nginx_version,
     detect_os_release,
     detect_total_ram_bytes,
@@ -43,6 +48,49 @@ from ..system import (
 )
 from ..ui import level_text
 from .common import _execute_plan, _odoo_conf_candidates, _quote
+
+
+def _supported_version_error(version: str) -> str | None:
+    error = version_error(version)
+    if error:
+        return error
+    if support.version_support(version) is None:
+        return tf('Odoo {} is not supported. Supported versions: {}.', version, support.supported_majors_text())
+    return None
+
+
+def _choose_core() -> str:
+    """Official Odoo or OCA's OCB: the same branches, OCB with backported fixes."""
+    labels = [support.CORE_LABELS["odoo"], support.CORE_LABELS["ocb"]]
+    selection = choose('Odoo source', labels, default_index=0)
+    return "ocb" if selection == support.CORE_LABELS["ocb"] else "odoo"
+
+
+def _plan_runtime(config: InstanceConfig) -> list[Command]:
+    """Pick the interpreter for the version — the host's python3 when it can build
+    the version's requirements, else uv's — and return the commands that provide
+    it. Sets ``config.python``/``config.python_source``."""
+    version = support.version_support(config.version)
+    if version is None:  # validated earlier; keep the host as before
+        config.python, config.python_source = "", support.HOST
+        return []
+    host = detect_host_python()
+    config.python, config.python_source = support.choose_python(version, host)
+    if config.python_source == support.HOST:
+        print(level_text("INFO", tf(
+            'Odoo {} supports Python {}; the host python3 ({}) will build the venv.',
+            version.major, support.python_range_text(version), config.python,
+        )))
+        return []
+    arch = detect_arch()
+    if arch not in support.UV_ASSETS:
+        raise RuntimeError(tf('No pinned uv build for this architecture ({}).', arch))
+    print(level_text("INFO", tf(
+        'Odoo {} supports Python {}; the host python3 ({}) cannot build it, so Python {} will be installed with uv {} into {}.',
+        version.major, support.python_range_text(version), host or 'not found', config.python,
+        support.UV_VERSION, support.UV_PYTHON_DIR,
+    )))
+    return plan_ensure_uv(arch) + plan_uv_python(config.python)
 
 
 def _db_name_error(name: str) -> str | None:
@@ -191,12 +239,24 @@ def _maybe_plan_wkhtmltopdf() -> list[Command]:
     return []
 
 
-def _collect_instance_config() -> InstanceConfig:
+def _collect_instance_config(with_odoo: bool = True) -> InstanceConfig:
     while True:
         instance = ask_text('Instance name', "odoo18", required=True)
         config = InstanceConfig(instance=instance)
-        config.version = ask_text('Odoo version', config.version, required=True, validate=version_error)
-        config.repo_branch = ask_text('Odoo repo branch', config.repo_branch, required=True, validate=branch_error)
+        config.version = ask_text(
+            'Odoo version', config.version, required=True, validate=_supported_version_error
+        )
+        config.repo_branch = ask_text(
+            'Odoo repo branch', f"{config.odoo_major}.0", required=True, validate=branch_error
+        )
+        if support.major_of(config.repo_branch) not in (None, config.odoo_major):
+            print(level_text("WARN", tf(
+                'The branch {} is not Odoo {}: the config and service are written for {}.',
+                config.repo_branch, config.odoo_major, config.odoo_major,
+            )))
+        if with_odoo:
+            config.core = _choose_core()
+            config.data_dir = config.managed_data_dir
         config.domain = ask_text('Public domain', config.domain, required=True, validate=domain_error)
 
         suggested_http, suggested_gevent = _suggest_instance_ports(
@@ -269,6 +329,16 @@ def _build_partial_install_cleanup(
         Command(
             '[Cleanup] Remove instance home', f"rm -rf {_quote(config.odoo_home)}"
         ),
+        # Only while it holds no filestore: a data dir kept from an earlier delete
+        # of the same instance may be reused, and must not be removed with it.
+        *(
+            [Command(
+                '[Cleanup] Remove the new data dir (if it holds no filestore)',
+                f'[ -n "$(ls -A {_quote(config.data_dir + "/filestore")} 2>/dev/null)" ] || '
+                f"rm -rf {_quote(config.data_dir)}",
+            )]
+            if config.data_dir else []
+        ),
         Command(
             '[Cleanup] Remove Nginx HTTP',
             f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_http_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_http_name}')}",
@@ -304,7 +374,7 @@ def _execute_install_with_cleanup(
         _execute_plan(commands)
     except (RuntimeError, KeyboardInterrupt) as error:
         reason = (
-            "interrumpida (Ctrl+C)"
+            'was interrupted (Ctrl+C)'
             if isinstance(error, KeyboardInterrupt)
             else 'failed'
         )
@@ -312,7 +382,7 @@ def _execute_install_with_cleanup(
             config, cleanup_db_role=cleanup_db_role
         )
         print(
-            f"\n{level_text('WARN', tf('The installation {}. Running automatic cleanup of the instance residues...', reason))}"
+            f"\n{level_text('WARN', tf('The installation {}. Running automatic cleanup of the instance residues...', t(reason)))}"
         )
         apply_commands(cleanup_commands, stop_on_error=False)
         print(
@@ -505,6 +575,7 @@ def install_odoo_only() -> None:
         True,
     )
     commands: list[Command] = []
+    commands.extend(_plan_runtime(config))
     commands.extend(plan_ensure_db_role(config))
     commands.extend(plan_odoo_base_setup(config, service_autostart=service_autostart))
     commands.extend(_maybe_plan_wkhtmltopdf())
@@ -523,7 +594,7 @@ def install_odoo_only() -> None:
 
 
 def install_db_only() -> None:
-    config = _collect_instance_config()
+    config = _collect_instance_config(with_odoo=False)
     ensure_remote_access = ask_bool(
         'Configure listen_addresses and pg_hba for remote access?', True
     )
@@ -538,7 +609,10 @@ def install_odoo_and_db() -> None:
         True,
     )
     commands: list[Command] = []
-    commands.extend(plan_db_setup(config, ensure_remote_access=True))
+    commands.extend(_plan_runtime(config))
+    # Odoo and PostgreSQL on one host talk over loopback: nothing is opened to the
+    # network (listen_addresses stays local, no pg_hba rule is added).
+    commands.extend(plan_db_setup(config, ensure_remote_access=False))
     commands.extend(plan_odoo_base_setup(config, service_autostart=service_autostart))
     commands.extend(_maybe_plan_wkhtmltopdf())
 

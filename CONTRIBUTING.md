@@ -47,12 +47,19 @@ ruff check                   # lint (config in pyproject.toml)
 pytest                       # unit tests (tests/)
 openspec validate --specs    # specs are well-formed
 python3 tools/verify_data_safety.py  # run the generated backup/retention/delete/copy commands
+python3 tools/verify_install_runtime.py --clone 14=/path/odoo-14.0 --clone 16=/path/odoo-16.0
 ```
 
 `tools/verify_data_safety.py` is not part of CI: it executes the generated scheduled-backup script, the
 retention prune and the delete step against stub binaries, and the template copy, forced drop and purge
 discovery against a PostgreSQL cluster of its own (it needs `initdb` and refuses to run as root). Run it after
 changing any of those.
+
+`tools/verify_install_runtime.py` is not part of CI either: it downloads the pinned uv (and refuses a wrong
+checksum), installs the interpreter the matrix picks, builds a real venv for each Odoo checkout you pass and
+starts `odoo-bin --version`; for Odoo <= 16 it also shows the unpinned setuptools breaks it. It needs network
+access and the build dependencies, and writes only to a temp directory. Run it after changing
+`instance_manager/support.py` or the venv steps.
 
 CI (`.github/workflows/ci.yml`) runs ruff, pytest, a byte-compile, `openspec validate`, and the eunomai
 `docs-check` / `provenance-check` gates on every push and PR to `main`.

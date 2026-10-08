@@ -91,6 +91,15 @@ class InstanceConfig:
     instance: str
     version: str = "18"
     repo_branch: str = "18.0"
+    # The core repository: "odoo" (official) or "ocb" (OCA backports).
+    core: str = "odoo"
+    # The interpreter the venv is built with, and where it comes from: "host"
+    # (python3) or "uv" (installed under support.UV_PYTHON_DIR). Empty: host.
+    python: str = ""
+    python_source: str = ""
+    # Odoo's data_dir (filestores, sessions). New installs put it outside the home,
+    # in /var/lib/odoo/<instance>; empty leaves Odoo's default (~/.local/share/Odoo).
+    data_dir: str = ""
     domain: str = "odooprodserver.local"
     http_port: int = 8069
     gevent_port: int = 8072
@@ -148,6 +157,11 @@ class InstanceConfig:
     @property
     def odoo_home(self) -> str:
         return f"{self.base_instances_dir}/{self.instance}"
+
+    @property
+    def managed_data_dir(self) -> str:
+        """The data dir a new install gives the instance, outside its home."""
+        return f"/var/lib/odoo/{self.instance}"
 
     @property
     def odoo_conf_dir(self) -> str:
@@ -261,6 +275,12 @@ class InstanceConfig:
         ):
             if error:
                 errors.append(error)
+        if self.core not in ("odoo", "ocb"):
+            errors.append("invalid core. Use odoo or ocb.")
+        if self.python and not re.fullmatch(r"3\.[0-9]{1,2}", self.python):
+            errors.append("invalid Python version. Use e.g. 3.12.")
+        if self.data_dir and not re.fullmatch(r"/[A-Za-z0-9/._-]{1,200}", self.data_dir):
+            errors.append("invalid data_dir. Use an absolute path.")
         if self.db_name and not is_valid_db_name(self.db_name):
             errors.append("invalid DB name. Use letters, digits, '_', '.' and '-' (2-63, no leading symbol).")
 

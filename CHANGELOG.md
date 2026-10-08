@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Per-version install.** A support matrix for Odoo 12–19 (`instance_manager/support.py`): the venv is built
+  with the host `python3` only when it can build the version, else with a CPython installed by uv (pinned,
+  SHA-256-checked) into `/opt/odoo-python`. setuptools is pinned per version (`<58` up to 13, `<81` up to 16) and
+  Odoo 12's `pyldap` is replaced. Before, Odoo 14 did not install on Ubuntu 24.04 (its requirements stop at
+  Python 3.10) and Odoo 15–16 did not start there (setuptools 81 removed the `pkg_resources` they import).
+- **OCB.** The install asks for the core — official Odoo or OCA's OCB; a replica runs the source's core.
+- New instances get `without_demo = all` (Odoo ≤ 18) and `data_dir = /var/lib/odoo/<instance>`, outside the
+  home. The PostgreSQL floor of the Odoo version is checked when PostgreSQL is installed.
+
+### Changed
+
+- *Install Odoo instance + PostgreSQL* no longer opens PostgreSQL to the network (`listen_addresses`, `pg_hba`).
+- The systemd unit follows Odoo's own (`KillMode=mixed`) and starts after a local PostgreSQL.
+- apt installs run unattended and wait for the dpkg lock.
+- The branch defaults to `<version>.0`, and the version must be one the matrix knows.
+
+- Backups are named `<instance>--<db>--<timestamp>` and kept per database; older `<instance>_<timestamp>`
+  files are still pruned, as their own group. Backup directories are private (`700`).
+- Database listings no longer match by name prefix: the role's databases and the one named like it.
+- The duplication confirmation phrase is `DUPLICATE <instance>` (was `DUPLICAR`).
+
 ### Fixed
 
 - **Delete instance kept no filestore.** Without a `data_dir` in `odoo.conf`, the filestores live in the
@@ -25,16 +48,13 @@ All notable changes to this project are documented here. The format is based on
   missing filestore or a failed archive, leaves no partial file, writes private files and prunes per database.
 - **Restore** moves an existing filestore aside instead of deleting it, and hands the restored files to the
   instance user.
+- **Update existing configuration** replaced `odoo.conf` (losing `data_dir`, `smtp_*`, extra addons paths),
+  re-ran apt and pip, did not restart the service, and changed the DB password only in the file. It now merges
+  the file, reinstalls nothing, sets a new password on the local role, restarts a running service, and reads
+  the version and domain from the instance.
 - **Operator values reached a root shell unquoted** (repo branch, domain, app-server IP, database names, and
   existence probes that run before the preview). They are validated — database names with Odoo's own pattern —
   and prompts ask again; probes quote their argument.
-
-### Changed
-
-- Backups are named `<instance>--<db>--<timestamp>` and kept per database; older `<instance>_<timestamp>`
-  files are still pruned, as their own group. Backup directories are private (`700`).
-- Database listings no longer match by name prefix: the role's databases and the one named like it.
-- The duplication confirmation phrase is `DUPLICATE <instance>` (was `DUPLICAR`).
 
 ## [1.2.0] - 2026-07-04
 

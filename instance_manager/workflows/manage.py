@@ -9,8 +9,8 @@ from ..models import InstanceConfig, db_host_error, domain_error, is_valid_db_na
 from ..planners import (
     plan_nginx_http,
     plan_nginx_https,
-    plan_odoo_base_setup,
     plan_remove_scheduled_backup,
+    plan_update_instance_config,
     posture_rows,
     pretty_paths,
 )
@@ -31,7 +31,6 @@ from ..system import (
     path_exists,
     read_odoo_conf,
     service_active,
-    service_enabled,
     service_exists,
     user_exists,
     wkhtmltopdf_version,
@@ -60,8 +59,9 @@ from .common import (
 )
 from .diskusage import manage_disk_usage
 from .health import run_health_check
-from .install import _maybe_plan_certs
+from .install import _maybe_plan_certs, _prompt_secret
 from .logrotate import manage_log_rotation
+from .report import _detect_odoo_release_version
 from .scheduled_backup import manage_scheduled_backup
 
 
@@ -365,6 +365,7 @@ def _load_config_from_conf(config: InstanceConfig, values: dict[str, str]) -> No
     if "list_db" in values:
         config.list_db = values.get("list_db", "").strip().lower() in {"true", "1", "yes"}
     config.dbfilter = values.get("dbfilter", config.dbfilter)
+    config.data_dir = values.get("data_dir", config.data_dir)
     config.db_sslmode = values.get("db_sslmode", config.db_sslmode)
     for key in (
         "workers",
@@ -378,9 +379,36 @@ def _load_config_from_conf(config: InstanceConfig, values: dict[str, str]) -> No
         setattr(config, key, _int(key, getattr(config, key)))
 
 
+def _detect_vhost_domain(config: InstanceConfig) -> str:
+    """The ``server_name`` of the instance's Nginx vhost (HTTPS first), or ''."""
+    for name in (config.nginx_https_name, config.nginx_http_name):
+        try:
+            with open(f"/etc/nginx/sites-available/{name}", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    parts = raw_line.strip().rstrip(";").split()
+                    if len(parts) >= 2 and parts[0] == "server_name":
+                        return parts[1]
+        except OSError:
+            continue
+    return ""
+
+
 def update_existing_configs(instance: str) -> None:
+    """Rewrite an existing instance's ``odoo.conf`` and unit from new values.
+
+    The current file is merged, not replaced (see ``render_merged_odoo_conf``);
+    nothing is reinstalled; a new DB password is set on the local role; and the
+    service is restarted when it runs, so the change is live when the plan ends."""
     config = InstanceConfig(instance=instance)
-    _load_config_from_conf(config, read_odoo_conf(config.odoo_conf_file))
+    existing = read_odoo_conf(config.odoo_conf_file)
+    if not existing:
+        print(level_text("ERROR", tf('No readable Odoo config at {}.', config.odoo_conf_file)))
+        return
+    _load_config_from_conf(config, existing)
+    detected = _detect_odoo_release_version(config.odoo_home)
+    if detected:
+        config.version = detected
+    config.domain = _detect_vhost_domain(config) or config.domain
     config.normalize_defaults()
 
     print(t('\nEnter new values (if applicable)'))
@@ -390,11 +418,17 @@ def update_existing_configs(instance: str) -> None:
     config.db_host = ask_text('DB host', config.db_host, required=True, validate=db_host_error)
     config.db_port = ask_int('DB port', config.db_port)
     config.db_user = ask_text('DB user', config.db_user, required=True)
-    config.db_password = ask_text('DB password', config.db_password, required=True)
-    config.odoo_admin_passwd = ask_text(
-        'Odoo admin_passwd', config.odoo_admin_passwd, required=True
-    )
+    new_db_password = ask_bool('Set a new DB password?', False)
+    if new_db_password:
+        config.db_password = _prompt_secret('DB password', config.instance)
+    if ask_bool('Set a new Odoo master password (admin_passwd)?', False):
+        config.odoo_admin_passwd = _prompt_secret('Odoo admin_passwd (master password)', config.instance)
     config.ensure_strong_secrets()
+    try:
+        config.validate_identifiers()
+    except ValueError as error:
+        print(level_text("ERROR", str(error)))
+        return
 
     backup_root = f"/var/backups/{config.instance}/config_preupdate"
     # One timestamped directory for the whole pre-update backup, so all files
@@ -409,31 +443,33 @@ def update_existing_configs(instance: str) -> None:
     ]
     backup_rows = [[name, source, f"{backup_dest}/{name.replace(' ', '_')}"] for name, source in backup_sources]
     print(f"\n{title('Pre-update configuration backup')}")
-    print(render_table(['Item', "Origen", "Destino backup"], backup_rows))
+    print(render_table(['Item', 'Source', 'Backup destination'], backup_rows))
 
-    backup_commands: list[Command] = [
+    commands: list[Command] = [
         Command(
             'Create configuration backup directory',
-            f"mkdir -p {_quote(backup_dest)}",
+            f"install -d -m 700 {_quote(backup_dest)}",
         )
     ]
     for name, source in backup_sources:
         target_name = name.replace(" ", "_")
-        backup_commands.append(
+        commands.append(
             Command(
                 tf('Pre-update backup of {}', name),
                 f"test -f {_quote(source)} && cp -a {_quote(source)} {_quote(f'{backup_dest}/{target_name}')} || true",
             )
         )
 
-    commands: list[Command] = []
-    commands.extend(backup_commands)
     commands.extend(
-        plan_odoo_base_setup(
+        plan_update_instance_config(
             config,
-            service_autostart=service_enabled(config.odoo_service),
+            existing,
+            new_db_password=new_db_password,
+            restart=service_active(config.odoo_service),
         )
     )
+    if new_db_password and config.is_remote_db_host:
+        print(level_text("WARN", 'The DB is remote: set the same password on its role there before the next restart.'))
 
     nginx_version = detect_nginx_version()
     nginx_mode = choose(
