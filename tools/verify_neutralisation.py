@@ -34,6 +34,7 @@ sys.path.insert(0, str(HERE))
 
 from verify_data_safety import Cluster, _postgres_bindir, _write_exe  # noqa: E402
 
+from instance_manager.models import InstanceConfig  # noqa: E402
 from instance_manager.workflows import backup_restore  # noqa: E402
 
 FAILURES: list[str] = []
@@ -69,6 +70,13 @@ def _arm(cluster: Cluster, db: str, major: int) -> None:
         "UPDATE delivery_carrier SET prod_environment = true",
         "UPDATE auth_oauth_provider SET enabled = true",
     ]
+    if major >= 17:
+        statements.append("INSERT INTO ir_config_parameter (key, value) VALUES "
+                          "('mail.web_push_vapid_private_key', 'production-push-key')")
+    else:
+        # Installed as 'demo'; production sets 'prod' (or removes it).
+        statements.append("UPDATE ir_config_parameter SET value = 'prod' "
+                          "WHERE key = 'account_edi_proxy_client.demo'")
     if major >= 16:
         statements.append("UPDATE payment_provider SET state = 'enabled' WHERE code = 'demo' OR id = "
                           "(SELECT min(id) FROM payment_provider)")
@@ -93,7 +101,8 @@ def _visible_to(cluster: Cluster, role: str, db: str) -> bool:
 def _one(major: int, python: str, clone: Path, cluster: Cluster, env: dict[str, str], root: Path) -> None:
     src, dst = f"prod{major}", f"copy{major}"
     data = root / f"data{major}"
-    modules = "base,mail,payment,delivery,auth_oauth,iap" + (",fetchmail" if major <= 16 else "")
+    modules = ("base,mail,payment,delivery,auth_oauth,iap,account_edi_proxy_client"
+               + (",fetchmail" if major <= 16 else ""))
     print(f"info  Odoo {major}: installing {modules} (a few minutes)", flush=True)
     result = _odoo(python, clone, cluster, data, src, "-i", modules, "--without-demo=all",
                    "--stop-after-init", "--no-http")
@@ -108,9 +117,13 @@ def _one(major: int, python: str, clone: Path, cluster: Cluster, env: dict[str, 
     check(f"Odoo {major}: the guard refuses the armed source",
           result.returncode != 0 and "can still act on the outside" in result.stderr, result.stderr)
 
+    # Odoo's own neutralize.sql is read from this checkout, as the copy's reader.
+    reader = InstanceConfig(instance="dev")
+    backup_restore._addons_paths = lambda config: [f"{clone}/odoo/addons", f"{clone}/addons"]
     plan = (backup_restore._seed_db_commands(src, dst, "dev", "dump")
             + backup_restore._post_db_mode_commands(
-                backup_restore._psql_target_local(dst), "Copied (new UUID on target)", True, URL, role="dev"))
+                backup_restore._psql_target_local(dst), "Copied (new UUID on target)", True, URL, role="dev",
+                odoo_sql_reader=reader))
     for command in plan:
         result = subprocess.run(["bash", "-c", command.command], capture_output=True, text=True, env=env)
         output = result.stdout + result.stderr
@@ -143,6 +156,20 @@ def _one(major: int, python: str, clone: Path, cluster: Cluster, env: dict[str, 
           value(dst, "SELECT count(*) FROM ir_mail_server WHERE smtp_pass IS NOT NULL") == "0")
     check(f"Odoo {major}: the copy's base URL is local",
           value(dst, "SELECT value FROM ir_config_parameter WHERE key = 'web.base.url'") == URL)
+    if major >= 16:
+        check(f"Odoo {major}: Odoo's own neutralize.sql ran (its mail sink is there)",
+              value(dst, "SELECT count(*) FROM ir_mail_server WHERE name = 'neutralization - disable emails'") != "0")
+    if major <= 16:
+        check(f"Odoo {major}: the EDI proxy is in demo mode",
+              value(dst, "SELECT value FROM ir_config_parameter WHERE key = 'account_edi_proxy_client.demo'")
+              not in {"", "prod"},
+              value(dst, "SELECT coalesce(to_regclass('account_edi_proxy_client_user')::text, 'no table') || ' / ' "
+                         "|| (SELECT string_agg(name || ':' || state, ',') FROM ir_module_module "
+                         "WHERE name LIKE 'account_edi%')"))
+    if major >= 17:
+        check(f"Odoo {major}: the web push key is gone from the copy",
+              value(dst, "SELECT count(*) FROM ir_config_parameter WHERE key = "
+                         "'mail.web_push_vapid_private_key'") == "0")
 
     script = (
         "Mail = env['ir.mail_server'].sudo()\n"

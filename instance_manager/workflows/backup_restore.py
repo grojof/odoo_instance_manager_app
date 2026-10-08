@@ -9,6 +9,7 @@ import re
 from .. import neutralise
 from ..i18n import t, tf
 from ..models import (
+    LOCAL_DB_HOSTS,
     POSTGRES_IDENTIFIER_RE,
     InstanceConfig,
     branch_error,
@@ -36,9 +37,11 @@ from ..prompts import (
 )
 from ..system import (
     Command,
+    database_comment,
     database_exists,
     database_owner,
     detect_nginx_version,
+    local_postgres_available,
     path_exists,
     pg_env,
     read_odoo_conf,
@@ -48,10 +51,12 @@ from ..system import (
 from ..ui import level_text, render_table
 from .common import (
     DbCredentials,
+    _addons_paths,
     _ask_db_credentials,
     _backup_dir_error,
     _execute_plan,
     _filestore_path,
+    _instance_db_user,
     _odoo_conf_candidates,
     _own_filestore_commands,
     _pick_db_name,
@@ -115,6 +120,7 @@ def _post_db_mode_commands(
     local_url: str,
     env: dict[str, str] | None = None,
     role: str = "",
+    odoo_sql_reader: InstanceConfig | None = None,
 ) -> list[Command]:
     """Apply Odoo migration semantics to an already-restored target database.
 
@@ -142,6 +148,8 @@ def _post_db_mode_commands(
             )
         )
     if neutralize:
+        if odoo_sql_reader is not None:
+            commands.append(_odoo_neutralize_command(psql_target, role, odoo_sql_reader, env))
         commands += [
             Command(
                 'Neutralise the copy (crons, mail, payment, EDI/SII, calendars, webhooks, IAP, base URL)',
@@ -157,35 +165,114 @@ def _post_db_mode_commands(
     return commands
 
 
+#: Marks a copy this tool is still making (owned by postgres, not yet handed
+#: over): a leftover of an interrupted run is recognised and may be replaced.
+STAGING_COMMENT = "odoo-instance-manager: unfinished copy"
+
+# What Odoo's own `neutralize` runs: the data/neutralize.sql of every module in
+# these states (odoo/modules/neutralize.py, 16.0-19.0), in install order.
+_INSTALLED_MODULES_SQL = (
+    "SELECT name FROM ir_module_module WHERE state IN ('installed', 'to upgrade', 'to remove') "
+    "ORDER BY id"
+)
+# Run as the instance user over its addons paths: the first module directory found
+# wins, as Odoo's file_open does.
+_READ_NEUTRALIZE_SQL = (
+    'while read -r m; do for d in "$@"; do f="$d/$m/data/neutralize.sql"; '
+    "if [ -f \"$f\" ]; then printf -- '-- %s\\n' \"$m\"; cat -- \"$f\"; printf ';\\n'; break; fi; "
+    "done; done"
+)
+
+
+def _odoo_neutralize_command(
+    psql_target: str, role: str, reader: InstanceConfig, env: dict[str, str] | None
+) -> Command:
+    """Odoo's own neutralisation (16.0-19.0): every installed module's
+    ``data/neutralize.sql``, read from ``reader``'s checkout as its user and run in
+    one transaction as the copy's owner — payment terminals, foreign EDIs and the
+    rest the catalogue does not name. Before 16.0 no module ships one, and nothing
+    runs. Names MUST be safe."""
+    psql = f"{psql_target} -X -q -v ON_ERROR_STOP=1"
+    prefix = f'SET ROLE "{role}"; SET search_path = public; ' if role else ""
+    paths = " ".join(_quote(path) for path in _addons_paths(reader))
+    script = "\n".join([
+        "set -eo pipefail",
+        f"mods=$({psql} -tA -c {_quote(prefix + _INSTALLED_MODULES_SQL)} | grep -E '^[a-z0-9_]+$' || true)",
+        'sql=$(printf \'%s\\n\' $mods | '
+        + _as_instance_user(reader, _READ_NEUTRALIZE_SQL) + f" _ {paths})",
+        'echo "Odoo\'s own neutralize.sql: $(grep -c \'^-- \' <<<"$sql" || true) module(s)"',
+        f'{{ printf \'%s\\n\' {_quote(prefix)}; printf \'%s\\n\' "$sql"; }} | {psql} -1',
+    ])
+    return Command("Run Odoo's own neutralize.sql of every installed module (16.0-19.0)", script,
+                   env=dict(env or {}))
+
+
 def _hand_over_commands(target_db: str, target_owner: str) -> list[Command]:
-    """Give the seeded database to its role. Until now postgres owned it, and an
-    Odoo lists only the databases its own role owns (``list_dbs``: ``datdba`` is
-    the connected role) — so no cron worker could start on the copy before it was
-    neutralised. Names MUST be safe (:func:`_is_safe_db_name`)."""
+    """Give the seeded database to its role: owner, ``CONNECT`` and the end of the
+    staging mark. Until now postgres owned it and the role could not connect — an
+    Odoo lists only the databases its role owns (``list_dbs``: ``datdba``), and one
+    with ``db_name`` set connects by name — so no cron worker could start on the
+    copy before it was neutralised. ``CREATE`` on ``public`` is taken from
+    ``PUBLIC`` (PostgreSQL 14 and older grant it). Names MUST be safe."""
     return [
         Command(
             tf('Hand the database over to role {}', target_owner),
             "sudo -u postgres psql -X -q -d postgres -v ON_ERROR_STOP=1 -c "
-            f"{_quote(f'ALTER DATABASE "{target_db}" OWNER TO "{target_owner}";')}",
+            + _quote(
+                f'ALTER DATABASE "{target_db}" OWNER TO "{target_owner}"; '
+                f'GRANT CONNECT ON DATABASE "{target_db}" TO "{target_owner}"; '
+                f'COMMENT ON DATABASE "{target_db}" IS NULL;'
+            )
+            + f" && sudo -u postgres psql -X -q -d {_quote(target_db)} -v ON_ERROR_STOP=1 -c "
+            + _quote("REVOKE CREATE ON SCHEMA public FROM PUBLIC;"),
         )
     ]
 
 
-def _lock_db_access_commands(db_name: str, owner: str) -> list[Command]:
-    """Restrict a database to its owner: revoke ``CONNECT`` from ``PUBLIC`` and grant
-    it to the owning role, so an Odoo role cannot reach **other** instances'
-    databases. Names MUST be safe (:func:`_is_safe_db_name`)."""
-    psql = "sudo -u postgres psql -d postgres -v ON_ERROR_STOP=1"
+def _lock_db_access_commands(db_name: str) -> list[Command]:
+    """Restrict a new copy: no ``CONNECT`` for ``PUBLIC``, so neither another
+    instance's role nor its own can connect before the hand-over grants it to the
+    owner. Names MUST be safe (:func:`_is_safe_db_name`)."""
+    psql = "sudo -u postgres psql -X -q -d postgres -v ON_ERROR_STOP=1"
     return [
         Command(
-            'Restrict DB access to its owner (revoke PUBLIC connect)',
-            f'{psql} -c \'REVOKE CONNECT ON DATABASE "{db_name}" FROM PUBLIC;\'',
-        ),
-        Command(
-            'Grant DB connect to the owner role',
-            f'{psql} -c \'GRANT CONNECT ON DATABASE "{db_name}" TO "{owner}";\'',
+            'Close the copy to every role until it is handed over (revoke PUBLIC connect)',
+            f"{psql} -c " + _quote(
+                f'REVOKE CONNECT ON DATABASE "{db_name}" FROM PUBLIC; '
+                f"COMMENT ON DATABASE \"{db_name}\" IS '{STAGING_COMMENT}';"
+            ),
         ),
     ]
+
+
+def _staged_copy_command(
+    description: str, target_db: str, create: Command, steps: list[Command], drop: str, on_failure: str = "",
+) -> Command:
+    """``create`` (which makes ``target_db``) and ``steps`` as one step: if any of
+    them fails or is interrupted, the database this step created is dropped — an
+    unfinished copy is never left behind, armed or blocking a retry — and
+    ``on_failure`` runs (a service to start again). A database that existed before
+    is never dropped: ``create`` fails on it first."""
+    def block(command: Command, text: str) -> list[str]:
+        return [f"echo {_quote('== ' + t(command.description))}", f"(\n{text}\n)"]
+
+    head = [
+        "set -e",
+        "created=",
+        "finish() { rc=$?; if [ \"$rc\" -ne 0 ]; then "
+        f"if [ -n \"$created\" ]; then echo {_quote(tf('The copy failed: its unfinished database {} is dropped.', target_db))} >&2; "
+        f"{drop} || true; fi; " + (f"{on_failure}; " if on_failure else "") + "fi; }",
+        "trap finish EXIT",
+    ]
+    lines, shown = list(head), list(head)
+    lines += block(create, create.command) + ["created=1"]
+    shown += block(create, create.shown) + ["created=1"]
+    env: dict[str, str] = dict(create.env)
+    for step in steps:
+        lines += block(step, step.command)
+        shown += block(step, step.shown)
+        env.update(step.env)
+    return Command(description, "\n".join(lines), env=env, display="\n".join(shown))
 
 
 def _template_copy_script(source_db: str, target_db: str) -> str:
@@ -223,6 +310,7 @@ def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method:
                 'Seed target DB via template copy (source closed to new sessions meanwhile)',
                 _template_copy_script(source_db, target_db),
             ),
+            *_lock_db_access_commands(target_db),
         ]
     else:
         commands = [
@@ -230,18 +318,8 @@ def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method:
                 'Create the empty target DB (owned by postgres until it is handed over)',
                 f"sudo -u postgres createdb {_quote(target_db)}",
             ),
-            # The restore runs as the target role while postgres still owns the
-            # database: from PostgreSQL 15 only the owner may create in `public`, and a
-            # trusted extension (Odoo 18 creates pg_trgm) needs CREATE on the database.
-            # Handing the database over later makes the role its owner anyway.
-            Command(
-                tf('Let role {} create in the new DB until it is handed over', target_owner),
-                f"sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -d {_quote(target_db)} -c "
-                + _quote(
-                    f'GRANT CREATE ON DATABASE "{target_db}" TO "{target_owner}"; '
-                    f'GRANT ALL ON SCHEMA public TO "{target_owner}";'
-                ),
-            ),
+            *_lock_db_access_commands(target_db),
+            _grant_create_command(target_db, target_owner),
             Command(
                 'Seed target DB via pg_dump | pg_restore (re-owned by the target role)',
                 "set -o pipefail; "
@@ -249,8 +327,46 @@ def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method:
                 f"sudo -u postgres pg_restore -d {_quote(target_db)} --no-owner --role={_quote(target_owner)} --no-privileges",
             ),
         ]
-    commands.extend(_lock_db_access_commands(target_db, target_owner))
     return commands
+
+
+def _grant_create_command(target_db: str, target_owner: str) -> Command:
+    # The restore runs as the target role while postgres still owns the database:
+    # from PostgreSQL 15 only the owner may create in `public`, and a trusted
+    # extension (Odoo creates pg_trgm from 16) needs CREATE on the database. Handing
+    # the database over later makes the role its owner anyway.
+    return Command(
+        tf('Let role {} create in the new DB until it is handed over', target_owner),
+        f"sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -d {_quote(target_db)} -c "
+        + _quote(
+            f'GRANT CREATE ON DATABASE "{target_db}" TO "{target_owner}"; '
+            f'GRANT ALL ON SCHEMA public TO "{target_owner}";'
+        ),
+    )
+
+
+def _is_staging_leftover(db_name: str) -> bool:
+    """A copy an interrupted run of this tool left (owned by postgres, marked)."""
+    return database_owner(db_name) == "postgres" and database_comment(db_name) == STAGING_COMMENT
+
+
+def _local_copy_command(
+    description: str, target_db: str, target_owner: str, seed: list[Command], migration_mode: str,
+    neutralize: bool, local_url: str, reader: InstanceConfig, on_failure: str = "",
+) -> Command:
+    """Seed, give the copy its identity, neutralise and check it as its owner, and
+    hand it over — one staged step on the local server (see
+    :func:`_staged_copy_command`). Names MUST be safe."""
+    steps = [
+        *seed[1:],
+        *_post_db_mode_commands(_psql_target_local(target_db), migration_mode, neutralize, local_url,
+                                role=target_owner, odoo_sql_reader=reader),
+        *_hand_over_commands(target_db, target_owner),
+    ]
+    return _staged_copy_command(
+        description, target_db, seed[0], steps,
+        f"sudo -u postgres dropdb --if-exists --force {_quote(target_db)}", on_failure,
+    )
 
 
 def _drop_db_commands(target_db: str) -> list[Command]:
@@ -369,13 +485,14 @@ def _restore_backup(
         return cached
     neutralize = ask_bool('Neutralize the target?', True)
 
-    creds = _ask_db_credentials(config.instance, cached)
-    db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
-
+    creds = cached
     commands: list[Command] = []
+    restart: Command | None = None
 
     if restore_mode in {'Database only', 'Database + Filestore'}:
-        if database_exists(target_db):
+        conf = read_odoo_conf(config.odoo_conf_file)
+        local = (conf.get("db_host", "").strip().lower() in LOCAL_DB_HOSTS) and local_postgres_available()
+        if database_exists(target_db) and not _is_staging_leftover(target_db):
             print(level_text("ERROR", tf('The target DB already exists: {}', target_db)))
             return creds
 
@@ -384,43 +501,72 @@ def _restore_backup(
         if not dump_file:
             print(level_text("INFO", 'Operation cancelled.'))
             return creds
-        # The instance's own role owns what it creates, so its cron worker would see
-        # the copy as soon as it exists: the service waits until it is neutralised.
-        stop_service = neutralize and service_active(config.odoo_service)
-        if stop_service:
-            commands.append(
+        url = _local_url(_config_with_port(config, conf))
+        description = tf('Restore {} into {}, neutralise it and hand it over (undone if a step fails)',
+                         os.path.basename(dump_file), target_db)
+        if local:
+            # As a duplication does: created by postgres, restored as the instance's
+            # role, invisible to every Odoo until it is neutralised and handed over —
+            # the running service needs no stop.
+            owner = _instance_db_user(config)
+            if not POSTGRES_IDENTIFIER_RE.fullmatch(owner):
+                print(level_text("ERROR", tf('Invalid db_user in {}: {}', config.odoo_conf_file, owner)))
+                return creds
+            if database_exists(target_db):
+                commands.extend(_drop_db_commands(target_db))
+            seed = [
+                Command('Create the empty target DB (owned by postgres until it is handed over)',
+                        f"sudo -u postgres createdb {_quote(target_db)}"),
+                *_lock_db_access_commands(target_db),
+                _grant_create_command(target_db, owner),
                 Command(
-                    'Stop the Odoo service while the copy is restored and neutralised',
-                    f"systemctl stop {_quote(config.odoo_service)}",
-                )
-            )
-        commands.extend(
-            [
-                Command(
-                    'Create target DB',
-                    f"createdb -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} -O {_quote(db_user)} {_quote(target_db)}",
-                    env=pg_env(db_password),
-                ),
-                Command(
-                    'Restore the dump into the target DB',
-                    f"pg_restore -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} -d {_quote(target_db)} --no-owner --no-privileges {_quote(dump_file)}",
-                    env=pg_env(db_password),
+                    tf('Restore the dump as role {}', owner),
+                    f"sudo -u postgres pg_restore -d {_quote(target_db)} --no-owner --no-privileges "
+                    f"--no-comments --role={_quote(owner)} < {_quote(dump_file)}",
                 ),
             ]
-        )
-        commands.extend(
-            _post_db_mode_commands(
-                _psql_target(db_host, db_port, db_user, db_password, target_db),
-                migration_mode,
-                neutralize,
-                _local_url(_config_with_port(config, read_odoo_conf(config.odoo_conf_file))),
+            commands.append(_local_copy_command(
+                description, target_db, owner, seed, migration_mode, neutralize, url, config,
+            ))
+        else:
+            creds = _ask_db_credentials(config.instance, cached)
+            db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
+            connect = f"-h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)}"
+            # The role restoring owns what it creates, so its cron worker would see the
+            # copy as soon as it exists: the service waits until it is neutralised, and
+            # is started again whatever happens.
+            stop_service = neutralize and service_active(config.odoo_service)
+            start = f"systemctl start {_quote(config.odoo_service)}"
+            if stop_service:
+                commands.append(
+                    Command(
+                        'Stop the Odoo service while the copy is restored and neutralised',
+                        f"systemctl stop {_quote(config.odoo_service)}",
+                    )
+                )
+                restart = Command('Start the Odoo service again', start)
+            create = Command(
+                'Create target DB',
+                f"createdb {connect} -O {_quote(db_user)} {_quote(target_db)}",
                 env=pg_env(db_password),
             )
-        )
-        if stop_service:
-            commands.append(
-                Command('Start the Odoo service again', f"systemctl start {_quote(config.odoo_service)}")
-            )
+            steps = [
+                Command(
+                    'Restore the dump into the target DB',
+                    f"pg_restore {connect} -d {_quote(target_db)} --no-owner --no-privileges --no-comments "
+                    f"{_quote(dump_file)}",
+                    env=pg_env(db_password),
+                ),
+                *_post_db_mode_commands(
+                    _psql_target(db_host, db_port, db_user, db_password, target_db),
+                    migration_mode, neutralize, url, env=pg_env(db_password), odoo_sql_reader=config,
+                ),
+            ]
+            commands.append(_staged_copy_command(
+                description, target_db, create, steps,
+                f"dropdb --if-exists {connect} {_quote(target_db)}",
+                start if stop_service else "",
+            ))
 
     if restore_mode in {'Filestore only', 'Database + Filestore'}:
         print(level_text("INFO", 'Select a filestore backup file (.tar.gz)'))
@@ -466,6 +612,10 @@ def _restore_backup(
             )
         )
         commands.extend(_own_filestore_commands(config, target_db))
+
+    # Started again once the files are in place too.
+    if restart is not None:
+        commands.append(restart)
 
     if not confirm_with_phrase(
         'Sensitive restore action detected.',
@@ -613,6 +763,9 @@ def _existing_target_error(target_db: str, target_owner: str) -> str | None:
     owner = database_owner(target_db)
     if owner is None or owner == target_owner:
         return None
+    # A copy this tool left unfinished (an interrupted run): its own, replaceable.
+    if owner == "postgres" and database_comment(target_db) == STAGING_COMMENT:
+        return None
     return tf(
         'The database {} belongs to role {}, not to the target role {}: it is not the target\'s database and will not be dropped.',
         target_db,
@@ -659,23 +812,22 @@ def _plan_refresh_target(
             tf('Target instance {} exists — refreshing it in place from {}.', target_config.instance, source_db),
         )
     )
+    start = f"systemctl start {_quote(target_config.odoo_service)}"
     commands: list[Command] = [
         Command('Stop the target Odoo service', f"systemctl stop {_quote(target_config.odoo_service)} || true"),
     ]
     commands.extend(_drop_db_commands(target_db))
-    commands.extend(_seed_db_commands(source_db, target_db, target_owner, method))
-    commands.extend(_post_db_mode_commands(
-        _psql_target_local(target_db), migration_mode, neutralize,
-        _local_url(_config_with_port(target_config, existing)), role=target_owner,
-    ))
-    commands.extend(_hand_over_commands(target_db, target_owner))
     if duplicate_filestore:
         commands.extend(
             _filestore_copy_commands(source_config, source_db, target_config, target_db)
         )
-    commands.append(
-        Command('Start the target Odoo service', f"systemctl start {_quote(target_config.odoo_service)}")
-    )
+    commands.append(_local_copy_command(
+        tf('Copy {} into {}, neutralise it and hand it over (undone if a step fails)', source_db, target_db),
+        target_db, target_owner, _seed_db_commands(source_db, target_db, target_owner, method),
+        migration_mode, neutralize, _local_url(_config_with_port(target_config, existing)), source_config,
+        on_failure=start,
+    ))
+    commands.append(Command('Start the target Odoo service', start))
     return commands
 
 
@@ -691,7 +843,8 @@ def _plan_replica_target(
     duplicate_filestore: bool,
 ) -> list[Command] | None:
     """Provision a brand-new target instance seeded from the source."""
-    if database_exists(target_db):
+    leftover = database_exists(target_db) and _is_staging_leftover(target_db)
+    if database_exists(target_db) and not leftover:
         print(level_text("ERROR", tf('Target DB already exists: {}', target_db)))
         return None
     # The replica's database belongs to its own new role, never the source's.
@@ -770,10 +923,9 @@ def _plan_replica_target(
         )
     )
 
-    commands: list[Command] = []
+    commands: list[Command] = _drop_db_commands(target_db) if leftover else []
     commands.extend(_plan_runtime(target_config))
     commands.extend(plan_ensure_db_role(target_config))
-    commands.extend(_seed_db_commands(source_db, target_db, target_db, method))
     commands.extend(plan_odoo_base_setup(target_config, service_autostart=True, start_now=False))
     commands.extend(wkhtmltopdf_plan)
     if replicate_packages:
@@ -782,11 +934,12 @@ def _plan_replica_target(
         commands.extend(
             _filestore_copy_commands(source_config, source_db, target_config, target_db)
         )
-    commands.extend(_post_db_mode_commands(
-        _psql_target_local(target_db), migration_mode, neutralize, _local_url(target_config),
-        role=target_db,
+    # The database last, in one step, once the instance around it is built.
+    commands.append(_local_copy_command(
+        tf('Copy {} into {}, neutralise it and hand it over (undone if a step fails)', source_db, target_db),
+        target_db, target_db, _seed_db_commands(source_db, target_db, target_db, method),
+        migration_mode, neutralize, _local_url(target_config), source_config,
     ))
-    commands.extend(_hand_over_commands(target_db, target_db))
     commands.append(
         Command('Start the target Odoo service', f"systemctl start {_quote(target_config.odoo_service)}")
     )
@@ -871,16 +1024,16 @@ def _duplicate_database(
     commands: list[Command] = []
     if overwrite:
         commands.extend(_drop_db_commands(target_db))
-    commands.extend(_seed_db_commands(source_db, target_db, target_owner, method))
-    commands.extend(_post_db_mode_commands(
-        _psql_target_local(target_db), migration_mode, neutralize,
-        _local_url(_config_with_port(config, existing)), role=target_owner,
-    ))
-    commands.extend(_hand_over_commands(target_db, target_owner))
+    # Files first: the database is handed over, visible to Odoo, only when complete.
     if duplicate_filestore:
         commands.extend(
             _filestore_copy_commands(config, source_db, config, target_db)
         )
+    commands.append(_local_copy_command(
+        tf('Copy {} into {}, neutralise it and hand it over (undone if a step fails)', source_db, target_db),
+        target_db, target_owner, _seed_db_commands(source_db, target_db, target_owner, method),
+        migration_mode, neutralize, _local_url(_config_with_port(config, existing)), config,
+    ))
 
     if not confirm_with_phrase(
         'Sensitive duplication action detected.',
@@ -1012,7 +1165,8 @@ def _check_neutralisation(
     existing = {tuple(line.split("|", 1)) for line in found.stdout.splitlines() if "|" in line}
     rules = neutralise.applicable(existing)  # type: ignore[arg-type]
     url = _local_url(_config_with_port(config, read_odoo_conf(config.odoo_conf_file)))
-    armed = run(f"{psql} {_quote(neutralise.check_sql(rules, url))}", check=False, env=env)
+    armed = run(f"{psql} {_quote(neutralise.check_sql(rules, url, neutralise.edi_param_armed(existing)))}",  # type: ignore[arg-type]
+                check=False, env=env)
     rows = [line.split("|", 2) for line in armed.stdout.splitlines() if line.count("|") >= 2]
     sink = run(
         f"{psql} "
@@ -1025,6 +1179,11 @@ def _check_neutralisation(
     )
     if sink.stdout.strip() != "1":
         rows.append(["mail-sink", "0", t('missing: mail can leave through odoo.conf\'s smtp_server')])
+    if ("ir_mail_server", "smtp_authentication") in existing:
+        cli = run(f"{psql} " + _quote("SELECT count(*) FROM ir_mail_server WHERE active AND smtp_authentication = 'cli'"),
+                  check=False, env=env)
+        if cli.stdout.strip() not in {"", "0"}:
+            rows.append(["mail-server-cli", cli.stdout.strip(), t("'cli' servers send through odoo.conf's smtp_server")])
     if armed.returncode != 0:
         print(level_text("ERROR", armed.stderr.strip() or 'Could not read the database.'))
         return creds
