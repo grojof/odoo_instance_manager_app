@@ -7,36 +7,47 @@ restore a dump and/or filestore into a target, and duplicate an instance's
 database (and optionally filestore) from a template. Data operations honor
 Odoo's copied-vs-moved semantics (UUID regeneration) and optional neutralization
 of the target.
+
 ## Requirements
+
 ### Requirement: Backup
 
 The tool SHALL back up an instance's database (as a compressed custom-format dump) and/or its filestore (as a
-gzipped tar) into the chosen backup directory, using a **single timestamp for the whole operation** and
-writing each artifact **atomically** (a temporary file promoted only on success).
+gzipped tar) into the chosen backup directory, using a **single timestamp for the whole operation**, naming
+each artifact `<instance>--<db>--<timestamp>`, and writing each artifact **atomically** (a temporary file
+promoted only on success). The backup directory SHALL be private to root (`700`) and every artifact SHALL be
+written private (`umask 077`): a dump holds password hashes, API keys and mail/payment secrets.
 
 #### Scenario: Database backup produces an atomic timestamped custom dump
 
 - **WHEN** the operator selects a backup that includes the database
 - **THEN** the plan runs `pg_dump -Fc` to a temporary file and renames it to
-  `<backup_dir>/<instance>_<timestamp>.dump` only on success, removing the temporary file and failing the step
-  otherwise
+  `<backup_dir>/<instance>--<db>--<timestamp>.dump` only on success, removing the temporary file and failing
+  the step otherwise
 
 #### Scenario: Filestore backup archives the resolved filestore path atomically
 
 - **WHEN** the operator selects a backup that includes the filestore
 - **THEN** the plan tars the resolved filestore directory to a temporary file and renames it to
-  `<backup_dir>/<instance>_<timestamp>.filestore.tar.gz` only on success
+  `<backup_dir>/<instance>--<db>--<timestamp>.filestore.tar.gz` only on success; a file that changed while
+  being read (GNU tar exit 1) does not fail the archive, any other tar failure does
 
 #### Scenario: DB dump and filestore archive share one timestamp
 
 - **WHEN** the operator selects a "DB + Filestore" backup
 - **THEN** the `.dump` and `.filestore.tar.gz` names carry the **same** timestamp so the pair can be matched
 
+#### Scenario: Backups are private
+
+- **WHEN** a backup is written
+- **THEN** the backup directory is mode `700` and the artifacts are readable by root only
+
 ### Requirement: Restore
 
 Restoring SHALL create the target database from a selected dump and/or restore a filestore archive, refusing to
 clobber an existing target database, and require phrase confirmation before applying. The pre-restore
-existence check for the target database is evaluated against the **local** PostgreSQL server.
+existence check for the target database is evaluated against the **local** PostgreSQL server. An existing
+target filestore SHALL be moved aside, never deleted, and the restored files SHALL belong to the instance user.
 
 #### Scenario: Existing target database blocks restore
 
@@ -52,8 +63,14 @@ existence check for the target database is evaluated against the **local** Postg
 #### Scenario: Existing target filestore requires explicit overwrite
 
 - **WHEN** the restore includes the filestore and the target filestore exists
-- **THEN** the operator must confirm overwrite; on confirmation the previous filestore contents are cleared
-  before extracting, otherwise the restore is cancelled
+- **THEN** the operator must confirm overwrite; on confirmation the previous filestore is moved to
+  `<filestore>.replaced-<timestamp>` before extracting, otherwise the restore is cancelled
+
+#### Scenario: Restored files belong to the instance user
+
+- **WHEN** a filestore archive is extracted
+- **THEN** tar does not restore the archive's owners (`--no-same-owner`) and the plan chowns the instance's data
+  dir to the instance user, so Odoo can write attachments and sessions
 
 #### Scenario: Restore is phrase-confirmed
 
@@ -64,11 +81,14 @@ existence check for the target database is evaluated against the **local** Postg
 
 The tool SHALL duplicate a source instance's database — and optionally its filestore — into a target,
 end-to-end and existence-aware, requiring phrase confirmation and validating the source and target database
-names as safe before using them in SQL.
+names as safe before using them in SQL. The target instance SHALL differ from the source instance, and the
+target database SHALL differ from the source database.
 
-The operator SHALL choose the database copy method: a fast PostgreSQL **template** copy (frees the source of
-sessions first, best when the target uses the same role), or a robust **`pg_dump | pg_restore --no-owner`**
-that reassigns ownership to the target role (correct for a cross-user target such as production→development).
+The operator SHALL choose the database copy method: a fast PostgreSQL **template** copy, or a robust
+**`pg_dump | pg_restore --no-owner`** that reassigns ownership to the target role. A template copy keeps the
+source's role as owner of every table, so the tool SHALL refuse it when the target role differs from the source
+database's owner (always the case for a new replica). The template copy SHALL refuse new connections to the
+source, terminate its sessions, copy, and reopen the source whatever the outcome.
 
 When the **target instance does not exist**, duplication SHALL provision it fully before seeding: create the
 target role, run the base setup (system user, home, Odoo checkout at the source's version, virtualenv,
@@ -82,13 +102,16 @@ source installed beyond `requirements.txt` are present in the replica.
 
 When the **target instance already exists**, duplication SHALL refresh it in place: stop the target service,
 drop and recreate its database from the source and replace its filestore, apply the migration semantics, and
-restart — **without** recreating the target's config, service, or system user.
+restart — **without** recreating the target's config, service, or system user. It SHALL drop an existing
+target database only when that database belongs to the target's own role (read from its `odoo.conf`) and the
+operator explicitly confirms the overwrite.
 
 Migration semantics (copied vs moved, neutralize) SHALL apply in both cases, and the duplicated filestore SHALL
 be placed under the **target** instance's data directory, which SHALL be owned by the target system user (so
 Odoo can create its `sessions`/`filestore` entries). Every database the tool seeds SHALL have its access
 **restricted to its owner** — `CONNECT` revoked from `PUBLIC` and granted to the owning role — so an instance's
-database role cannot reach other instances' databases.
+database role cannot reach other instances' databases. Local drops SHALL use `dropdb --force`, which closes the
+database's sessions and refuses new ones in one statement.
 
 #### Scenario: Replica replicates the source venv Python packages
 
@@ -101,7 +124,7 @@ database role cannot reach other instances' databases.
 - **WHEN** the target instance does not exist
 - **THEN** the plan creates the target role, runs the same production-hardening prompts as a fresh install with
   auto-suggested non-colliding ports, provisions the target (base setup without starting, optional Nginx),
-  seeds the database and filestore from the source, and then starts the target service
+  seeds the database and filestore from the source with the `pg_dump` copy, and then starts the target service
 
 #### Scenario: Replica domain must not collide with another vhost
 
@@ -115,11 +138,22 @@ database role cannot reach other instances' databases.
 - **THEN** the plan stops the target service, drops and recreates its database from the source, replaces its
   filestore, applies the migration semantics, and restarts the service without recreating its config or unit
 
+#### Scenario: A database that is not the target's is never dropped
+
+- **WHEN** the target database exists and belongs to a role other than the target's, or the target equals the
+  source instance or the source database
+- **THEN** the tool refuses with a descriptive error and builds no plan
+
+#### Scenario: Overwriting the target's database is confirmed
+
+- **WHEN** the target database exists and belongs to the target's role
+- **THEN** the operator must explicitly confirm that it will be dropped and replaced before the plan is built
+
 #### Scenario: Operator selects the database copy method
 
 - **WHEN** the duplication plan is assembled
 - **THEN** the operator chooses a template copy or a `pg_dump | pg_restore --no-owner` copy, and the plan uses
-  the selected method
+  the selected method, refusing a template copy across roles
 
 #### Scenario: Template copy frees the source; dump copy leaves it untouched
 
@@ -131,7 +165,7 @@ database role cannot reach other instances' databases.
 
 - **WHEN** duplication runs
 - **THEN** copied/moved and neutralize semantics are applied to the target and execution proceeds only after
-  the operator types the exact `DUPLICAR <instance>` phrase
+  the operator types the exact `DUPLICATE <instance>` phrase
 
 #### Scenario: Seeded database is restricted to its owner
 
@@ -152,30 +186,46 @@ database role cannot reach other instances' databases.
 
 ### Requirement: Copied vs moved database semantics
 
-Restore and duplication SHALL apply Odoo migration semantics: in "copied" mode
-regenerate the target's `database.uuid`; when neutralization is requested,
-deactivate crons, outgoing mail servers, and fetchmail servers in the target.
+Restore and duplication SHALL apply Odoo migration semantics: in "copied" mode give the target its own
+`database.uuid`, `database.secret` and `database.create_date`, as Odoo's own copy does; when neutralisation is
+requested, apply every rule of the neutralisation catalogue (Odoo's `neutralize.sql` 16.0-19.0, extended to
+12.0-19.0 and the OCA modules it lists), each guarded by the existence of its table and columns, as one statement
+that stops the plan on failure, and then verify that nothing can still act on the outside, failing the plan when
+something can. The neutralisation SHALL leave exactly one active outgoing mail server, pointing at a host that
+does not resolve, so Odoo never falls back to the `smtp_server` of `odoo.conf`, and SHALL drop production's SMTP
+credentials from the copy.
 
 #### Scenario: Copied mode regenerates the database UUID
 
 - **WHEN** the operator selects the copied mode
-- **THEN** the plan upserts a fresh `database.uuid` into `ir_config_parameter` on the target database
+- **THEN** the plan writes a fresh `database.uuid`, `database.secret` and `database.create_date` into
+  `ir_config_parameter` on the target database
 
 #### Scenario: Neutralization deactivates automation in the target
 
 - **WHEN** the operator opts to neutralize the target
-- **THEN** the plan deactivates `ir_cron`, `ir_mail_server`, and `fetchmail_server` rows (tolerating tables that do not exist)
+- **THEN** the plan deactivates crons (except Odoo's autovacuum and queue_job's cleanup), mail servers (dropping
+  their credentials), fetchmail, payment providers, external carriers and their production mode, OAuth
+  providers, calendar tokens, webhooks, IAP tokens, EDI/SII/TicketBAI/Peppol production modes and queued jobs,
+  points `web.base.url` at the target, adds the mail sink, and sets `database.is_neutralized`
+
+#### Scenario: A failed or incomplete neutralisation stops the plan
+
+- **WHEN** the neutralisation statement fails, or the check finds something that can still act on the outside
+- **THEN** the step fails and the plan stops; no step tolerates its own failure
 
 ### Requirement: Database name path safety
 
-An operator-entered database name SHALL be validated as a safe single path component before it is interpolated
-into a filestore path that is created, archived, or deleted.
+An operator-entered database name SHALL be a name Odoo's own database manager accepts
+(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`, at most 63 characters) before it is interpolated into SQL, a shell command or a
+filestore path that is created, archived, or deleted. Such a name holds no path separator, quote, `$` or space,
+and cannot start with `-` (an option to `createdb`/`dropdb`/`pg_dump`) or `.`.
 
 #### Scenario: Traversal in a database name is refused
 
-- **WHEN** a database name used for backup, restore, or filestore deletion contains a path separator or a
-  `.`/`..` traversal component
-- **THEN** the operation is refused with a descriptive error and no filestore command is built or executed
+- **WHEN** a database name used for backup, restore, scheduled backup, or filestore deletion contains a path
+  separator, starts with `.` or `-`, or holds any character outside Odoo's pattern
+- **THEN** the operation is refused with a descriptive error and no command is built or executed
 
 ### Requirement: Standalone database duplication
 
@@ -184,8 +234,9 @@ PostgreSQL server, reusing the selectable copy method (fast template copy, or ro
 `pg_dump | pg_restore --role` that reassigns ownership), the copied/moved and neutralize migration semantics,
 and an optional filestore copy placed under the **current instance's** data directory. It SHALL NOT provision
 or modify any instance service, config, or system user. It SHALL validate the source and target database names
-as safe, require phrase confirmation, and — when the target database already exists — require an explicit
-overwrite before dropping and recreating it.
+as safe, require phrase confirmation, refuse a target database owned by another role than the instance's and a
+template copy across roles, and — when the target database already exists — require an explicit overwrite
+before dropping and recreating it.
 
 #### Scenario: A database is duplicated with the chosen method and semantics
 
@@ -195,9 +246,14 @@ overwrite before dropping and recreating it.
 
 #### Scenario: Existing target database requires an explicit overwrite
 
-- **WHEN** the target database already exists
+- **WHEN** the target database already exists and belongs to the instance's role
 - **THEN** the tool requires an explicit overwrite confirmation and, only then, drops and recreates it;
   otherwise it cancels without changes
+
+#### Scenario: Another role's database is not overwritten
+
+- **WHEN** the target database exists and belongs to another role
+- **THEN** the tool refuses with a descriptive error and builds no plan
 
 #### Scenario: No instance service or config is touched
 
@@ -205,3 +261,40 @@ overwrite before dropping and recreating it.
 - **THEN** only database and (optional) filestore operations are planned — no systemd unit, `odoo.conf`, or
   system user is created or modified
 
+### Requirement: Replica runtime follows the source and the version
+
+A replica created by instance duplication SHALL clone the same core as the source (OCB when the source's
+checkout comes from OCA's OCB, else official Odoo), SHALL be built with the interpreter the support matrix picks
+for its version on this host, and SHALL get its own data dir `/var/lib/odoo/<instance>`.
+
+#### Scenario: An OCB source gives an OCB replica
+
+- **WHEN** the source instance's checkout has OCA's OCB as origin
+- **THEN** the replica's base setup clones OCB at the same branch
+
+### Requirement: A copy stays invisible until neutralised
+
+A database seeded on the local server SHALL be owned by `postgres` until its migration semantics are applied, and
+only then handed to its role: an Odoo lists only the databases its own role owns, so no cron worker can start on
+the copy before it is neutralised. A restore that neutralises SHALL stop the instance's running service before
+creating the database and start it again after the neutralisation.
+
+#### Scenario: The copy is handed over after neutralisation
+
+- **WHEN** a database is duplicated
+- **THEN** it is created by postgres, neutralised, and only then `ALTER DATABASE … OWNER TO` the target role
+
+#### Scenario: A restore keeps the service stopped meanwhile
+
+- **WHEN** a database is restored with neutralisation while the instance's service runs
+- **THEN** the plan stops the service first and starts it again after the check
+
+### Requirement: Neutralisation check
+
+The tool SHALL offer a read-only check of a database that lists, per rule, what can still act on the outside and
+whether the mail sink is in place.
+
+#### Scenario: An armed database is reported
+
+- **WHEN** the operator checks a database whose crons or mail servers are active
+- **THEN** the tool lists each such rule with its row count and examples, and changes nothing

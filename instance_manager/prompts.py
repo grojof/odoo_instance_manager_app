@@ -36,7 +36,7 @@ def _validate_selected_path_extension(
         return True
 
     expected = ", ".join(allowed_extensions)
-    target = requested_label or "archivo"
+    target = requested_label or 'file'
     print(
         level_text(
             "WARN",
@@ -118,9 +118,9 @@ def ask_bool(label: str, default: bool = True) -> bool:
 def choose(label: str, options: list[str], default_index: int | None = None) -> str:
     """Render a numbered menu with a consistent ``0)`` cancel entry.
 
-    If ``options`` already contains a cancel-like entry (``Cancelar``/``Volver``/
-    ``Salir``), that is the ``0`` option and selecting it returns that string.
-    Otherwise a synthetic ``0) Cancelar`` is shown and selecting it (or pressing
+    If ``options`` already contains a cancel-like entry (``Cancel``/``Back``/
+    ``Exit``), that is the ``0`` option and selecting it returns that string.
+    Otherwise a synthetic ``0) Cancel`` is shown and selecting it (or pressing
     Enter with no default) returns ``""`` — the sentinel every caller treats as
     "cancelled".
     """
@@ -132,7 +132,7 @@ def choose(label: str, options: list[str], default_index: int | None = None) -> 
     indexed_options = [option for option in options if option != zero_option]
 
     # Options are shown translated but the ORIGINAL string is returned, so caller
-    # comparisons against the source (Spanish) options keep working.
+    # comparisons against the source (English) options keep working.
     print(f"  {style('0)', 'blue', 'bold')} {t(zero_label)}")
 
     for index, option in enumerate(indexed_options, start=1):

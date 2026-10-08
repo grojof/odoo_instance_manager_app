@@ -14,7 +14,7 @@ import shlex
 import socket
 from dataclasses import dataclass
 
-from ..i18n import tf
+from ..i18n import t, tf
 from ..models import InstanceConfig
 from ..planners import _is_local_db_host, _sql_literal, posture_rows
 from ..prompts import ask_bool, ask_int, ask_text
@@ -49,9 +49,9 @@ def _collect_system_overview() -> list[list[str]]:
 
     rows = [
         ["Hostname", hostname],
-        ["SO", pretty_name or 'not detected'],
+        ['OS', pretty_name or 'not detected'],
         ["Kernel", _command_output("uname -r") or 'not detected'],
-        ["Arquitectura", _command_output("uname -m") or 'not detected'],
+        ['Architecture', _command_output("uname -m") or 'not detected'],
         ['Virtualization', _command_output("systemd-detect-virt") or 'not detected'],
         ["Uptime", _command_output("uptime -p") or 'not detected'],
         ["IP(s)", _command_output("hostname -I") or 'not detected'],
@@ -436,7 +436,7 @@ def _certificate_metadata(cert_path: str) -> dict[str, str]:
 
 def _certificate_expiry_status(cert_path: str, threshold_days: int) -> tuple[str, str]:
     if not cert_path or not path_exists(cert_path):
-        return "MISSING", "certificado no encontrado"
+        return "MISSING", 'certificate not found'
 
     result = run(
         f"openssl x509 -in {_quote(cert_path)} -noout -checkend {threshold_days * 86400}",
@@ -486,8 +486,8 @@ def _detect_tls_cert_type(cert_path: str, key_path: str) -> str:
     if cert_path and _is_self_signed_certificate(cert_path):
         return 'Self-signed'
     if cert_path and key_path:
-        return "Personalizado"
-    return "TLS incompleto"
+        return 'Custom'
+    return 'Incomplete TLS'
 
 
 def _nginx_matches_instance(
@@ -810,7 +810,7 @@ def external_server_report() -> None:
     report_sections.append('Detected Odoo services\n' + strip_ansi(services_table))
 
     artifacts_table = render_table(
-        ["Tipo", "Cantidad", "Muestra"],
+        ['Type', 'Count', 'Sample'],
         [
             ["Dirs with 'odoo'", str(len(named_dirs)), ", ".join(named_dirs[:3]) or "-"],
             ["Configs Odoo", str(len(conf_paths)), ", ".join(conf_paths[:3]) or "-"],
@@ -918,7 +918,7 @@ def external_server_report() -> None:
             "Config Odoo",
             "Data dir",
             "Filestores",
-            "DBs locales",
+            'Local DBs',
         ],
         odoo_rows if odoo_rows else [['(no instances detected)', "", "", "", "", "", "", "", "", "", "", "", ""]],
     )
@@ -933,7 +933,7 @@ def external_server_report() -> None:
     report_sections.append('Instances: Python\n' + strip_ansi(python_table))
 
     nginx_table_by_instance = render_table(
-        ['Instance', "server_name", "HTTP", "gevent", "TLS tipo", "Nginx cfgs", "Filestore roots"],
+        ['Instance', "server_name", "HTTP", "gevent", 'TLS type', "Nginx cfgs", "Filestore roots"],
         nginx_rows if nginx_rows else [['(no instances detected)', "", "", "", "", "", ""]],
     )
     print(f"\n{title('Instances: Nginx / ports')}\n{nginx_table_by_instance}")
@@ -1043,10 +1043,10 @@ def external_server_report() -> None:
             [
                 "TLS cert",
                 "TLS key",
-                "Tipo",
+                'Type',
                 "Issuer",
                 "Subject",
-                "Expira",
+                'Expires',
                 'Instances',
                 "server_name",
             ],
@@ -1074,13 +1074,13 @@ def external_server_report() -> None:
                 status, detail = _certificate_expiry_status(cert_path, threshold_days)
                 check_rows.append([level_tag(status), cert_path, detail])
 
-            checks_table = render_table(['State', "Certificado", "Resultado"], check_rows)
+            checks_table = render_table(['State', 'Certificate', 'Result'], check_rows)
             print(f"\n{title('Active TLS checks')}\n{checks_table}")
-            report_sections.append("Comprobaciones activas TLS\n" + strip_ansi(checks_table))
+            report_sections.append(t('Active TLS checks') + "\n" + strip_ansi(checks_table))
         else:
             info_message = level_text("INFO", 'No TLS certificate paths detected for active checking.')
             print(info_message)
-            report_sections.append("Comprobaciones activas TLS\n" + strip_ansi(info_message))
+            report_sections.append(t('Active TLS checks') + "\n" + strip_ansi(info_message))
 
     export_report = ask_bool('Export the report to a file?', True)
     if not export_report:

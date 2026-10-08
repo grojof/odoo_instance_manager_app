@@ -19,7 +19,7 @@ passes an operator gate.
 ```mermaid
 flowchart TD
     entry["odoo_instance_manager.py<br/>entry point · root check · main menu"]
-    workflows["workflows.py<br/>menus · plan assembly · discovery · audit"]
+    workflows["workflows/<br/>menus · plan assembly · discovery · audit"]
     subgraph inputs["Input & presentation"]
         prompts["prompts.py<br/>ask/choose · file picker · phrase confirm"]
         ui["ui.py<br/>tables · styling"]
@@ -43,8 +43,10 @@ flowchart TD
 | Layer | Module | Responsibility | Side effects |
 |-------|--------|----------------|--------------|
 | Entry | `odoo_instance_manager.py` | Enforce root, configure UTF-8, main menu loop | Reads UID, prints |
-| Orchestration | `instance_manager/workflows.py` | Collect input, assemble plans, run discovery and the read-only audit | Mostly via `system.py`; also reads files and writes the optional audit report |
+| Orchestration | `instance_manager/workflows/` (one module per capability) | Collect input, assemble plans, run discovery and the read-only audit | Mostly via `system.py`; also reads files and writes the optional audit report |
 | Model | `instance_manager/models.py` | `InstanceConfig`, identifier validation, path derivation | None (pure) |
+| Version facts | `instance_manager/support.py` | Per Odoo version: Python range and fallback, setuptools pin, PostgreSQL floor, core repositories, the pinned uv | None (pure data) |
+| Neutralisation | `instance_manager/neutralise.py` | The rules that make a copied database unable to act as production, as SQL | None (pure) |
 | Planning | `instance_manager/planners.py` | Build `list[Command]` for every action | **None (pure)** |
 | Execution | `instance_manager/system.py` | `run()`, existence checks, `preview_commands`, `apply_commands` | Runs shell |
 | Input | `instance_manager/prompts.py` | Interactive prompts, file picker, phrase confirmation | Reads stdin |

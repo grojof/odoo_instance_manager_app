@@ -1,7 +1,7 @@
 # ui-localization Specification
 
 ## Purpose
-TBD - created by archiving change add-ui-localization. Update Purpose after archive.
+Offer the interface in English (canonical) or Spanish: every operator-facing string is an English key with a Spanish entry in one catalog, translated at a few display and input chokepoints, and a missing entry falls back to English.
 ## Requirements
 ### Requirement: UI language selection
 

@@ -91,7 +91,7 @@ def _read_nginx_https_ssl_paths(config: InstanceConfig) -> tuple[str, str]:
 def _detect_certificate_mode(config: InstanceConfig) -> tuple[str, bool]:
     cert_path, key_path = _read_nginx_https_ssl_paths(config)
     if not cert_path and not key_path:
-        return "No configurado", False
+        return 'Not configured', False
 
     if "/etc/letsencrypt/" in cert_path or "/etc/letsencrypt/" in key_path:
         return "Let's Encrypt", path_exists(cert_path) and path_exists(key_path)
@@ -102,10 +102,10 @@ def _detect_certificate_mode(config: InstanceConfig) -> tuple[str, bool]:
         )
         if _is_self_signed_certificate(config.ssl_cert_file):
             return 'Self-signed', has_expected_files
-        return "Personalizado (CA)", has_expected_files
+        return 'Custom (CA)', has_expected_files
 
     if cert_path and key_path:
-        return "Personalizado (externo)", path_exists(cert_path) and path_exists(key_path)
+        return 'Custom (external)', path_exists(cert_path) and path_exists(key_path)
 
     return 'Incomplete TLS configuration', False
 
@@ -269,7 +269,7 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
         print(level_text("INFO", 'Select the requirements file to install.'))
         req_path = select_file_path(
             ".",
-            "Archivo requirements (TXT/IN)",
+            'Requirements file (TXT/IN)',
             (".txt", ".in"),
         )
         commands.append(

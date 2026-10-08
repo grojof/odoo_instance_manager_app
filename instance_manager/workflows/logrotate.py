@@ -37,7 +37,7 @@ def _query_log_rotation(config: InstanceConfig) -> None:
             if odoo_active
             else level_text("MISSING", 'INACTIVE'),
         ],
-        ['logrotate.d policy', lr_file if lr_present else f"{lr_file} (no configurada)"],
+        ['logrotate.d policy', lr_file if lr_present else tf('{} (not configured)', lr_file)],
     ]
     print(render_table(['Item', 'Value'], rows))
 

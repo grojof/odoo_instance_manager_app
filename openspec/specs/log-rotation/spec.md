@@ -1,7 +1,7 @@
 # log-rotation Specification
 
 ## Purpose
-TBD - created by archiving change add-log-rotation. Update Purpose after archive.
+Keep an instance's Odoo log, and optionally its nginx logs, bounded with a system logrotate policy suited to each (copytruncate for Odoo, reopen for nginx), validated before it is kept.
 ## Requirements
 ### Requirement: Configure system log rotation
 

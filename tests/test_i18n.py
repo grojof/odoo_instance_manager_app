@@ -67,3 +67,70 @@ class ChokepointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- every operator-facing string has a Spanish entry ------------------------
+# The same check odoo_dwg runs (its tests/test_i18n.py): an AST scan of the calls
+# whose argument the UI translates at a chokepoint.
+
+import ast  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from instance_manager import i18n  # noqa: E402
+
+PACKAGE = Path(__file__).resolve().parent.parent / "instance_manager"
+_FIRST_ARG = {"t", "tf", "ask_text", "ask_bool", "ask_int", "ask_secret", "prompt_label", "title",
+              "confirm_with_phrase", "choose", "Command", "select_file_path"}
+
+
+def _call_name(func: ast.expr) -> str | None:
+    if isinstance(func, ast.Name):
+        return func.id
+    return func.attr if isinstance(func, ast.Attribute) else None
+
+
+def _ui_literals() -> dict[str, str]:
+    """Every string literal the UI translates, mapped to where it appears."""
+    found: dict[str, str] = {}
+    for path in sorted(PACKAGE.rglob("*.py")):
+        if path.name == "i18n.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _call_name(node.func)
+            candidates: list[ast.expr] = []
+            if name in _FIRST_ARG and node.args:
+                candidates.append(node.args[0])
+            if name == "select_file_path" and len(node.args) > 1:
+                candidates.append(node.args[1])
+            if name == "level_text" and len(node.args) > 1:
+                candidates.append(node.args[1])
+            if name in ("choose", "render_table"):
+                listed = node.args[1] if name == "choose" and len(node.args) > 1 else (
+                    node.args[0] if name == "render_table" and node.args else None
+                )
+                if isinstance(listed, ast.BinOp):
+                    listed = listed.left
+                if isinstance(listed, ast.List):
+                    candidates += listed.elts
+            for candidate in candidates:
+                if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
+                    if candidate.value.strip() and any(ch.isalpha() for ch in candidate.value):
+                        found.setdefault(candidate.value, f"{path.name}:{candidate.lineno}")
+    return found
+
+
+class CatalogTests(unittest.TestCase):
+    def test_every_ui_string_has_a_spanish_translation(self) -> None:
+        literals = _ui_literals()
+        self.assertGreater(len(literals), 300)  # the extractor still sees the UI
+        missing = {text: where for text, where in literals.items() if text not in i18n._ES}
+        self.assertFalse(missing, f"add these to i18n._ES: {missing}")
+
+    def test_the_catalog_is_authored_in_the_direction_it_is_read(self) -> None:
+        """English keys, Spanish values — the direction t() looks up."""
+        self.assertGreater(len(i18n._ES), 500)
+        spanish_only = {"á", "é", "í", "ó", "ú", "¿", "¡", "ñ"}
+        suspicious = [k for k in i18n._ES if k != "Español" and any(ch in k for ch in spanish_only)]
+        self.assertFalse(suspicious, f"these keys look Spanish: {suspicious}")

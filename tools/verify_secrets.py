@@ -97,6 +97,7 @@ def _errors() -> None:
 def _role(root: Path) -> None:
     bindir = _postgres_bindir()
     if bindir is None or os.geteuid() == 0:
+        check("initdb and a non-root user are available", not os.environ.get("CI"))
         print("skip  the role check needs initdb and a non-root user")
         return
     stubs = root / "stubs"

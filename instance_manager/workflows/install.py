@@ -438,7 +438,7 @@ def _maybe_plan_certs(config: InstanceConfig) -> list[Command]:
     print(level_text("INFO", 'Select the private key (server.key)'))
     key_src = select_file_path(
         ".",
-        "Clave privada (KEY)",
+        'Private key (KEY)',
         (".key", ".pem"),
     )
     use_intermediate = ask_bool('Do you have an intermediate file?', True)
@@ -447,7 +447,7 @@ def _maybe_plan_certs(config: InstanceConfig) -> list[Command]:
         print(level_text("INFO", 'Select the intermediate chain / CA bundle'))
         intermediate_src = select_file_path(
             ".",
-            "Cadena intermedia (CA bundle / intermediate)",
+            'Intermediate chain (CA bundle / intermediate)',
             (".crt", ".pem", ".cer", ".bundle", ".ca-bundle"),
         )
 

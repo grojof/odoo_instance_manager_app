@@ -1,8 +1,10 @@
 # addon-inventory Specification
 
 ## Purpose
-TBD - created by archiving change add-addon-inventory. Update Purpose after archive.
+List an instance's modules by origin (Odoo core, OCA, custom) with their manifest and installed versions, and the Python packages their manifests declare, checked in the instance's venv the way Odoo checks them; exportable to a file.
+
 ## Requirements
+
 ### Requirement: Addon inventory by origin
 
 The tool SHALL list an instance's addon modules grouped by origin (Odoo core, OCA, custom, and any other
@@ -75,3 +77,14 @@ part of the rendered inventory and its export.
 - **WHEN** no discovered addon declares a Python external dependency
 - **THEN** the audit reports that there are no additional Python packages required
 
+### Requirement: Python dependencies checked the way Odoo checks them
+
+The addon inventory SHALL report a declared Python dependency as present when the instance venv has a
+distribution of that name, or else can import a module of that name — Odoo's own order
+(`check_python_external_dependency`) — so a dependency declared by its distribution name (`python-stdnum`,
+`pdfminer.six`) is not reported missing.
+
+#### Scenario: A distribution name is found
+
+- **WHEN** an addon declares `python-stdnum` and the venv has that distribution
+- **THEN** the inventory reports it present

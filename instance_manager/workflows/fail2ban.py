@@ -115,7 +115,7 @@ def _assess_fail2ban_log_ip_quality(log_path: str) -> tuple[str, str]:
     sample_private = ", ".join(sorted(private_ips)[:3])
     return (
         "private-only",
-        f"Solo se detectaron IPs internas/privadas en log (ej.: {sample_private}). Risk of banning the gateway/proxy.",
+        tf('Only internal/private IPs were detected in the log (e.g.: {}). Risk of banning the gateway/proxy.', sample_private),
     )
 
 
@@ -141,7 +141,7 @@ def _show_fail2ban_status() -> None:
     rows: list[list[str]] = [
         ['Active service', service_state.stdout.strip() if service_state.returncode == 0 else 'inactive/not installed'],
         ['Autostart', enabled_state.stdout.strip() if enabled_state.returncode == 0 else "unknown"],
-        ["Cliente fail2ban", client_value],
+        ['fail2ban client', client_value],
     ]
     print(render_table(['Check', 'Value'], rows))
 

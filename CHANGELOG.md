@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **Interface text is English throughout**, with Spanish only through the catalog: about twenty Spanish labels
+  left in the code (report headers, certificate states, prompts) are now English keys. The catalog is written
+  English → Spanish, the direction it is read; written the other way and inverted, it silently merged English
+  strings whose Spanish matched. A test fails when a UI string has no Spanish entry.
+- CI also runs `tools/verify_data_safety.py`, `tools/verify_secrets.py` and `tools/verify_ops_configs.py`, and
+  `pytest` works without installing the package (`pythonpath`).
 - *Install Odoo instance + PostgreSQL* no longer opens PostgreSQL to the network (`listen_addresses`, `pg_hba`).
 - The systemd unit follows Odoo's own (`KillMode=mixed`) and starts after a local PostgreSQL.
 - apt installs run unattended and wait for the dpkg lock.
