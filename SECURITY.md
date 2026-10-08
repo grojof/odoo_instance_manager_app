@@ -32,8 +32,10 @@ A reproduction against a disposable VM is ideal.
 
 ## Handling credentials
 
-- Database and admin passwords are entered interactively and passed to `psql`/`pg_dump` via `PGPASSWORD` in
-  the generated commands. Treat shell history and process listings on the host as sensitive.
+- Database and admin passwords are entered interactively without echo. They reach `psql`/`pg_dump` through
+  the step's environment (`PGPASSWORD`), never its command line, and the plan preview masks them; a file holding
+  a secret is written from the environment too. Treat the host's root account as sensitive: root can read any
+  process's environment.
 - Do not commit real credentials, dumps, or filestore archives to the repository.
 - The recommended permissions baseline in [`docs/security/safe-controls.md`](docs/security/safe-controls.md) denies reads of
   common secret files (`.env`, `*.pem`, SSH keys).

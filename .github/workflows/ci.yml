@@ -44,6 +44,9 @@ jobs:
       - name: Verify secrets stay out of process arguments, previews and errors
         run: python tools/verify_secrets.py
 
+      - name: Verify what reaches root or a superuser (certificates, downloads, venvs, neutralisation)
+        run: python tools/verify_privilege.py
+
       - name: Verify nginx and fail2ban accept the generated configuration
         run: |
           sudo apt-get update -qq

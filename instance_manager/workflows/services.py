@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from ..i18n import tf
 from ..models import InstanceConfig
 from ..prompts import ask_text, choose
@@ -14,6 +16,12 @@ from ..system import (
 )
 from ..ui import level_text, render_table, title
 from .common import _execute_plan, _quote
+
+
+def _unit_name_error(name: str) -> str | None:
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9@._:-]{0,254}", name):
+        return None
+    return 'Invalid service name. Use letters, digits and @ . _ : -'
 
 
 def _list_existing_instance_services() -> list[str]:
@@ -63,11 +71,11 @@ def manage_instance_services() -> None:
             if pick in {"", 'Cancel'}:
                 continue
             if pick == 'Type a name':
-                service_name = ask_text('Service name', "", required=True)
+                service_name = ask_text('Service name', "", required=True, validate=_unit_name_error)
             else:
                 service_name = pick
         else:
-            service_name = ask_text('Service name', "", required=True)
+            service_name = ask_text('Service name', "", required=True, validate=_unit_name_error)
 
         service_action = choose(
             tf('Action for service {}', service_name),
@@ -85,14 +93,14 @@ def manage_instance_services() -> None:
             continue
 
         if service_action == 'Start':
-            commands = [Command(tf('Start service {}', service_name), f"systemctl start {_quote(service_name)}")]
+            commands = [Command(tf('Start service {}', service_name), f"systemctl start -- {_quote(service_name)}")]
         elif service_action == 'Stop':
-            commands = [Command(tf('Stop service {}', service_name), f"systemctl stop {_quote(service_name)}")]
+            commands = [Command(tf('Stop service {}', service_name), f"systemctl stop -- {_quote(service_name)}")]
         elif service_action == 'Restart':
-            commands = [Command(tf('Restart service {}', service_name), f"systemctl restart {_quote(service_name)}")]
+            commands = [Command(tf('Restart service {}', service_name), f"systemctl restart -- {_quote(service_name)}")]
         elif service_action == 'Enable autostart':
-            commands = [Command(tf('Enable autostart {}', service_name), f"systemctl enable {_quote(service_name)}")]
+            commands = [Command(tf('Enable autostart {}', service_name), f"systemctl enable -- {_quote(service_name)}")]
         else:
-            commands = [Command(tf('Disable autostart {}', service_name), f"systemctl disable {_quote(service_name)}")]
+            commands = [Command(tf('Disable autostart {}', service_name), f"systemctl disable -- {_quote(service_name)}")]
 
         _execute_plan(commands)

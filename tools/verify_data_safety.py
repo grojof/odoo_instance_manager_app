@@ -49,7 +49,7 @@ def _stub_bin(root: Path) -> Path:
     """`sudo -u <user>` runs the rest as us; pg_dump/pg_restore are scripted by env."""
     bindir = root / "stubs"
     bindir.mkdir()
-    _write_exe(bindir / "sudo", 'if [ "$1" = "-u" ]; then shift 2; fi\nexec "$@"\n')
+    _write_exe(bindir / "sudo", 'while [ "${1#-}" != "$1" ]; do if [ "$1" = "-u" ]; then shift; fi; shift; done\nexec "$@"\n')
     _write_exe(
         bindir / "pg_dump",
         'case "${STUB_PG_DUMP:-ok}" in\n'
@@ -414,7 +414,7 @@ def _against_a_server(root: Path) -> None:
         return
     stubs = root / "pgstubs"
     stubs.mkdir()
-    _write_exe(stubs / "sudo", 'if [ "$1" = "-u" ]; then shift 2; fi\nexec "$@"\n')
+    _write_exe(stubs / "sudo", 'while [ "${1#-}" != "$1" ]; do if [ "$1" = "-u" ]; then shift; fi; shift; done\nexec "$@"\n')
     cluster = Cluster(root, bindir)
     try:
         cluster.start()

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .i18n import current_language, t, tf
-from .ui import level_text, prompt_label, style, title
+from .ui import level_text, prompt_label, sanitize, style, title
 
 _last_selected_dir: Path | None = None
 
@@ -46,6 +46,12 @@ def _validate_selected_path_extension(
     return ask_bool('Use this file anyway?', False)
 
 
+def _has_control(value: str) -> bool:
+    """A control character (a pasted carriage return, an escape) in a typed value
+    would end up in odoo.conf, a unit or a shell line as something else."""
+    return any(ord(char) < 32 or ord(char) == 127 for char in value)
+
+
 def ask_text(
     label: str,
     default: str | None = None,
@@ -64,7 +70,8 @@ def ask_text(
                 return ""
             print(level_text("ERROR", 'Value is required.'))
             continue
-        error = validate(value) if validate else None
+        error = 'Control characters are not allowed.' if _has_control(value) else None
+        error = error or (validate(value) if validate else None)
         if error:
             print(level_text("ERROR", error))
             continue
@@ -92,6 +99,9 @@ def ask_secret(label: str, required: bool = True) -> str:
     """Prompt for a secret without echoing it to the screen (via getpass)."""
     while True:
         value = getpass.getpass(f"{prompt_label(label)}: ").strip()
+        if value and _has_control(value):
+            print(level_text("ERROR", 'Control characters are not allowed.'))
+            continue
         if value:
             return value
         if not required:
@@ -142,7 +152,7 @@ def choose(label: str, options: list[str], default_index: int | None = None) -> 
             else ""
         )
         marker = style(f"{index})", "blue", "bold")
-        print(f"  {marker} {t(option)}{style(default_tag, 'dim')}")
+        print(f"  {marker} {sanitize(t(option))}{style(default_tag, 'dim')}")
 
     while True:
         raw = input(f"{prompt_label('Select an option')}: ").strip()
@@ -176,8 +186,8 @@ def select_file_path(
 
     while True:
         if requested_label:
-            print(f"\n{title('Select required file')}: {requested_label}")
-        print(f"{title('Current directory')}: {current}")
+            print(f"\n{title('Select required file')}: {sanitize(t(requested_label))}")
+        print(f"{title('Current directory')}: {sanitize(str(current))}")
         if _last_selected_dir and _last_selected_dir.is_dir():
             print(level_text("INFO", tf('Last folder used: {}', _last_selected_dir)))
         entries = sorted(
@@ -188,7 +198,7 @@ def select_file_path(
         print(t('  q) Cancel'))
         for index, entry in enumerate(entries, start=1):
             marker = "/" if entry.is_dir() else ""
-            print(f"  {index}) {entry.name}{marker}")
+            print(f"  {index}) {sanitize(entry.name)}{marker}")
 
         raw = input(f"{prompt_label("Choose a number, '..', 'q' or a manual path")}: ").strip()
         if raw.lower() in {"q", "cancelar"}:

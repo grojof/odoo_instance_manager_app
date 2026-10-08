@@ -53,13 +53,21 @@ python3 tools/verify_install_runtime.py --clone 14=/path/odoo-14.0 --clone 16=/p
 python3 tools/verify_neutralisation.py --odoo 18=/path/venv/bin/python:/path/odoo-18.0
 python3 tools/verify_ops_configs.py    # nginx -t and fail2ban on the generated config
 python3 tools/verify_secrets.py        # secrets in no process argument, preview or error
+python3 tools/verify_privilege.py      # certificates, downloads, venv replication, neutralisation as owner
 ```
 
-`tools/verify_data_safety.py`, `tools/verify_secrets.py` and `tools/verify_ops_configs.py` also run in CI.
+`tools/verify_data_safety.py`, `tools/verify_secrets.py`, `tools/verify_privilege.py` and
+`tools/verify_ops_configs.py` also run in CI.
 `tools/verify_data_safety.py` executes the generated scheduled-backup script, the
 retention prune and the delete step against stub binaries, and the template copy, forced drop and purge
 discovery against a PostgreSQL cluster of its own (it needs `initdb` and refuses to run as root). Run it after
 changing any of those.
+
+`tools/verify_privilege.py` runs the certificate steps with real `openssl` (a key that does not match must leave
+the live files untouched, a hostile file name must stay a name), the wkhtmltopdf and venv-replication steps
+against stubs, and the neutralisation as the copy's owner against a PostgreSQL cluster of its own, where a
+trigger in the copy tries to make its owner a superuser. Run it after changing those planners or
+`_post_db_mode_commands`.
 
 `tools/verify_install_runtime.py` is not part of CI: it downloads the pinned uv (and refuses a wrong
 checksum), installs the interpreter the matrix picks, builds a real venv for each Odoo checkout you pass and

@@ -12,7 +12,7 @@ from ..models import InstanceConfig
 from ..prompts import ask_bool, ask_text
 from ..system import pg_env, read_odoo_conf, run
 from ..ui import level_tag, level_text, render_table, strip_ansi, title
-from .common import DbCredentials, _ask_db_credentials, _quote
+from .common import DbCredentials, _ask_db_credentials, _quote, _write_export
 
 _VERSION_RE = re.compile(r"""["']version["']\s*:\s*["']([^"']+)["']""")
 
@@ -268,9 +268,7 @@ def _maybe_export_inventory(config: InstanceConfig, sections: list[str]) -> None
 
     header = tf('Addon inventory: {}', config.instance)
     try:
-        os.makedirs(os.path.dirname(export_path) or ".", exist_ok=True)
-        with open(export_path, "w", encoding="utf-8") as file_handle:
-            file_handle.write(f"{header}\n\n" + "\n\n".join(sections) + "\n")
+        _write_export(export_path, f"{header}\n\n" + "\n\n".join(sections) + "\n")
     except OSError as error:
         print(level_text("ERROR", tf('Could not write {}: {}', export_path, error.strerror or error)))
         return

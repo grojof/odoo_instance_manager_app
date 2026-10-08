@@ -9,7 +9,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from .i18n import t, tf
-from .ui import level_text, style, title, wrap_plain_block
+from .ui import level_text, sanitize, style, title, wrap_plain_block
 
 
 @dataclass
@@ -41,8 +41,10 @@ def pg_env(password: str) -> dict[str, str]:
 
 
 def mask(text: str, secrets: tuple[str, ...] | list[str]) -> str:
-    """``text`` with every non-empty secret replaced by ``********``."""
-    for secret in sorted((s for s in secrets if s), key=len, reverse=True):
+    """``text`` with every non-empty secret replaced by ``********``, also where it
+    appears escaped: inside an SQL literal (``'`` doubled) or a shell word."""
+    forms = {form for s in secrets if s for form in (s, s.replace("'", "''"), shlex.quote(s))}
+    for secret in sorted(forms, key=len, reverse=True):
         text = text.replace(secret, "********")
     return text
 
@@ -63,12 +65,8 @@ def run(
         env=_environment(env),
     )
     if check and result.returncode != 0:
-        raise RuntimeError(
-            f"Command failed: {command}\n"
-            f"exit={result.returncode}\n"
-            f"stdout={result.stdout}\n"
-            f"stderr={result.stderr}"
-        )
+        # Not the command: it may hold what a preview masks.
+        raise RuntimeError(f"Command failed (exit {result.returncode}): {result.stderr.strip()}")
     return result
 
 
@@ -94,7 +92,7 @@ def run_streaming(command: str, env: dict[str, str] | None = None) -> subprocess
     captured: list[str] = []
     assert process.stdout is not None
     for line in process.stdout:
-        print(line, end="", flush=True)
+        print(sanitize(line, keep_cr=True), end="", flush=True)
         captured.append(line)
     process.stdout.close()
     returncode = process.wait()
@@ -184,14 +182,14 @@ def preview_commands(commands: list[Command]) -> None:
     indent = "     "
     body_width = max(20, shutil.get_terminal_size((100, 24)).columns - len(indent))
     for index, item in enumerate(commands, start=1):
-        print(f"\n{style(f'[{index:02d}]', 'blue', 'bold')} {t(item.description)}")
-        for chunk in wrap_plain_block(item.shown, body_width):
+        print(f"\n{style(f'[{index:02d}]', 'blue', 'bold')} {sanitize(t(item.description))}")
+        for chunk in wrap_plain_block(sanitize(item.shown), body_width):
             print(style(f"{indent}{chunk}", "dim"))
 
 
 def apply_commands(commands: list[Command], stop_on_error: bool = True) -> None:
     for index, item in enumerate(commands, start=1):
-        print(f"\n{style(f'[{index}/{len(commands)}]', 'blue', 'bold')} {t(item.description)}")
+        print(f"\n{style(f'[{index}/{len(commands)}]', 'blue', 'bold')} {sanitize(t(item.description))}")
         # Stream output live so long steps (apt/pip/pg_restore) aren't silent.
         result = run_streaming(item.command, item.env)
         if result.returncode != 0:

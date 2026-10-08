@@ -32,7 +32,8 @@ directory SHALL be an absolute, dedicated directory: a shared system directory (
 - **WHEN** the operator selects a backup that includes the filestore
 - **THEN** the plan tars the resolved filestore directory to a temporary file and renames it to
   `<backup_dir>/<instance>--<db>--<timestamp>.filestore.tar.gz` only on success; a file that changed while
-  being read (GNU tar exit 1) does not fail the archive, any other tar failure does
+  being read (GNU tar exit 1) does not fail the archive, any other tar failure does. tar reads as the instance
+  user and root writes the archive, so a link the instance planted reaches nothing only root could read
 
 #### Scenario: DB dump and filestore archive share one timestamp
 
@@ -76,7 +77,8 @@ target filestore SHALL be moved aside, never deleted, and the restored files SHA
 #### Scenario: Restored files belong to the instance user
 
 - **WHEN** a filestore archive is extracted
-- **THEN** tar does not restore the archive's owners (`--no-same-owner`) and the plan gives the files to the
+- **THEN** tar runs as the instance user (root only reads the archive), restores neither the archive's owners
+  nor its permission bits, and the plan gives the files to the
   instance user: the whole data dir when it is the instance's own (`/var/lib/odoo/<instance>` or inside its
   home), only that database's filestore when the data dir may be shared
 
@@ -128,8 +130,10 @@ database's sessions and refuses new ones in one statement.
 #### Scenario: Replica replicates the source venv Python packages
 
 - **WHEN** a replica is provisioned and the operator opts to replicate packages
-- **THEN** the plan installs the source venv's packages (a filtered `pip freeze`) into the target venv, so the
-  replica has the same addon Python dependencies as the source
+- **THEN** the plan installs the source venv's packages into the target venv, so the replica has the same addon
+  Python dependencies as the source: the source's `pip freeze` runs as the source user, only exact
+  `name==version` lines are kept (in a private temporary directory) and shown, the install runs as the target
+  user, and the step fails when either fails
 
 #### Scenario: New target is provisioned and seeded as a replica
 
@@ -209,7 +213,9 @@ Restore and duplication SHALL apply Odoo migration semantics: in "copied" mode g
 requested, apply every rule of the neutralisation catalogue (Odoo's `neutralize.sql` 16.0-19.0, extended to
 12.0-19.0 and the OCA modules it lists), each guarded by the existence of its table and columns, as one statement
 that stops the plan on failure, and then verify that nothing can still act on the outside, failing the plan when
-something can. The neutralisation SHALL leave exactly one active outgoing mail server, pointing at a host that
+something can. On the local server these statements SHALL run as the copy's owner role with
+`search_path = pg_catalog, public`, never as the superuser: a trigger or function the source database carries
+then runs with that role's rights. The neutralisation SHALL leave exactly one active outgoing mail server, pointing at a host that
 does not resolve, so Odoo never falls back to the `smtp_server` of `odoo.conf`, and SHALL drop production's SMTP
 credentials from the copy.
 
@@ -231,6 +237,11 @@ credentials from the copy.
 
 - **WHEN** the neutralisation statement fails, or the check finds something that can still act on the outside
 - **THEN** the step fails and the plan stops; no step tolerates its own failure
+
+#### Scenario: Code in the copy runs with its owner's rights
+
+- **WHEN** the copied database has a trigger that tries to make its owner a superuser
+- **THEN** the trigger fails for lack of privilege, the step fails, and the role is unchanged
 
 ### Requirement: Database name path safety
 

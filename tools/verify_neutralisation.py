@@ -110,7 +110,7 @@ def _one(major: int, python: str, clone: Path, cluster: Cluster, env: dict[str, 
 
     plan = (backup_restore._seed_db_commands(src, dst, "dev", "dump")
             + backup_restore._post_db_mode_commands(
-                backup_restore._psql_target_local(dst), "Copied (new UUID on target)", True, URL))
+                backup_restore._psql_target_local(dst), "Copied (new UUID on target)", True, URL, role="dev"))
     for command in plan:
         result = subprocess.run(["bash", "-c", command.command], capture_output=True, text=True, env=env)
         output = result.stdout + result.stderr
@@ -126,7 +126,7 @@ def _one(major: int, python: str, clone: Path, cluster: Cluster, env: dict[str, 
     check(f"Odoo {major}: the copy is visible to its role after the hand-over", _visible_to(cluster, "dev", dst))
 
     again = backup_restore._post_db_mode_commands(
-        backup_restore._psql_target_local(dst), "Moved (keep UUID)", True, URL)
+        backup_restore._psql_target_local(dst), "Moved (keep UUID)", True, URL, role="dev")
     results = [subprocess.run(["bash", "-c", c.command], capture_output=True, text=True, env=env) for c in again]
     check(f"Odoo {major}: neutralising again is harmless", all(r.returncode == 0 for r in results),
           " ".join(r.stderr for r in results))
@@ -175,7 +175,7 @@ def main() -> int:
         root = Path(tmp)
         stubs = root / "stubs"
         stubs.mkdir()
-        _write_exe(stubs / "sudo", 'if [ "$1" = "-u" ]; then shift 2; fi\nexec "$@"\n')
+        _write_exe(stubs / "sudo", 'while [ "${1#-}" != "$1" ]; do if [ "$1" = "-u" ]; then shift; fi; shift; done\nexec "$@"\n')
         cluster = Cluster(root, bindir)
         try:
             cluster.start()

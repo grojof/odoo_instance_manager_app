@@ -238,6 +238,16 @@ def _backup_dir_error(path: str) -> str | None:
     return None
 
 
+def _write_export(path: str, text: str) -> None:
+    """Write a report the operator asked for, as root, without following a link: the
+    file must be new (``O_EXCL``, which also refuses a link in its place) and is
+    private (``600``) — reports name databases, users and paths."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as file_handle:
+        file_handle.write(text)
+
+
 def _existing_instance_artifacts(config: InstanceConfig) -> list[str]:
     """What already exists under this instance's names: an install must not take
     them over, and its cleanup could otherwise remove them."""

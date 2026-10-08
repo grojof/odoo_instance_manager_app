@@ -43,6 +43,31 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **Root shell and superuser exposure.**
+  - The certificate paths and the venv package names reached a root shell unescaped, so a file or package named
+    `$(…)` ran as root.
+  - The server report ran the instance's own Python interpreter as root.
+  - Neutralisation ran as the PostgreSQL superuser on a database copied from another instance, where a trigger
+    could raise its own role.
+
+  Now:
+  - every operator value is quoted;
+  - pip, tar and git run as the instance user;
+  - the report reads `pyvenv.cfg` instead of running the interpreter;
+  - neutralisation runs as the copy's owner role;
+  - a key that does not match its certificate no longer replaces the live files, which would have broken the
+    next nginx restart for every instance.
+- **Fixed `/tmp` names written as root** (the venv replication's requirements, the wkhtmltopdf package) are now
+  private temporary directories. The venv replication fails when pip fails, keeps only `name==version` lines
+  and shows them.
+- Escape sequences in database names, file names or command output are printed inert, and typed values with
+  control characters are refused.
+- A replica now detects its source's branch: git refused to run as root in the instance's checkout.
+- Smaller fixes:
+  - a secret escaped inside SQL is masked in the preview;
+  - a password containing `$$` no longer breaks the role SQL;
+  - exports are new private files that never follow a link.
+
 - **Installing over an existing instance removed it.** The install never checked the name was free, and its
   cleanup ran on a failure — or on Ctrl+C at the confirmation prompt — removing that instance's home, config,
   unit and vhosts. A new instance now needs a free name (no system account or service such as `backup`, whose

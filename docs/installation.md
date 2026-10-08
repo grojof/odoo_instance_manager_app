@@ -139,7 +139,7 @@ For HTTPS you pick a certificate strategy:
 | **Leave certificates untouched** | Adds no certificate commands. |
 | **Self-signed** | Reuses an existing key/fullchain or generates a 2048-bit self-signed cert for the domain. |
 | **Let's Encrypt (managed externally)** | Adds no certificate commands — you manage LE outside the tool. |
-| **Copy your own certificates** | Installs your CRT/KEY (+ optional intermediate), builds the fullchain, and **validates that the key matches the certificate** before Nginx is reconfigured. |
+| **Copy your own certificates** | Copies your CRT/KEY (+ optional intermediate) beside the live files, builds the fullchain, and **checks that the key matches the certificate** before they replace the current ones (kept as `.previous`); a wrong file never reaches Nginx. |
 
 ## The instance name must be free
 
