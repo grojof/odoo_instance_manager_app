@@ -147,7 +147,7 @@ def choose(label: str, options: list[str], default_index: int | None = None) -> 
 
     for index, option in enumerate(indexed_options, start=1):
         default_tag = (
-            " (default)"
+            t(" (default)")
             if default_index is not None and options[default_index] == option
             else ""
         )
@@ -190,9 +190,15 @@ def select_file_path(
         print(f"{title('Current directory')}: {sanitize(str(current))}")
         if _last_selected_dir and _last_selected_dir.is_dir():
             print(level_text("INFO", tf('Last folder used: {}', _last_selected_dir)))
-        entries = sorted(
-            current.iterdir(), key=lambda item: (item.is_file(), item.name.lower())
-        )
+        try:
+            entries = sorted(
+                current.iterdir(), key=lambda item: (item.is_file(), item.name.lower())
+            )
+        except OSError as error:
+            # Gone, or not readable: back to the parent.
+            print(level_text("ERROR", tf('Cannot list {}: {}', current, error.strerror or error)))
+            current = current.parent if current != current.parent else Path("/")
+            continue
         print(t('  0) Choose this directory'))
         print(t('  ..) Up one level'))
         print(t('  q) Cancel'))
@@ -200,7 +206,8 @@ def select_file_path(
             marker = "/" if entry.is_dir() else ""
             print(f"  {index}) {sanitize(entry.name)}{marker}")
 
-        raw = input(f"{prompt_label("Choose a number, '..', 'q' or a manual path")}: ").strip()
+        label = prompt_label("Choose a number, '..', 'q' or a manual path")
+        raw = input(f"{label}: ").strip()
         if raw.lower() in {"q", "cancelar"}:
             return ""
         if raw == "0":
@@ -231,6 +238,9 @@ def select_file_path(
 
         if raw.isdigit():
             idx = int(raw)
+            if not 1 <= idx <= len(entries):
+                print(level_text("ERROR", 'Option out of range.'))
+                continue
             if 1 <= idx <= len(entries):
                 selected = entries[idx - 1]
                 if selected.is_dir():

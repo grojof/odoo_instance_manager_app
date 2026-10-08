@@ -6,6 +6,7 @@ import platform
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass, field
 
@@ -71,6 +72,21 @@ def run(
     return result
 
 
+def _stop_group(process: subprocess.Popen[str]) -> None:
+    """TERM the step's process group (a staged write restores on it), then KILL it
+    if it has not ended after 10 seconds."""
+    for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def run_streaming(command: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """Run a command, forwarding its output live while also capturing it.
 
@@ -79,6 +95,9 @@ def run_streaming(command: str, env: dict[str, str] | None = None) -> subprocess
     would otherwise sit silent. stdin is closed so a command never blocks waiting
     for input. Returns a ``CompletedProcess`` with the accumulated output.
     """
+    # Its own process group, so Ctrl+C here stops the whole step (bash and what it
+    # started), and waits for it: a step left running behind the menu could still
+    # be writing when the next plan starts.
     process = subprocess.Popen(
         ["bash", "-lc", command],
         stdin=subprocess.DEVNULL,
@@ -89,12 +108,17 @@ def run_streaming(command: str, env: dict[str, str] | None = None) -> subprocess
         errors="replace",
         bufsize=1,
         env=_environment(env),
+        start_new_session=True,
     )
     captured: list[str] = []
     assert process.stdout is not None
-    for line in process.stdout:
-        print(sanitize(line, keep_cr=True), end="", flush=True)
-        captured.append(line)
+    try:
+        for line in process.stdout:
+            print(sanitize(line, keep_cr=True), end="", flush=True)
+            captured.append(line)
+    except KeyboardInterrupt:
+        _stop_group(process)
+        raise
     process.stdout.close()
     returncode = process.wait()
     return subprocess.CompletedProcess(process.args, returncode, "".join(captured), "")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import urllib.error
 import urllib.request
 
@@ -31,7 +32,8 @@ def _http_probe(port: str) -> tuple[bool, str]:
         except urllib.error.HTTPError as error:
             # A 3xx/4xx still means the server answered.
             return 200 <= error.code < 500, tf('HTTP {} on {}', error.code, path)
-        except (urllib.error.URLError, OSError):
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
+            # Refused, timed out, or something that is not HTTP on the port.
             continue
     return False, 'no response on 127.0.0.1'
 

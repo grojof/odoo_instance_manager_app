@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -354,6 +355,33 @@ def _delete_without_nginx(root: Path) -> None:
     check("and when nginx -t fails", result.returncode == 0, result.stderr)
 
 
+def _streaming_interrupt(root: Path) -> None:
+    """Ctrl+C during a step stops the whole step — bash and what it started — and
+    waits for it, so nothing keeps running behind the menu."""
+    marker = root / "still-running"
+    repo = str(Path(__file__).resolve().parent.parent)
+    child = (
+        f"import sys; sys.path.insert(0, {repo!r})\n"
+        "from instance_manager import system\n"
+        "try:\n"
+        f"    system.run_streaming('sleep 30 & sleep 30; touch {marker}')\n"
+        "except KeyboardInterrupt:\n"
+        "    print('interrupted', flush=True)\n"
+    )
+    process = subprocess.Popen([sys.executable, "-c", child], stdout=subprocess.PIPE, text=True)
+    time.sleep(1.5)
+    process.send_signal(signal.SIGINT)
+    try:
+        out, _ = process.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        out = ""
+    processes = subprocess.run(["ps", "-eo", "pid,args"], capture_output=True, text=True).stdout
+    left = [line for line in processes.splitlines() if line.split(None, 1)[-1].startswith("sleep 30")]
+    check("Ctrl+C during a step returns to the caller", "interrupted" in out, out)
+    check("and leaves none of the step's processes running", not left and not marker.exists(), str(left))
+
+
 # --- against a PostgreSQL of our own ------------------------------------------
 
 
@@ -410,6 +438,7 @@ def _against_a_server(root: Path) -> None:
         print("skip  PostgreSQL binaries not found — the server-backed checks need initdb")
         return
     if os.geteuid() == 0:
+        check("not running as root (initdb refuses root)", not os.environ.get("CI"))
         print("skip  running as root — initdb refuses, so the server-backed checks are skipped")
         return
     stubs = root / "pgstubs"
@@ -500,6 +529,8 @@ def main() -> int:
         _install_cleanup(root / "cleanup")
         _purge_user(root / "purge")
         _delete_without_nginx(root / "delete")
+        (root / "stream").mkdir()
+        _streaming_interrupt(root / "stream")
         _against_a_server(root / "pg")
     print(f"\n{len(FAILURES)} failure(s)" if FAILURES else "\nall checks passed")
     return 1 if FAILURES else 0

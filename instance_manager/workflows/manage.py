@@ -688,6 +688,9 @@ def manage_existing_instance() -> None:
             return
         if group == 'Delete instance':
             db_creds = _delete_instance(config, db_creds)
+            if not path_exists(config.odoo_home) and not path_exists(config.odoo_conf_dir):
+                # Deleted: nothing is left to manage under this name.
+                return
             continue
 
         while True:

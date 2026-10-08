@@ -19,6 +19,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **The release workflow** runs every CI check first and publishes only tags on `main`. A pre-release tag is not
+  marked as the latest release. ruff, build and twine are pinned.
+- `odoo-instance-manager --help` and `--version` work without root, and other arguments are refused.
+
 - **Docs refreshed against the code**, with diagrams in shared semantic colours (`docs/architecture.md`,
   *Diagram conventions*): the main menu, the layers, the plan flow (the phrase is asked before the preview), the
   per-version install, the neutralised copy, and what each fail2ban jail blocks. Pages follow the menu's
@@ -42,6 +46,19 @@ All notable changes to this project are documented here. The format is based on
 - The duplication confirmation phrase is `DUPLICATE <instance>` (was `DUPLICAR`).
 
 ### Fixed
+
+- **Ctrl+C during a long step** (apt, pip, a restore) returned to the menu while the step kept running behind
+  it. The whole step is now stopped and waited for.
+- **Unexpected errors no longer end in a traceback:** an unreadable file, a port that does not speak HTTP, a
+  missing picker directory, or Ctrl+C at the language prompt now return to the menu with the error named. An
+  out-of-range number in the file picker is no longer taken as a path.
+- **The tool did not start on the `python3` of Ubuntu 22.04 or Debian 11/12** (one line of Python 3.12 syntax).
+  It now needs Python 3.9+, and CI runs the suite on 3.9.
+- **Scheduled backups** of an instance with a remote database dumped the local server; they are refused now. The
+  status also shows whether the last run made a backup.
+- **Spanish interface.** The posture and paths tables are translated; 86 unused catalog entries are gone, and a
+  test now catches both.
+- **Verify tools** fail when they verify nothing (no `--odoo`, no `--clone`, no nginx binary, run as root in CI).
 
 - **fail2ban web and Odoo bans never applied on Ubuntu 22.04 and Debian 11.** fail2ban 0.11.2 split the
   `Nginx Full` profile name, and ufw refused it. They now use the tool's own `ufw-odoo-web` action (ports 80

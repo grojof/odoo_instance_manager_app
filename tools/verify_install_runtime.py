@@ -120,7 +120,10 @@ def _venv(root: Path, major: int, clone: Path, env: dict[str, str]) -> None:
             subprocess.run([str(pip), "install", "-q", "--upgrade", "setuptools"], capture_output=True, env=env)
             found = subprocess.run([str(venv_python), "-c", "import importlib.metadata as m; print(m.version('setuptools'))"],
                                    capture_output=True, text=True, env=env).stdout.strip()
-            if int(found.split(".")[0] or 0) < 82:
+            if not found:
+                check(f"Odoo {major}: the venv's setuptools version can be read", False)
+                return
+            if int(found.split(".")[0]) < 82:
                 # pip resolves the newest setuptools the interpreter supports: on
                 # 3.8 that is 75.x, which still ships pkg_resources.
                 print(f"info  Odoo {major}: unpinned setuptools on Python {python} is {found}, "
@@ -141,6 +144,9 @@ def main() -> int:
     for item in args.clone:
         major, _, path = item.partition("=")
         clones[int(major)] = Path(path).resolve()
+    if not clones:
+        print("error: give at least one --clone MAJOR=PATH; nothing was verified", file=sys.stderr)
+        return 2
 
     with tempfile.TemporaryDirectory(prefix="oim-verify-runtime-") as tmp:
         root = Path(tmp)

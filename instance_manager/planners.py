@@ -1712,7 +1712,7 @@ def posture_rows(
         rows.append(("WARN", "wkhtmltopdf", "not installed — PDF reports will fail"))
     else:
         patched = "with patched qt" in wkhtmltopdf_ver.lower()
-        detail = wkhtmltopdf_ver if patched else f"{wkhtmltopdf_ver} (un-patched — reports may be degraded)"
+        detail = wkhtmltopdf_ver if patched else tf('{} (un-patched — reports may be degraded)', wkhtmltopdf_ver)
         rows.append(("OK" if patched else "WARN", "wkhtmltopdf", detail))
 
     workers_raw = conf_values.get("workers", "").strip()
@@ -1740,7 +1740,7 @@ def posture_rows(
             rows.append((
                 "WARN",
                 "db_sslmode (remote DB)",
-                f"{sslmode or 'unset'} — remote DB traffic may be unencrypted; use require or stricter",
+                tf('{} — remote DB traffic may be unencrypted; use require or stricter', sslmode or 'unset'),
             ))
 
     if conf_values.get("proxy_mode", "").strip().lower() in {"true", "1", "yes"}:

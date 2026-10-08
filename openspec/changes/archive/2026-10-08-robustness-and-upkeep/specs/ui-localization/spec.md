@@ -1,8 +1,5 @@
-# ui-localization Specification
+## MODIFIED Requirements
 
-## Purpose
-Offer the interface in English (canonical) or Spanish: every operator-facing string is an English key with a Spanish entry in one catalog, translated at a few display and input chokepoints, and a missing entry falls back to English.
-## Requirements
 ### Requirement: UI language selection
 
 The tool SHALL treat English as the canonical source language (English string literals in the code) and SHALL let the operator choose the interface language (English or Spanish) at startup, or via the `OIM_LANG` environment variable, defaulting to English, and SHALL render every user-facing surface (menus, prompts, titles, table headers and string row cells, command/plan descriptions, interpolated status messages, and one-off prints) in the chosen language, falling back to the English source for any string without a Spanish translation.
@@ -42,4 +39,3 @@ The tool SHALL treat English as the canonical source language (English string li
 
 - **WHEN** a UI string has no Spanish catalog entry
 - **THEN** the original English string is shown (no error, graceful degrade)
-

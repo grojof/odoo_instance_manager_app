@@ -194,6 +194,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--odoo", action="append", default=[], metavar="MAJOR=PYTHON:CHECKOUT")
     args = parser.parse_args()
+    if not args.odoo:
+        # Nothing to run is not a pass.
+        print("error: give at least one --odoo MAJOR=PYTHON:CHECKOUT; nothing was verified", file=sys.stderr)
+        return 2
     bindir = _postgres_bindir()
     if bindir is None or os.geteuid() == 0:
         print("skip  needs initdb and a non-root user")

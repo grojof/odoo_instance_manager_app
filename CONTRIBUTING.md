@@ -34,10 +34,13 @@ are held to a careful, spec-first standard.
 
 ## Conventions
 
-- Python 3.12+, `from __future__ import annotations`, standard library only (no third-party runtime deps).
+- Python 3.9+ (the host's `python3` on Debian 11), `from __future__ import annotations`, standard library only
+  (no third-party runtime deps). Ruff targets py39, and CI runs the unit suite on 3.9.
 - Files are UTF-8 with LF newlines and a final newline.
 - Conventional Commits in the imperative mood; one logical change per commit. No AI-attribution trailers.
-- Match the surrounding style: small functions, early returns, type hints, Spanish operator-facing strings.
+- Match the surrounding style: small functions, early returns, type hints. Operator-facing strings are English
+  keys passed through `t`/`tf`, with their Spanish in `instance_manager/i18n.py`; a test fails on a missing or an
+  unused entry.
 
 ## Dev loop
 

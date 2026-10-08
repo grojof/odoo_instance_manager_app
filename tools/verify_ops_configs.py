@@ -85,7 +85,12 @@ def _nginx_binary(root: Path, given: str | None) -> Path | None:
         return None
     _run(["dpkg-deb", "-x", str(debs[0]), str(root / "pkg")])
     binary = root / "pkg" / "usr" / "sbin" / "nginx"
-    return binary if binary.exists() else None
+    if not binary.exists():
+        # Some releases split the binary into nginx-core / nginx-common.
+        check("the nginx package holds the nginx binary", not os.environ.get("CI"), str(debs[0]))
+        print(f"skip  {debs[0].name} has no usr/sbin/nginx")
+        return None
+    return binary
 
 
 def _nginx_version(binary: Path) -> tuple[int, int, int] | None:
