@@ -6,6 +6,36 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Delete instance kept no filestore.** Without a `data_dir` in `odoo.conf`, the filestores live in the
+  instance home, which the delete removed even when you answered "No" to deleting the filestore. The data dir
+  is now moved to `/var/backups/<instance>/kept-data-dir-<timestamp>` first; only the filestore you name is
+  deleted. The backup timer is removed too.
+- **Purge dropped other instances' databases.** It selected `<instance>%` (and `_` is a LIKE wildcard), so
+  purging `shop` dropped `shop2` and `shop_eu`. It now selects the databases its role owns and the one named
+  like the instance; look-alikes are listed as not selected. It drops the role you name, and removes the
+  backup timer and the fail2ban jail (fail2ban refuses to start when a jail's log is missing).
+- **Duplicate instance could drop production.** A refresh dropped whatever target database was typed. It now
+  refuses the source instance or database as target and a database owned by another role, and asks before
+  overwriting the target's own. A template copy across roles is refused (its tables would keep the source
+  owner); the template copy now blocks and always reopens the source. Drops use `dropdb --force`.
+- **Scheduled backups reported success when the dump failed**, wrote world-readable dumps, and their retention
+  removed other instances' and other databases' dumps. The script now fails on a failed or unreadable dump, a
+  missing filestore or a failed archive, leaves no partial file, writes private files and prunes per database.
+- **Restore** moves an existing filestore aside instead of deleting it, and hands the restored files to the
+  instance user.
+- **Operator values reached a root shell unquoted** (repo branch, domain, app-server IP, database names, and
+  existence probes that run before the preview). They are validated — database names with Odoo's own pattern —
+  and prompts ask again; probes quote their argument.
+
+### Changed
+
+- Backups are named `<instance>--<db>--<timestamp>` and kept per database; older `<instance>_<timestamp>`
+  files are still pruned, as their own group. Backup directories are private (`700`).
+- Database listings no longer match by name prefix: the role's databases and the one named like it.
+- The duplication confirmation phrase is `DUPLICATE <instance>` (was `DUPLICAR`).
+
 ## [1.2.0] - 2026-07-04
 
 ### Added

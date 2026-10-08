@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 import secrets
 from dataclasses import dataclass
@@ -7,6 +8,71 @@ from typing import ClassVar
 
 INSTANCE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 POSTGRES_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+# A database name as Odoo's own database manager accepts it (DBNAME_PATTERN in
+# odoo/service/db.py), capped at PostgreSQL's 63 bytes. It never starts with `-`,
+# so it cannot be read as an option by createdb/pg_dump/dropdb, and it holds no
+# quote, `$`, space or path separator, so it is safe in SQL, shell and paths.
+DB_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,62}$")
+# A public domain as nginx `server_name` and a certificate CN take it: DNS labels,
+# optionally behind one leading `*.` wildcard.
+DOMAIN_RE = re.compile(
+    r"^(\*\.)?([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
+    r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
+# A git branch to clone: a plain ref name, no `..`, never an option.
+BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
+# The Odoo version as typed at install: a major, optionally with `.0`.
+VERSION_RE = re.compile(r"^[0-9]{1,2}(\.0)?$")
+# A PostgreSQL host: a DNS name, an IPv4/IPv6 literal, or a Unix socket directory.
+DB_HOST_RE = re.compile(
+    r"^([A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|[0-9A-Fa-f:.]{2,45}|/[A-Za-z0-9/._-]{0,200})$"
+)
+
+
+def is_valid_db_name(name: str) -> bool:
+    """True if ``name`` is a database name Odoo accepts and every command can take."""
+    return bool(DB_NAME_RE.fullmatch(name or ""))
+
+
+def domain_error(domain: str) -> str | None:
+    if len(domain or "") <= 253 and DOMAIN_RE.fullmatch(domain or ""):
+        return None
+    return "invalid domain. Use a DNS name such as erp.example.com (optionally *.example.com)."
+
+
+def branch_error(branch: str) -> str | None:
+    value = branch or ""
+    if BRANCH_RE.fullmatch(value) and ".." not in value and not value.endswith((".lock", "/")):
+        return None
+    return "invalid repo branch. Use a branch name such as 18.0."
+
+
+def version_error(version: str) -> str | None:
+    if VERSION_RE.fullmatch(version or ""):
+        return None
+    return "invalid Odoo version. Use a major such as 18 or 18.0."
+
+
+def ip_error(address: str) -> str | None:
+    try:
+        ipaddress.ip_address(address or "")
+    except ValueError:
+        return "invalid IP address. Use an address such as 10.0.0.5."
+    return None
+
+
+def db_host_error(host: str) -> str | None:
+    value = host or ""
+    # Empty is Odoo's own default: connect through the local Unix socket.
+    if value == "" or (DB_HOST_RE.fullmatch(value) and ".." not in value):
+        return None
+    return "invalid DB host. Use a host name, an IP address or a socket directory."
+
+
+def host_cidr(address: str) -> str:
+    """``address`` as a single-host CIDR: ``/32`` for IPv4, ``/128`` for IPv6."""
+    parsed = ipaddress.ip_address(address)
+    return f"{parsed}/{parsed.max_prefixlen}"
 
 # Local (non-networked) DB host markers: an SSL mode is never forced for these.
 LOCAL_DB_HOSTS = frozenset(
@@ -185,6 +251,18 @@ class InstanceConfig:
             errors.append(
                 'invalid db_user for PostgreSQL. Use the format: start with [a-z_] and only [a-z0-9_] (max 63).'
             )
+
+        for error in (
+            version_error(self.version),
+            branch_error(self.repo_branch),
+            domain_error(self.domain),
+            db_host_error(self.db_host),
+            ip_error(self.app_server_ip),
+        ):
+            if error:
+                errors.append(error)
+        if self.db_name and not is_valid_db_name(self.db_name):
+            errors.append("invalid DB name. Use letters, digits, '_', '.' and '-' (2-63, no leading symbol).")
 
         if errors:
             raise ValueError(" ".join(errors))

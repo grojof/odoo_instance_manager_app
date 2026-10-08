@@ -8,9 +8,19 @@ import re
 import uuid
 
 from ..i18n import tf
-from ..models import InstanceConfig
+from ..models import (
+    POSTGRES_IDENTIFIER_RE,
+    InstanceConfig,
+    branch_error,
+    domain_error,
+    is_valid_db_name,
+    version_error,
+)
 from ..planners import (
+    BACKUP_DUMP_SUFFIX,
+    BACKUP_FILESTORE_SUFFIX,
     _is_local_db_host,
+    backup_basename,
     plan_ensure_db_role,
     plan_nginx_http,
     plan_nginx_https,
@@ -27,6 +37,7 @@ from ..prompts import (
 from ..system import (
     Command,
     database_exists,
+    database_owner,
     detect_nginx_version,
     path_exists,
     read_odoo_conf,
@@ -39,7 +50,6 @@ from .common import (
     _ask_db_credentials,
     _execute_plan,
     _filestore_path,
-    _is_safe_path_component,
     _pick_db_name,
     _quote,
     _resolve_data_dir,
@@ -53,48 +63,16 @@ from .install import (
     _suggest_instance_ports,
 )
 
-_SAFE_DB_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$")
+_INVALID_DB_NAME = (
+    "Invalid database name. Use letters, digits, '_', '.' and '-' (2-63 characters, "
+    "starting with a letter or digit)."
+)
 
 
 def _is_safe_db_name(name: str) -> bool:
-    """A PostgreSQL database name safe to interpolate into SQL identifiers and
-    string literals: no quotes, semicolons, or whitespace, max 63 chars."""
-    return bool(_SAFE_DB_NAME_RE.fullmatch(name or ""))
-
-
-def _duplicate_db_command(
-    db_host: str,
-    db_port: int,
-    db_user: str,
-    db_password: str,
-    source_db: str,
-    target_db: str,
-) -> str:
-    """Build the shell script that duplicates ``source_db`` into ``target_db`` via
-    a template copy, freeing the source of active sessions first.
-
-    A ``CREATE DATABASE … TEMPLATE`` needs no other sessions on the template, so we
-    block new connections, terminate existing ones, run ``createdb -T``, and — via a
-    ``trap … EXIT`` — always re-enable connections to the source (even if the copy
-    fails), so the operator never has to stop the source service. Runs as the
-    instance's own role (owner of its database); no superuser needed.
-
-    Callers MUST pass names that satisfy :func:`_is_safe_db_name`; ``source_db`` is
-    interpolated into SQL, the rest are shell-quoted. Executed via ``bash -lc``.
-    """
-    psql = f"psql -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -d postgres"
-    return "\n".join(
-        [
-            "set -e",
-            f"export PGPASSWORD={_quote(db_password)}",
-            # Always re-open the source, even if the copy below fails.
-            f"reenable() {{ {psql} -c 'ALTER DATABASE \"{source_db}\" WITH ALLOW_CONNECTIONS true;' >/dev/null 2>&1 || true; }}",
-            "trap reenable EXIT",
-            f"{psql} -v ON_ERROR_STOP=1 -c 'ALTER DATABASE \"{source_db}\" WITH ALLOW_CONNECTIONS false;'",
-            f"{psql} -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{source_db}' AND pid <> pg_backend_pid();\"",
-            f"createdb -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -T {_quote(source_db)} -O {_quote(db_user)} {_quote(target_db)}",
-        ]
-    )
+    """A database name Odoo accepts, and therefore safe in SQL identifiers and
+    literals, in shell words and as a filestore path component."""
+    return is_valid_db_name(name)
 
 
 def _psql_target(
@@ -176,6 +154,24 @@ def _lock_db_access_commands(db_name: str, owner: str) -> list[Command]:
     ]
 
 
+def _template_copy_script(source_db: str, target_db: str, target_owner: str) -> str:
+    """``createdb -T`` needs no other session on the template, and a running Odoo
+    reconnects at once: so new connections to the source are refused first, its
+    sessions terminated, the copy made, and — through a ``trap … EXIT`` — the source
+    opened again whatever happened. Names MUST be safe (:func:`_is_safe_db_name`)."""
+    psql = "sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -d postgres"
+    return "\n".join(
+        [
+            "set -e",
+            f"reopen() {{ {psql} -c 'ALTER DATABASE \"{source_db}\" WITH ALLOW_CONNECTIONS true;' >/dev/null 2>&1 || true; }}",
+            "trap reopen EXIT",
+            f"{psql} -c 'ALTER DATABASE \"{source_db}\" WITH ALLOW_CONNECTIONS false;'",
+            f"{psql} -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{source_db}' AND pid <> pg_backend_pid();\" >/dev/null",
+            f"sudo -u postgres createdb -T {_quote(source_db)} -O {_quote(target_owner)} {_quote(target_db)}",
+        ]
+    )
+
+
 def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method: str) -> list[Command]:
     """Seed ``target_db`` from ``source_db`` on the **local** server (via
     ``sudo -u postgres``), owned by ``target_owner``, and lock its access down to the
@@ -189,13 +185,8 @@ def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method:
     if method == "template":
         commands = [
             Command(
-                'Terminate connections to the source DB',
-                "sudo -u postgres psql -d postgres -c "
-                f"\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{source_db}' AND pid <> pg_backend_pid();\" || true",
-            ),
-            Command(
-                'Seed target DB via template copy',
-                f"sudo -u postgres createdb -T {_quote(source_db)} -O {_quote(target_owner)} {_quote(target_db)}",
+                'Seed target DB via template copy (source closed to new sessions meanwhile)',
+                _template_copy_script(source_db, target_db, target_owner),
             ),
         ]
     else:
@@ -216,16 +207,14 @@ def _seed_db_commands(source_db: str, target_db: str, target_owner: str, method:
 
 
 def _drop_db_commands(target_db: str) -> list[Command]:
-    """Terminate connections to ``target_db`` and drop it (local, superuser)."""
+    """Drop ``target_db`` on the local server (superuser). ``--force`` (PostgreSQL
+    13+, older than every supported distribution's server) terminates its sessions
+    and refuses new ones in the same statement, so a client reconnecting between a
+    terminate and the drop cannot make it fail halfway through a plan."""
     return [
         Command(
-            'Terminate connections to the target DB',
-            "sudo -u postgres psql -d postgres -c "
-            f"\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{target_db}' AND pid <> pg_backend_pid();\" || true",
-        ),
-        Command(
-            'Drop the target DB (if it exists)',
-            f"sudo -u postgres dropdb --if-exists {_quote(target_db)}",
+            'Drop the target DB (if it exists), closing its sessions',
+            f"sudo -u postgres dropdb --if-exists --force {_quote(target_db)}",
         ),
     ]
 
@@ -238,8 +227,8 @@ def _backup_instance(
     if not db_name:
         print(level_text("INFO", 'No source DB, operation cancelled.'))
         return creds
-    if not _is_safe_path_component(db_name):
-        print(level_text("ERROR", 'Invalid DB name for building the filestore path.'))
+    if not _is_safe_db_name(db_name):
+        print(level_text("ERROR", _INVALID_DB_NAME))
         return creds
 
     db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
@@ -261,17 +250,23 @@ def _backup_instance(
     # One timestamp for the whole operation so the DB dump and the filestore
     # archive of the same backup share a suffix and can be paired.
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    dump_path = f"{backup_dir}/{config.instance}_{ts}.dump"
-    archive_path = f"{backup_dir}/{config.instance}_{ts}.filestore.tar.gz"
+    base = f"{backup_dir}/{backup_basename(config.instance, db_name, ts)}"
+    dump_path = base + BACKUP_DUMP_SUFFIX
+    archive_path = base + BACKUP_FILESTORE_SUFFIX
+    # A dump holds password hashes, API keys and mail/payment secrets: the directory
+    # and every file in it are private to root.
     commands: list[Command] = [
-        Command('Create backup directory', f"mkdir -p {quoted_backup_dir}")
+        Command(
+            'Create the private backup directory',
+            f"install -d -m 700 {quoted_backup_dir} && chmod 700 {quoted_backup_dir}",
+        )
     ]
 
     if backup_mode in {'Database only', 'Database + Filestore'}:
         commands.append(
             Command(
                 'Export DB backup (custom format, atomic)',
-                f"TMP={_quote(dump_path + '.partial')} && "
+                f"umask 077 && TMP={_quote(dump_path + '.partial')} && "
                 f"PGPASSWORD={_quote(db_password)} pg_dump -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -Fc -f \"$TMP\" {_quote(db_name)} && "
                 f"mv \"$TMP\" {_quote(dump_path)} || {{ rm -f \"$TMP\"; exit 1; }}",
             )
@@ -281,9 +276,11 @@ def _backup_instance(
         commands.append(
             Command(
                 'Export filestore backup (atomic)',
-                f"TMP={_quote(archive_path + '.partial')} && "
+                f"umask 077 && TMP={_quote(archive_path + '.partial')} && "
                 f"test -d {_quote(filestore_dir)} && "
-                f"tar -czf \"$TMP\" -C {_quote(filestore_dir)} . && "
+                # GNU tar exits 1 when a file changed while read (Odoo keeps
+                # writing attachments); anything above 1 is a real failure.
+                f"{{ tar --warning=no-file-changed -czf \"$TMP\" -C {_quote(filestore_dir)} . || [ $? -eq 1 ]; }} && "
                 f"mv \"$TMP\" {_quote(archive_path)} || {{ rm -f \"$TMP\"; exit 1; }}",
             )
         )
@@ -306,8 +303,8 @@ def _restore_backup(
         return cached
 
     target_db = ask_text('Target DB', config.instance, required=True)
-    if not _is_safe_path_component(target_db):
-        print(level_text("ERROR", 'Invalid target DB name for building the filestore path.'))
+    if not _is_safe_db_name(target_db):
+        print(level_text("ERROR", _INVALID_DB_NAME))
         return cached
     migration_mode = choose(
         'Operation mode (Odoo equivalent)',
@@ -370,21 +367,32 @@ def _restore_backup(
                 print(level_text("INFO", 'Filestore restore cancelled due to a conflict.'))
                 return creds
 
+        if overwrite_store:
+            # Moved aside, not deleted: attachments created after the archive was
+            # taken are still referenced by the database.
+            kept = f"{target_filestore}.replaced-{datetime.datetime.now():%Y%m%d_%H%M%S}"
+            commands.append(
+                Command(
+                    tf('Move the previous filestore aside to {}', kept),
+                    f"mv -- {_quote(target_filestore)} {_quote(kept)}",
+                )
+            )
         commands.append(
             Command(
                 'Create the filestore base path', f"mkdir -p {_quote(target_filestore)}"
             )
         )
-        if overwrite_store:
-            commands.append(
-                Command(
-                    'Remove the previous filestore', f"rm -rf {_quote(target_filestore)}/*"
-                )
-            )
         commands.append(
             Command(
                 'Restore the filestore into the target',
-                f"tar -xzf {_quote(filestore_backup)} -C {_quote(target_filestore)}",
+                f"tar --no-same-owner -xzf {_quote(filestore_backup)} -C {_quote(target_filestore)}",
+            )
+        )
+        commands.append(
+            Command(
+                'Own the data dir by the instance user (filestore, sessions, …)',
+                f"chown -R {_quote(config.odoo_user)}:{_quote(config.odoo_user)} "
+                f"{_quote(_resolve_data_dir(config))}",
             )
         )
 
@@ -495,6 +503,36 @@ def _replicate_venv_packages_command(
     return Command('Replicate the source venv Python packages', script)
 
 
+def _template_owner_error(source_db: str, target_owner: str) -> str | None:
+    """Why a template copy cannot seed a database for ``target_owner``, or None.
+
+    A template copy keeps every table owned by the source's role; only the database
+    itself gets the new owner. A target role other than the source's would find no
+    privilege on any table."""
+    source_owner = database_owner(source_db)
+    if source_owner is None or source_owner == target_owner:
+        return None
+    return tf(
+        'The template copy keeps the source owner ({}) on every table, so the target role {} could not use them. Choose the pg_dump copy.',
+        source_owner,
+        target_owner,
+    )
+
+
+def _existing_target_error(target_db: str, target_owner: str) -> str | None:
+    """Why an existing ``target_db`` must not be dropped for ``target_owner``, or None
+    (it does not exist, or it already belongs to that role)."""
+    owner = database_owner(target_db)
+    if owner is None or owner == target_owner:
+        return None
+    return tf(
+        'The database {} belongs to role {}, not to the target role {}: it is not the target\'s database and will not be dropped.',
+        target_db,
+        owner,
+        target_owner,
+    )
+
+
 def _plan_refresh_target(
     source_config: InstanceConfig,
     target_config: InstanceConfig,
@@ -504,10 +542,29 @@ def _plan_refresh_target(
     migration_mode: str,
     neutralize: bool,
     duplicate_filestore: bool,
-) -> list[Command]:
-    """Refresh an existing target in place: keep its config/service, replace data."""
+) -> list[Command] | None:
+    """Refresh an existing target in place: keep its config/service, replace data.
+
+    The target's database is dropped only when it belongs to the target's own role
+    and the operator says so: the target name is typed, and a slip must not drop
+    production."""
     existing = read_odoo_conf(target_config.odoo_conf_file)
-    target_owner = existing.get("db_user", target_db)
+    target_owner = existing.get("db_user") or target_config.db_user
+    if not POSTGRES_IDENTIFIER_RE.fullmatch(target_owner):
+        print(level_text("ERROR", tf('Invalid db_user in {}: {}', target_config.odoo_conf_file, target_owner)))
+        return None
+    error = _existing_target_error(target_db, target_owner)
+    if error is None and method == "template":
+        error = _template_owner_error(source_db, target_owner)
+    if error:
+        print(level_text("ERROR", error))
+        return None
+    if database_exists(target_db) and not ask_bool(
+        tf('The target DB {} exists and will be dropped and replaced by a copy of {}. Continue?', target_db, source_db),
+        False,
+    ):
+        print(level_text("INFO", 'Operation cancelled.'))
+        return None
     print(
         level_text(
             "INFO",
@@ -545,6 +602,13 @@ def _plan_replica_target(
     if database_exists(target_db):
         print(level_text("ERROR", tf('Target DB already exists: {}', target_db)))
         return None
+    # The replica's database belongs to its own new role, never the source's.
+    if method == "template":
+        print(level_text("ERROR", _template_owner_error(source_db, target_db) or tf(
+            'A new instance gets its own role ({}); the template copy would leave every table owned by the source role. Choose the pg_dump copy.',
+            target_db,
+        )))
+        return None
 
     branch = _detect_source_repo_branch(source_config)
     if branch:
@@ -552,8 +616,10 @@ def _plan_replica_target(
         match = re.search(r"\d+", branch)
         if match:
             target_config.version = match.group(0)
-    target_config.repo_branch = ask_text('Odoo repo branch (from source)', target_config.repo_branch, required=True)
-    target_config.version = ask_text('Odoo version', target_config.version, required=True)
+    target_config.repo_branch = ask_text(
+        'Odoo repo branch (from source)', target_config.repo_branch, required=True, validate=branch_error
+    )
+    target_config.version = ask_text('Odoo version', target_config.version, required=True, validate=version_error)
 
     suggested_http, suggested_gevent = _suggest_instance_ports(
         target_config.http_port, target_config.gevent_port
@@ -580,7 +646,8 @@ def _plan_replica_target(
     if nginx_mode in {'Configure HTTP', 'Configure HTTPS'}:
         while True:
             target_config.domain = ask_text(
-                'Target public domain (must differ from other instances)', target_config.domain, required=True
+                'Target public domain (must differ from other instances)', target_config.domain, required=True,
+                validate=domain_error,
             )
             if not _nginx_server_name_in_use(target_config.domain):
                 break
@@ -591,7 +658,9 @@ def _plan_replica_target(
                 )
             )
     else:
-        target_config.domain = ask_text('Target public domain', target_config.domain, required=True)
+        target_config.domain = ask_text(
+            'Target public domain', target_config.domain, required=True, validate=domain_error
+        )
 
     wkhtmltopdf_plan = _maybe_plan_wkhtmltopdf()
     replicate_packages = ask_bool(
@@ -649,12 +718,7 @@ def _duplicate_database(
 
     target_db = ask_text('Target DB', "", required=True)
     if not _is_safe_db_name(source_db) or not _is_safe_db_name(target_db):
-        print(
-            level_text(
-                "ERROR",
-                'Unsafe database name (only letters, digits, and _ . - are allowed).',
-            )
-        )
+        print(level_text("ERROR", _INVALID_DB_NAME))
         return creds
     if source_db == target_db:
         print(level_text("ERROR", 'Source and target databases must differ.'))
@@ -684,15 +748,24 @@ def _duplicate_database(
     neutralize = ask_bool('Neutralize the duplicated DB?', True)
     duplicate_filestore = ask_bool('Also duplicate the filestore?', True)
 
+    existing = read_odoo_conf(config.odoo_conf_file)
+    target_owner = existing.get("db_user") or config.db_user or config.instance
+    if not POSTGRES_IDENTIFIER_RE.fullmatch(target_owner):
+        print(level_text("ERROR", tf('Invalid db_user in {}: {}', config.odoo_conf_file, target_owner)))
+        return creds
+    error = _existing_target_error(target_db, target_owner)
+    if error is None and method == "template":
+        error = _template_owner_error(source_db, target_owner)
+    if error:
+        print(level_text("ERROR", error))
+        return creds
+
     overwrite = False
     if database_exists(target_db):
         overwrite = ask_bool(tf('The target DB {} exists — overwrite it?', target_db), False)
         if not overwrite:
             print(level_text("INFO", 'Operation cancelled.'))
             return creds
-
-    existing = read_odoo_conf(config.odoo_conf_file)
-    target_owner = existing.get("db_user") or config.db_user or config.instance
 
     commands: list[Command] = []
     if overwrite:
@@ -706,7 +779,7 @@ def _duplicate_database(
 
     if not confirm_with_phrase(
         'Sensitive duplication action detected.',
-        f"DUPLICAR {config.instance}",
+        f"DUPLICATE {config.instance}",
     ):
         print(level_text("INFO", 'Invalid confirmation. Operation cancelled.'))
         return creds
@@ -736,15 +809,16 @@ def _duplicate_instance(
         return creds
 
     target_instance = ask_text('Target instance name', "", required=True)
+    if target_instance == config.instance:
+        print(level_text("ERROR", 'The target instance must differ from the source instance.'))
+        return creds
     target_db = ask_text('Target DB', target_instance, required=True)
 
     if not _is_safe_db_name(source_db) or not _is_safe_db_name(target_db):
-        print(
-            level_text(
-                "ERROR",
-                'Unsafe database name (only letters, digits, and _ . - are allowed).',
-            )
-        )
+        print(level_text("ERROR", _INVALID_DB_NAME))
+        return creds
+    if source_db == target_db:
+        print(level_text("ERROR", 'Source and target databases must differ.'))
         return creds
 
     target_config = InstanceConfig(instance=target_instance)
@@ -799,7 +873,7 @@ def _duplicate_instance(
 
     if not confirm_with_phrase(
         'Sensitive duplication action detected.',
-        f"DUPLICAR {config.instance}",
+        f"DUPLICATE {config.instance}",
     ):
         print(level_text("INFO", 'Invalid confirmation. Operation cancelled.'))
         return creds

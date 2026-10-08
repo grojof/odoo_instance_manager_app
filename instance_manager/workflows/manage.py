@@ -5,11 +5,12 @@ from __future__ import annotations
 import datetime
 
 from ..i18n import t, tf
-from ..models import InstanceConfig
+from ..models import InstanceConfig, db_host_error, domain_error, is_valid_db_name
 from ..planners import (
     plan_nginx_http,
     plan_nginx_https,
     plan_odoo_base_setup,
+    plan_remove_scheduled_backup,
     posture_rows,
     pretty_paths,
 )
@@ -49,8 +50,8 @@ from .common import (
     _database_exists,
     _execute_plan,
     _filestore_path,
-    _is_safe_path_component,
     _is_self_signed_certificate,
+    _keep_data_dir_commands,
     _probe_databases_for_management,
     _quote,
     _resolve_data_dir,
@@ -383,10 +384,10 @@ def update_existing_configs(instance: str) -> None:
     config.normalize_defaults()
 
     print(t('\nEnter new values (if applicable)'))
-    config.domain = ask_text('Domain', config.domain, required=True)
+    config.domain = ask_text('Domain', config.domain, required=True, validate=domain_error)
     config.http_port = ask_int('Internal HTTP', config.http_port)
     config.gevent_port = ask_int('Internal gevent', config.gevent_port)
-    config.db_host = ask_text('DB host', config.db_host, required=True)
+    config.db_host = ask_text('DB host', config.db_host, required=True, validate=db_host_error)
     config.db_port = ask_int('DB port', config.db_port)
     config.db_user = ask_text('DB user', config.db_user, required=True)
     config.db_password = ask_text('DB password', config.db_password, required=True)
@@ -490,9 +491,30 @@ def _delete_instance(
             f"rm -f {_quote(f'/etc/systemd/system/{config.odoo_service}.service')}",
         ),
         Command('Reload systemd', "systemctl daemon-reload"),
+        *plan_remove_scheduled_backup(config),
         Command(
             'Remove Odoo configuration', f"rm -rf {_quote(config.odoo_conf_dir)}"
         ),
+    ]
+    data_dir = _resolve_data_dir(config)
+    if remove_store:
+        store_db = ask_text(
+            'Filestore DB to delete', db_name or config.instance, required=True
+        )
+        if not is_valid_db_name(store_db):
+            print(level_text("ERROR", "Invalid filestore DB name."))
+            return creds
+        commands.append(
+            Command(
+                'Remove filestore',
+                f"rm -rf {_quote(_filestore_path(config, store_db))}",
+            )
+        )
+    # Removing the home removes whatever lives in it. Without a data_dir in odoo.conf
+    # that is Odoo's whole data dir — every database's filestore — so it is moved
+    # out first: only the filestore the operator named above is deleted.
+    commands.extend(_keep_data_dir_commands(config, data_dir))
+    commands.extend([
         Command('Remove instance home', f"rm -rf {_quote(config.odoo_home)}"),
         Command(
             'Remove Nginx HTTP',
@@ -505,32 +527,13 @@ def _delete_instance(
         Command('Remove instance SSL', f"rm -rf {_quote(config.nginx_ssl_dir)}"),
         Command('Validate Nginx', "nginx -t"),
         Command('Reload Nginx', "systemctl reload nginx || true"),
-    ]
+    ])
 
     if drop_db and db_name:
         commands.append(
             Command(
                 'Delete DB',
                 f"PGPASSWORD={_quote(db_password)} dropdb --if-exists -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} {_quote(db_name)}",
-            )
-        )
-
-    if remove_store:
-        store_db = ask_text(
-            'Filestore DB to delete', db_name or config.instance, required=True
-        )
-        if not _is_safe_path_component(store_db):
-            print(
-                level_text(
-                    "ERROR",
-                    "Invalid filestore DB name ('/', '..' and reserved names are not allowed).",
-                )
-            )
-            return creds
-        commands.append(
-            Command(
-                'Remove filestore',
-                f"rm -rf {_quote(_filestore_path(config, store_db))}",
             )
         )
 

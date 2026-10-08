@@ -4,7 +4,7 @@ import re
 import shlex
 
 from .i18n import tf
-from .models import InstanceConfig
+from .models import InstanceConfig, host_cidr
 from .system import Command
 
 
@@ -652,6 +652,16 @@ def plan_odoo_base_setup(
     return commands
 
 
+def _pg_hba_append_command(config: InstanceConfig) -> str:
+    """Append the app server's rule to pg_hba.conf unless the same line is there.
+    The values are validated (role, IP) and the line is shell-quoted as one word."""
+    rule = f"host    all     {config.db_user}     {host_cidr(config.app_server_ip)}     scram-sha-256"
+    return (
+        'PG_HBA=$(sudo -u postgres psql -X -t -P format=unaligned -c "SHOW hba_file;") && '
+        f'{{ grep -qxF -- {shlex.quote(rule)} "$PG_HBA" || printf \'%s\\n\' {shlex.quote(rule)} >> "$PG_HBA"; }}'
+    )
+
+
 def plan_db_setup(
     config: InstanceConfig, ensure_remote_access: bool = True
 ) -> list[Command]:
@@ -684,7 +694,7 @@ def plan_db_setup(
                 ),
                 Command(
                     'Add pg_hba rule for the app-server IP',
-                    f'PG_HBA=$(sudo -u postgres psql -t -P format=unaligned -c "SHOW hba_file;") && grep -q "host    all     {config.db_user}     {config.app_server_ip}/32     scram-sha-256" "$PG_HBA" || echo "host    all     {config.db_user}     {config.app_server_ip}/32     scram-sha-256" | sudo tee -a "$PG_HBA" >/dev/null',
+                    _pg_hba_append_command(config),
                 ),
                 Command('Restart PostgreSQL', "systemctl restart postgresql"),
             ]
@@ -915,24 +925,69 @@ def plan_ensure_self_signed_certs(config: InstanceConfig) -> list[Command]:
     ]
 
 
+_TIMESTAMP_GLOB = "[0-9]" * 8 + "_" + "[0-9]" * 6
+BACKUP_DUMP_SUFFIX = ".dump"
+BACKUP_FILESTORE_SUFFIX = ".filestore.tar.gz"
+
+
+def backup_prefix(instance: str, db_name: str) -> str:
+    """The name every backup of ``db_name`` for ``instance`` starts with.
+
+    Both halves are in the name so retention keeps N backups of one database:
+    keyed on the instance alone, instance ``shop`` pruned ``shop_eu``'s dumps and a
+    test database's backups pushed production's out of the window."""
+    return f"{instance}--{db_name}--"
+
+
+def backup_basename(instance: str, db_name: str, timestamp: str) -> str:
+    return f"{backup_prefix(instance, db_name)}{timestamp}"
+
+
+def _prune_command(dir_word: str, glob_word: str, keep: int) -> str:
+    """Delete the files in a directory matching a glob beyond the ``keep`` newest.
+
+    Both arguments are shell words the caller has already quoted (a literal path, or
+    a quoted ``"$VAR"`` in a script). ``find`` exits 0 when nothing matches, so the
+    command is safe under ``set -euo pipefail``; the glob is exact (prefix +
+    timestamp + suffix), so it never reaches another instance's or database's files."""
+    return (
+        f"find {dir_word} -maxdepth 1 -type f -name {glob_word} "
+        "-printf '%T@ %p\\n' | sort -rn | tail -n +" + str(int(keep) + 1) + " "
+        "| cut -d' ' -f2- | xargs -r -d '\\n' rm -f --"
+    )
+
+
 def plan_backup_retention(
-    config: InstanceConfig, backup_dir: str, keep: int
+    config: InstanceConfig, backup_dir: str, keep: int, db_names: list[str]
 ) -> list[Command]:
-    """Delete an instance's oldest backup artifacts, keeping the `keep` newest of
-    each kind (DB dumps and filestore archives)."""
-    qdir = shlex.quote(backup_dir)
+    """Delete an instance's oldest backups, keeping the ``keep`` newest of each kind
+    (DB dumps and filestore archives) **per database**. Backups written before the
+    names carried the database (``<instance>_<timestamp>``) are pruned as one more
+    group, matched exactly."""
     commands: list[Command] = []
-    for pattern, label in (
-        (f"{config.instance}_*.dump", 'DB dumps'),
-        (f"{config.instance}_*.filestore.tar.gz", 'filestore archives'),
-    ):
-        commands.append(
-            Command(
-                tf('Delete old {} (keep the {} most recent)', label, keep),
-                f"ls -1t {qdir}/{pattern} 2>/dev/null | tail -n +{keep + 1} | xargs -r rm -f",
+    groups = [(backup_prefix(config.instance, db), db) for db in db_names]
+    groups.append((f"{config.instance}_", tf("{} (old names)", config.instance)))
+    for prefix, label in groups:
+        for suffix, kind in (
+            (BACKUP_DUMP_SUFFIX, 'DB dumps'),
+            (BACKUP_FILESTORE_SUFFIX, 'filestore archives'),
+        ):
+            commands.append(
+                Command(
+                    tf('Delete old {} of {} (keep the {} most recent)', kind, label, keep),
+                    _prune_command(
+                        shlex.quote(backup_dir),
+                        shlex.quote(f"{prefix}{_TIMESTAMP_GLOB}{suffix}"),
+                        keep,
+                    ),
+                )
             )
-        )
     return commands
+
+
+def _script_glob(suffix: str) -> str:
+    """The backup-name glob as a script word: ``$PREFIX`` expanded, the rest literal."""
+    return '"$PREFIX"' + shlex.quote(_TIMESTAMP_GLOB + suffix)
 
 
 def _scheduled_backup_script(
@@ -943,26 +998,49 @@ def _scheduled_backup_script(
     keep: int,
     include_filestore: bool,
 ) -> str:
-    inst = config.instance
-    filestore_block = ""
+    """The script the timer runs. Every value is shell-quoted, files are private
+    (``umask 077``), a partial file never survives (trap), and the script exits
+    non-zero whenever the dump, its check or the archive failed — so the unit shows
+    failed instead of reporting a backup that is not there."""
+    prefix = backup_prefix(config.instance, db_name)
+    lines = [
+        "#!/usr/bin/env bash",
+        "# Generated by odoo-instance-manager — scheduled backup.",
+        "set -euo pipefail",
+        "umask 077",
+        f"BACKUP_DIR={shlex.quote(backup_dir)}",
+        f"DB={shlex.quote(db_name)}",
+        f"PREFIX={shlex.quote(prefix)}",
+        "TS=$(date +%Y%m%d_%H%M%S)",
+        'PARTIAL=""',
+        'cleanup() { if [ -n "$PARTIAL" ]; then rm -f -- "$PARTIAL"; fi; }',
+        "trap cleanup EXIT",
+        'install -d -m 700 "$BACKUP_DIR"',
+        'chmod 700 "$BACKUP_DIR"',
+        'PARTIAL="$BACKUP_DIR/$PREFIX$TS.dump.partial"',
+        # root writes the file, into its own private directory; postgres only reads.
+        "# shellcheck disable=SC2024",
+        'sudo -u postgres pg_dump -Fc -- "$DB" > "$PARTIAL"',
+        # A truncated or empty dump has no readable table of contents.
+        'pg_restore --list "$PARTIAL" > /dev/null',
+        f'mv -- "$PARTIAL" "$BACKUP_DIR/$PREFIX$TS{BACKUP_DUMP_SUFFIX}"',
+        'PARTIAL=""',
+        _prune_command('"$BACKUP_DIR"', _script_glob(BACKUP_DUMP_SUFFIX), keep),
+    ]
     if include_filestore:
-        filestore_block = f'''
-if [ -d "$FILESTORE" ]; then
-  TMPF="$BACKUP_DIR/{inst}_${{TS}}.filestore.tar.gz.partial"
-  tar -czf "$TMPF" -C "$FILESTORE" . && mv "$TMPF" "$BACKUP_DIR/{inst}_${{TS}}.filestore.tar.gz"
-fi
-ls -1t "$BACKUP_DIR/{inst}"_*.filestore.tar.gz 2>/dev/null | tail -n +$(({keep}+1)) | xargs -r rm -f
-'''
-    return f'''#!/usr/bin/env bash
-set -euo pipefail
-BACKUP_DIR="{backup_dir}"
-FILESTORE="{filestore_dir}"
-TS=$(date +%Y%m%d_%H%M%S)
-mkdir -p "$BACKUP_DIR"
-TMP="$BACKUP_DIR/{inst}_${{TS}}.dump.partial"
-sudo -u postgres pg_dump -Fc {shlex.quote(db_name)} > "$TMP" && mv "$TMP" "$BACKUP_DIR/{inst}_${{TS}}.dump"
-ls -1t "$BACKUP_DIR/{inst}"_*.dump 2>/dev/null | tail -n +$(({keep}+1)) | xargs -r rm -f
-{filestore_block}'''
+        lines += [
+            f"FILESTORE={shlex.quote(filestore_dir)}",
+            'if [ ! -d "$FILESTORE" ]; then echo "Filestore not found: $FILESTORE" >&2; exit 1; fi',
+            'PARTIAL="$BACKUP_DIR/$PREFIX$TS.filestore.tar.gz.partial"',
+            # Exit 1 is GNU tar's "a file changed while read": Odoo keeps writing
+            # attachments, and every file already archived is complete.
+            'rc=0; tar --warning=no-file-changed -czf "$PARTIAL" -C "$FILESTORE" . || rc=$?',
+            'if [ "$rc" -gt 1 ]; then exit "$rc"; fi',
+            f'mv -- "$PARTIAL" "$BACKUP_DIR/$PREFIX$TS{BACKUP_FILESTORE_SUFFIX}"',
+            'PARTIAL=""',
+            _prune_command('"$BACKUP_DIR"', _script_glob(BACKUP_FILESTORE_SUFFIX), keep),
+        ]
+    return "\n".join(lines) + "\n"
 
 
 def _scheduled_backup_service(name: str, script_path: str, instance: str) -> str:
@@ -972,6 +1050,7 @@ After=postgresql.service
 
 [Service]
 Type=oneshot
+UMask=0077
 ExecStart={script_path}
 '''
 

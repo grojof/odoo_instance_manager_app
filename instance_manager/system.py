@@ -72,36 +72,58 @@ def command_ok(command: str) -> bool:
     return run(command, check=False).returncode == 0
 
 
+# Probes run before any plan is previewed, so every value they take is quoted here
+# rather than trusted to have been validated by the caller.
+
+
 def user_exists(username: str) -> bool:
-    return command_ok(f"id -u '{username}' >/dev/null 2>&1")
+    return command_ok(f"id -u -- {shlex.quote(username)} >/dev/null 2>&1")
 
 
 def service_exists(service_name: str) -> bool:
-    return command_ok(f"systemctl cat '{service_name}' >/dev/null 2>&1")
+    return command_ok(f"systemctl cat -- {shlex.quote(service_name)} >/dev/null 2>&1")
 
 
 def service_active(service_name: str) -> bool:
-    return command_ok(f"systemctl is-active --quiet '{service_name}'")
+    return command_ok(f"systemctl is-active --quiet -- {shlex.quote(service_name)}")
 
 
 def service_enabled(service_name: str) -> bool:
-    return command_ok(f"systemctl is-enabled --quiet '{service_name}'")
+    return command_ok(f"systemctl is-enabled --quiet -- {shlex.quote(service_name)}")
 
 
 def path_exists(path: str) -> bool:
-    return command_ok(f"test -e '{path}'")
+    return command_ok(f"test -e {shlex.quote(path)}")
+
+
+def sql_literal(value: str) -> str:
+    """``value`` as a quoted SQL string literal."""
+    return "'" + (value or "").replace("'", "''") + "'"
+
+
+def _local_psql_value(sql: str) -> str | None:
+    """The single value ``sql`` returns on the local server, as postgres; None when
+    the query cannot run."""
+    result = run(f"sudo -u postgres psql -X -tA -d postgres -c {shlex.quote(sql)}", check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def db_role_exists(role_name: str) -> bool:
-    query = f"sudo -u postgres psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='{role_name}'\""
-    result = run(query, check=False)
-    return result.returncode == 0 and "1" in result.stdout
+    return _local_psql_value(f"SELECT 1 FROM pg_roles WHERE rolname = {sql_literal(role_name)}") == "1"
 
 
 def database_exists(db_name: str) -> bool:
-    query = f"sudo -u postgres psql -tAc \"SELECT 1 FROM pg_database WHERE datname='{db_name}'\""
-    result = run(query, check=False)
-    return result.returncode == 0 and "1" in result.stdout
+    return _local_psql_value(f"SELECT 1 FROM pg_database WHERE datname = {sql_literal(db_name)}") == "1"
+
+
+def database_owner(db_name: str) -> str | None:
+    """The role owning ``db_name`` on the local server, or None when it does not
+    exist (or the server cannot be queried)."""
+    owner = _local_psql_value(
+        "SELECT r.rolname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
+        f"WHERE d.datname = {sql_literal(db_name)}"
+    )
+    return owner or None
 
 
 def preview_commands(commands: list[Command]) -> None:
@@ -255,8 +277,10 @@ def list_databases(
     owner: str = "",
 ) -> tuple[list[str], str | None]:
     """List non-template databases. When ``owner`` is a safe role name, the list is
-    scoped to databases owned by that role or whose name starts with it — so managing
-    an instance shows only its own databases, not every database on the server."""
+    scoped to databases owned by that role or named exactly like it — so managing an
+    instance shows only its own databases. A name prefix is not used: instance
+    ``shop`` would otherwise list ``shop2`` and ``shop_eu``, and ``_`` is a LIKE
+    wildcard."""
     quoted_password = shlex.quote(db_password)
     quoted_host = shlex.quote(db_host)
     quoted_user = shlex.quote(db_user)
@@ -264,7 +288,7 @@ def list_databases(
         select = (
             "SELECT d.datname FROM pg_database d JOIN pg_roles r ON d.datdba = r.oid "
             "WHERE d.datistemplate = false "
-            f"AND (r.rolname = '{owner}' OR d.datname LIKE '{owner}%') "
+            f"AND (r.rolname = {sql_literal(owner)} OR d.datname = {sql_literal(owner)}) "
             "ORDER BY d.datname;"
         )
     else:

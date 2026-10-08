@@ -20,9 +20,12 @@ only inspection commands (`du`, `df`, `ls`).
 
 ## Prune old backups (retention)
 
-Removes the oldest backups, **keeping the N most recent of each kind** — DB dumps (`*.dump`) and filestore
-archives (`*.filestore.tar.gz`) are counted separately. You choose N; the plan is previewed before it runs, so
-you see exactly which files will be deleted. A missing backup directory is a no-op.
+Removes the oldest backups, **keeping the N most recent of each kind per database** — DB dumps (`.dump`) and
+filestore archives (`.filestore.tar.gz`) are counted separately. Only names of the exact form
+`<instance>--<db>--<timestamp>` are matched, so backups of another instance whose name starts the same way
+(`shop_eu` next to `shop`) are never touched. Backups written before the database was part of the name
+(`<instance>_<timestamp>`) are pruned as one more group. You choose N; the plan is previewed before it runs. A
+missing backup directory is a no-op.
 
 ## Related
 

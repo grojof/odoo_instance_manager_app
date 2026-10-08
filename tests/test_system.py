@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import shlex
 import subprocess
 import unittest
 from unittest import mock
@@ -62,10 +63,12 @@ class ListDatabasesOwnerScopeTests(unittest.TestCase):
             system.list_databases("127.0.0.1", 5432, "shop", "pw", **kwargs)  # type: ignore[arg-type]
         return captured["cmd"]
 
-    def test_owner_scopes_by_role_and_prefix(self) -> None:
+    def test_owner_scopes_by_role_and_exact_name(self) -> None:
         cmd = self._captured_query(owner="shop")
         self.assertIn("r.rolname = 'shop'", cmd)
-        self.assertIn("d.datname LIKE 'shop%'", cmd)
+        self.assertIn("d.datname = 'shop'", cmd)
+        # No name prefix: instance `shop` must not list `shop2` or `shop_eu`.
+        self.assertNotIn("LIKE", cmd)
 
     def test_no_owner_lists_all(self) -> None:
         cmd = self._captured_query()
@@ -75,6 +78,35 @@ class ListDatabasesOwnerScopeTests(unittest.TestCase):
     def test_unsafe_owner_falls_back_to_unfiltered(self) -> None:
         cmd = self._captured_query(owner="a';DROP DATABASE x;--")
         self.assertNotIn("rolname", cmd)
+
+
+class ProbeQuotingTests(unittest.TestCase):
+    """Probes run before any preview, so they quote what they are given."""
+
+    def _captured(self, probe, value: str) -> str:
+        captured: dict[str, str] = {}
+
+        def fake_run(cmd: str, check: bool = False) -> subprocess.CompletedProcess:
+            captured["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+
+        with mock.patch.object(system, "run", fake_run):
+            probe(value)
+        return captured["cmd"]
+
+    def test_shell_probes_quote_their_argument(self) -> None:
+        hostile = "x'; touch /tmp/pwned; '"
+        for probe in (system.path_exists, system.user_exists, system.service_exists):
+            with self.subTest(probe=probe.__name__):
+                cmd = self._captured(probe, hostile)
+                self.assertIn(shlex.quote(hostile), cmd)
+
+    def test_sql_probes_escape_their_argument(self) -> None:
+        for probe in (system.database_exists, system.db_role_exists, system.database_owner):
+            with self.subTest(probe=probe.__name__):
+                cmd = self._captured(probe, "o'brien$(id)")
+                sql = shlex.split(cmd)[-1]  # the -c argument, as psql receives it
+                self.assertIn("= 'o''brien$(id)'", sql)
 
 
 if __name__ == "__main__":

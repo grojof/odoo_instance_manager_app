@@ -7,6 +7,8 @@ module — so importing it never creates a cycle.
 
 from __future__ import annotations
 
+import datetime
+import os
 import shlex
 from dataclasses import dataclass
 
@@ -139,22 +141,6 @@ def _validate_instance_or_abort(instance: str) -> InstanceConfig | None:
     return config
 
 
-def _is_safe_path_component(name: str) -> bool:
-    """True if ``name`` is safe to embed as a single filesystem path component.
-
-    Guards against path traversal when an operator-entered database name is
-    interpolated into a filestore path that is created, archived, or deleted.
-    """
-    return (
-        bool(name)
-        and "/" not in name
-        and "\\" not in name
-        and "\x00" not in name
-        and name not in {".", ".."}
-        and not name.startswith(".")
-    )
-
-
 def _probe_databases_for_management(instance: str) -> tuple[str, str | None, list[str]]:
     db_name = ""
     db_error: str | None = None
@@ -198,6 +184,36 @@ def _resolve_data_dir(config: InstanceConfig) -> str:
 def _filestore_path(config: InstanceConfig, db_name: str) -> str:
     data_dir = _resolve_data_dir(config)
     return f"{data_dir}/filestore/{db_name}"
+
+
+def _is_inside(path: str, directory: str) -> bool:
+    """True if ``path`` is ``directory`` or lies under it (lexically, normalised)."""
+    path_n, dir_n = os.path.normpath(path), os.path.normpath(directory)
+    return path_n == dir_n or path_n.startswith(dir_n.rstrip("/") + "/")
+
+
+def _kept_data_dir_path(config: InstanceConfig, timestamp: str) -> str:
+    return f"/var/backups/{config.instance}/kept-data-dir-{timestamp}"
+
+
+def _keep_data_dir_commands(
+    config: InstanceConfig, data_dir: str, timestamp: str | None = None
+) -> list[Command]:
+    """Commands that move the instance's data dir out of its home before the home is
+    removed, into a private directory under ``/var/backups/<instance>``. Nothing when
+    the data dir lives elsewhere (``data_dir`` set outside the home)."""
+    if not _is_inside(data_dir, config.odoo_home):
+        return []
+    ts = timestamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    kept = _kept_data_dir_path(config, ts)
+    parent = kept.rsplit("/", 1)[0]
+    return [
+        Command(
+            tf('Keep the data dir (filestores) out of the home: move it to {}', kept),
+            f"if [ -d {_quote(data_dir)} ]; then install -d -m 700 {_quote(parent)} && "
+            f"mv -- {_quote(data_dir)} {_quote(kept)}; fi",
+        )
+    ]
 
 
 @dataclass(frozen=True)

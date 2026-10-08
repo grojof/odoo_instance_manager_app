@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import re
+
 from ..i18n import tf
 from ..models import InstanceConfig
-from ..planners import plan_backup_retention
+from ..planners import BACKUP_DUMP_SUFFIX, BACKUP_FILESTORE_SUFFIX, plan_backup_retention
 from ..prompts import ask_int, ask_text, choose
 from ..system import path_exists, run
 from ..ui import level_text, render_table, title
@@ -50,14 +53,28 @@ def _disk_usage_report(config: InstanceConfig, backup_dir: str) -> None:
         print(listing.stdout.strip() or '(no backups)')
 
 
+def _backed_up_databases(config: InstanceConfig, backup_dir: str) -> list[str]:
+    """The databases this instance has backups of in ``backup_dir``, read from the
+    names (``<instance>--<db>--<timestamp>``)."""
+    pattern = re.compile(
+        rf"^{re.escape(config.instance)}--(?P<db>.+)--\d{{8}}_\d{{6}}"
+        rf"(?:{re.escape(BACKUP_DUMP_SUFFIX)}|{re.escape(BACKUP_FILESTORE_SUFFIX)})$"
+    )
+    try:
+        names = os.listdir(backup_dir)
+    except OSError:
+        return []
+    return sorted({m.group("db") for m in map(pattern.match, names) if m})
+
+
 def _cleanup_old_backups(config: InstanceConfig, backup_dir: str) -> None:
     if not path_exists(backup_dir):
         print(level_text("INFO", tf('Backup directory does not exist: {}', backup_dir)))
         return
     keep = ask_int(
-        'How many recent backups to keep (per kind)?', 5, min_value=1, max_value=365
+        'How many recent backups to keep (per database and kind)?', 5, min_value=1, max_value=365
     )
-    commands = plan_backup_retention(config, backup_dir, keep)
+    commands = plan_backup_retention(config, backup_dir, keep, _backed_up_databases(config, backup_dir))
     _execute_plan(commands)
 
 

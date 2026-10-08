@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import getpass
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from .i18n import current_language, t, tf
@@ -45,17 +46,29 @@ def _validate_selected_path_extension(
     return ask_bool('Use this file anyway?', False)
 
 
-def ask_text(label: str, default: str | None = None, required: bool = False) -> str:
+def ask_text(
+    label: str,
+    default: str | None = None,
+    required: bool = False,
+    validate: Callable[[str], str | None] | None = None,
+) -> str:
+    """Read a line. ``validate`` returns an error for a value it refuses (the
+    operator is asked again) or None; an empty optional answer is not validated."""
     while True:
         suffix = f" [{default}]" if default is not None else ""
         value = input(f"{prompt_label(label)}{suffix}: ").strip()
-        if value:
-            return value
-        if default is not None:
-            return default
-        if not required:
-            return ""
-        print(level_text("ERROR", 'Value is required.'))
+        if not value and default is not None:
+            value = default
+        if not value:
+            if not required:
+                return ""
+            print(level_text("ERROR", 'Value is required.'))
+            continue
+        error = validate(value) if validate else None
+        if error:
+            print(level_text("ERROR", error))
+            continue
+        return value
 
 
 def ask_int(label: str, default: int, min_value: int = 1, max_value: int = 65535) -> int:

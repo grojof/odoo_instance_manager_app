@@ -26,8 +26,8 @@ Every host-mutating action follows one pipeline:
    `list[Command]`, where each `Command` is a `(description, command)` pair. Building a command never runs it.
 2. **Preview** — `preview_commands` renders the full, numbered plan to the operator before anything executes.
 3. **Confirm** — the operator explicitly confirms; **destructive or data-altering** actions additionally
-   require typing an exact phrase (e.g. `ELIMINAR <instance>`, `RESTORE <instance>`, `DUPLICAR <instance>`,
-   `ELIMINAR-TODO <instance>`) via `confirm_with_phrase`.
+   require typing an exact phrase (e.g. `DELETE <instance>`, `RESTORE <instance>`, `DUPLICATE <instance>`,
+   `DELETE-ALL <instance>`) via `confirm_with_phrase`.
 4. **Apply** — `apply_commands` runs the plan, re-checking root first; on a failed install a best-effort
    cleanup removes that instance's residues so the operation can be retried cleanly.
 
