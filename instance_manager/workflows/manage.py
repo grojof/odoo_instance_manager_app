@@ -32,6 +32,7 @@ from ..system import (
     detect_nginx_version,
     path_exists,
     pg_env,
+    read_conf_other_sections,
     read_odoo_conf,
     service_active,
     service_exists,
@@ -492,6 +493,7 @@ def update_existing_configs(instance: str) -> None:
             existing,
             new_db_password=new_db_password,
             restart=service_active(config.odoo_service),
+            other_sections=read_conf_other_sections(config.odoo_conf_file),
         )
     )
     if new_db_password and config.is_remote_db_host:

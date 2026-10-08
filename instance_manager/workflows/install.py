@@ -34,11 +34,13 @@ from ..planners import (
     plan_uv_python,
     resolve_wkhtmltopdf_asset,
 )
-from ..prompts import ask_bool, ask_int, ask_text, choose, select_file_path
+from ..prompts import ask_bool, ask_int, ask_secret, ask_text, choose, select_file_path
 from ..system import (
     Command,
     apply_commands,
+    apt_candidate,
     db_role_absent,
+    db_role_exists,
     detect_arch,
     detect_cpu_count,
     detect_host_python,
@@ -149,7 +151,7 @@ def _prompt_production_hardening(config: InstanceConfig) -> None:
         print(
             level_text(
                 "INFO",
-                'Database manager disabled (list_db = False). Create the first database via CLI (odoo-bin -d <db> -i base --stop-after-init) or by temporarily re-enabling it.',
+                'Database manager disabled (list_db = False). Create the first database as the instance user: sudo -u <instance> <home>/venv/bin/python <home>/odoo/odoo-bin -c <odoo.conf> -d <db> -i base --stop-after-init, or re-enable the manager for a while.',
             )
         )
 
@@ -202,6 +204,11 @@ def _prompt_production_hardening(config: InstanceConfig) -> None:
             'prefer (allows cleartext fallback)': "prefer",
             'disable': "disable",
         }.get(selection, "require")
+        if config.db_sslmode == "verify-full":
+            print(level_text("WARN", tf(
+                "verify-full checks the server against a CA: place it at {}/.postgresql/root.crt, readable by the instance user, before the install runs.",
+                config.odoo_home,
+            )))
         if config.db_sslmode in {"prefer", "disable"}:
             print(
                 level_text(
@@ -218,7 +225,10 @@ def _maybe_plan_wkhtmltopdf() -> list[Command]:
     OS codename to pick the verified patched build."""
     os_release = detect_os_release()
     codename = os_release.get("VERSION_CODENAME", "")
-    has_patched = resolve_wkhtmltopdf_asset(codename) is not None
+    arch = detect_arch()
+    has_patched = resolve_wkhtmltopdf_asset(codename, arch) is not None
+    # Debian 13 and Ubuntu 26.04 ship no wkhtmltopdf package.
+    has_distro = bool(apt_candidate("wkhtmltopdf"))
 
     print(
         level_text(
@@ -229,12 +239,13 @@ def _maybe_plan_wkhtmltopdf() -> list[Command]:
     options: list[str] = []
     if has_patched:
         options.append('Patched 0.12.6 (recommended, checksum-verified)')
-    options.append('Distribution package (un-patched, reduced fidelity)')
+    if has_distro:
+        options.append('Distribution package (un-patched, reduced fidelity)')
     options.append('Skip (PDF reports will fail until installed)')
 
     selection = choose('wkhtmltopdf installation', options, default_index=0)
     if selection.startswith('Patched'):
-        return plan_install_wkhtmltopdf("patched", codename)
+        return plan_install_wkhtmltopdf("patched", codename, arch)
     if selection.startswith('Distribution'):
         return plan_install_wkhtmltopdf("distro")
     if not has_patched and selection == "":
@@ -307,6 +318,9 @@ def _collect_instance_config(with_odoo: bool = True) -> InstanceConfig:
 
         config.http_port = ask_int('Internal Odoo HTTP port', suggested_http)
         config.gevent_port = ask_int('Internal Odoo gevent port', suggested_gevent)
+        while config.gevent_port == config.http_port:
+            print(level_text("ERROR", 'The gevent port must differ from the HTTP port.'))
+            config.gevent_port = ask_int('Internal Odoo gevent port', suggested_gevent)
         config.db_host = ask_text('DB host', config.db_host, required=True, validate=db_host_error)
         config.db_port = ask_int('DB port', config.db_port)
         config.db_user = ask_text('DB user', config.instance, required=True)
@@ -398,7 +412,7 @@ def _build_partial_install_cleanup(
         commands.append(
             Command(
                 '[Cleanup] Remove the instance PostgreSQL role (if it exists)',
-                "sudo -u postgres psql -X -v ON_ERROR_STOP=1 -c "
+                f"sudo -u postgres psql -X -p {int(config.db_port)} -v ON_ERROR_STOP=1 -c "
                 + _quote('DROP ROLE IF EXISTS "' + config.db_user + '";') + " || true",
             )
         )
@@ -623,15 +637,42 @@ def _suggest_instance_ports(base_http: int, base_gevent: int) -> tuple[int, int]
     return base_http, base_gevent
 
 
+def _existing_role_password(config: InstanceConfig) -> bool | None:
+    """When the local role exists already, the password odoo.conf gets must be its
+    password: set it to the one entered (``True``), or keep it and take it from the
+    operator (``False``). ``None``: cancelled."""
+    if config.is_remote_db_host or not db_role_exists(config.db_user):
+        return False
+    choice = choose(
+        tf('The PostgreSQL role {} already exists. Which password should this instance use?', config.db_user),
+        [
+            'Set the role to the password entered (update other instances that use it)',
+            "Keep the role's password (type it now)",
+            'Cancel',
+        ],
+        default_index=None,
+    )
+    if choice in {"", 'Cancel'}:
+        return None
+    if choice.startswith('Set'):
+        return True
+    config.db_password = ask_secret(tf('Current password of role {}', config.db_user))
+    return False
+
+
 def install_odoo_only() -> None:
     config = _collect_instance_config()
+    reset_password = _existing_role_password(config)
+    if reset_password is None:
+        print(level_text("INFO", 'Operation cancelled.'))
+        return
     service_autostart = ask_bool(
         'Enable the Odoo service to start on boot?',
         True,
     )
     commands: list[Command] = []
     commands.extend(_plan_runtime(config))
-    commands.extend(plan_ensure_db_role(config))
+    commands.extend(plan_ensure_db_role(config, reset_password))
     commands.extend(plan_odoo_base_setup(config, service_autostart=service_autostart))
     commands.extend(_maybe_plan_wkhtmltopdf())
 
@@ -652,17 +693,25 @@ def install_odoo_only() -> None:
 
 def install_db_only() -> None:
     config = _collect_instance_config(with_odoo=False)
+    reset_password = _existing_role_password(config)
+    if reset_password is None:
+        print(level_text("INFO", 'Operation cancelled.'))
+        return
     ensure_remote_access = ask_bool(
         'Configure listen_addresses and pg_hba for remote access?', True
     )
     # Dropped on failure only if this run creates it: an existing role is reused.
     role_is_new = db_role_absent(config.db_user)
-    commands = plan_db_setup(config, ensure_remote_access=ensure_remote_access)
+    commands = plan_db_setup(config, ensure_remote_access=ensure_remote_access, reset_password=reset_password)
     _execute_install_with_cleanup(commands, config, cleanup_db_role=role_is_new, with_odoo=False)
 
 
 def install_odoo_and_db() -> None:
     config = _collect_instance_config()
+    reset_password = _existing_role_password(config)
+    if reset_password is None:
+        print(level_text("INFO", 'Operation cancelled.'))
+        return
     service_autostart = ask_bool(
         'Enable the Odoo service to start on boot?',
         True,
@@ -672,7 +721,7 @@ def install_odoo_and_db() -> None:
     commands.extend(_plan_runtime(config))
     # Odoo and PostgreSQL on one host talk over loopback: nothing is opened to the
     # network (listen_addresses stays local, no pg_hba rule is added).
-    commands.extend(plan_db_setup(config, ensure_remote_access=False))
+    commands.extend(plan_db_setup(config, ensure_remote_access=False, reset_password=reset_password))
     commands.extend(plan_odoo_base_setup(config, service_autostart=service_autostart))
     commands.extend(_maybe_plan_wkhtmltopdf())
 

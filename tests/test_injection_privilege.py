@@ -154,7 +154,7 @@ class SecretFormTests(unittest.TestCase):
         config.normalize_defaults()
         config.db_password = "a$$b$oim0$c"
         sql = planners._db_role_create_if_missing_sql(config)
-        self.assertTrue(sql.startswith("DO $oim1$ "))
+        self.assertTrue(sql.startswith("SET password_encryption = 'scram-sha-256'; DO $oim1$ "))
         self.assertTrue(sql.endswith("$oim1$;"))
 
 

@@ -139,7 +139,7 @@ def _wkhtmltopdf(root: Path) -> None:
         calls.unlink(missing_ok=True)
         planners_asset = ("https://example.invalid/w.deb", "w.deb", digest)
         original = planners.resolve_wkhtmltopdf_asset
-        planners.resolve_wkhtmltopdf_asset = lambda codename, asset=planners_asset: asset
+        planners.resolve_wkhtmltopdf_asset = lambda codename, arch="x86_64", asset=planners_asset: asset
         try:
             step = planners.plan_install_wkhtmltopdf("patched", "noble")[-1]
         finally:

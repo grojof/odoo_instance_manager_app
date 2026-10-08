@@ -42,10 +42,24 @@ class InterpreterChoiceTests(unittest.TestCase):
         self.assertEqual(support.choose_python(support.ODOO_SUPPORT[12], "3.12")[1], support.UV)
         self.assertEqual(support.choose_python(support.ODOO_SUPPORT[13], "3.8"), ("3.8", support.HOST))
 
-    def test_python_310_is_avoided_from_16(self) -> None:
-        # 16-19 pin gevent==21.8.0 for 3.10, which pip cannot build.
-        self.assertEqual(support.choose_python(support.ODOO_SUPPORT[16], "3.10"), ("3.12", support.UV))
-        self.assertEqual(support.choose_python(support.ODOO_SUPPORT[15], "3.10"), ("3.10", support.HOST))
+    def test_the_gevent_2108_rows_are_avoided(self) -> None:
+        # Each branch's requirements.txt pins gevent==21.8.0, which pip cannot build,
+        # for: 14 > 3.9, 15 3.10-3.11, 16-19 3.10.
+        for major, python, expected in ((14, "3.10", ("3.8", support.UV)), (15, "3.10", ("3.12", support.UV)),
+                                        (15, "3.11", ("3.12", support.UV)), (16, "3.10", ("3.12", support.UV)),
+                                        (19, "3.10", ("3.12", support.UV)), (15, "3.12", ("3.12", support.HOST)),
+                                        (16, "3.11", ("3.11", support.HOST))):
+            with self.subTest(major=major, python=python):
+                self.assertEqual(support.choose_python(support.ODOO_SUPPORT[major], python), expected)
+
+    def test_odoo_states_the_maximum_from_15(self) -> None:
+        # MAX_PY_VERSION in odoo/__init__.py (15.0-18.0) and odoo/release.py (19.0).
+        for major, maximum in ((15, "3.12"), (16, "3.12"), (17, "3.14"), (18, "3.14"), (19, "3.14")):
+            with self.subTest(major=major):
+                self.assertEqual(support.ODOO_SUPPORT[major].python_max, maximum)
+                self.assertEqual(support.ODOO_SUPPORT[major].python_max_tier, support.OFFICIAL)
+        # Debian 13's 3.13 is outside 16's range: uv's 3.12.
+        self.assertEqual(support.choose_python(support.ODOO_SUPPORT[16], "3.13"), ("3.12", support.UV))
 
     def test_no_host_python_gets_uv(self) -> None:
         self.assertEqual(support.choose_python(support.ODOO_SUPPORT[18], None)[1], support.UV)
@@ -187,7 +201,8 @@ class UpdateConfigTests(unittest.TestCase):
         for absent in ("apt-get", "git clone", "pip install"):
             self.assertNotIn(absent, text)
         alter = next(c for c in commands if "OIM_SQL" in c.command)
-        self.assertEqual(alter.env["OIM_SQL"], "ALTER ROLE shop WITH PASSWORD 'pw';")
+        self.assertEqual(alter.env["OIM_SQL"],
+                         "SET password_encryption = 'scram-sha-256'; ALTER ROLE \"shop\" WITH PASSWORD 'pw';")
         # The password is in no command text and the preview masks it.
         self.assertNotIn("'pw'", text)
         self.assertNotIn("'pw'", "\n".join(c.shown for c in commands))

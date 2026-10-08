@@ -54,10 +54,11 @@ python3 tools/verify_neutralisation.py --odoo 18=/path/venv/bin/python:/path/odo
 python3 tools/verify_ops_configs.py    # nginx -t and fail2ban on the generated config
 python3 tools/verify_secrets.py        # secrets in no process argument, preview or error
 python3 tools/verify_privilege.py      # certificates, downloads, venv replication, neutralisation as owner
+python3 tools/verify_postgres_setup.py # PostgreSQL install steps: port, scram, listen_addresses, pg_hba
 ```
 
-`tools/verify_data_safety.py`, `tools/verify_secrets.py`, `tools/verify_privilege.py` and
-`tools/verify_ops_configs.py` also run in CI.
+`tools/verify_data_safety.py`, `tools/verify_secrets.py`, `tools/verify_privilege.py`,
+`tools/verify_postgres_setup.py` and `tools/verify_ops_configs.py` also run in CI.
 `tools/verify_data_safety.py` executes the generated scheduled-backup script, the
 retention prune and the delete step against stub binaries, and the template copy, forced drop and purge
 discovery against a PostgreSQL cluster of its own (it needs `initdb` and refuses to run as root). Run it after
@@ -68,6 +69,11 @@ the live files untouched, a hostile file name must stay a name), the wkhtmltopdf
 against stubs, and the neutralisation as the copy's owner against a PostgreSQL cluster of its own, where a
 trigger in the copy tries to make its owner a superuser. Run it after changing those planners or
 `_post_db_mode_commands`.
+
+`tools/verify_postgres_setup.py` runs the PostgreSQL steps of an install against a cluster of its own on a port
+other than 5432, storing md5 by default as PostgreSQL 13 does and with a `conf.d` file, and checks the role's
+scram password, `listen_addresses` set with one restart, and the `pg_hba` rule added once. Run it after changing
+those planners.
 
 `tools/verify_install_runtime.py` is not part of CI: it downloads the pinned uv (and refuses a wrong
 checksum), installs the interpreter the matrix picks, builds a real venv for each Odoo checkout you pass and

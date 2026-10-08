@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import configparser
 import os
 import platform
 import re
@@ -230,27 +231,49 @@ def list_instances(base_path: str = "/opt/odoo") -> list[str]:
     return list_dirs(base_path)
 
 
+def _conf_text(conf_path: str) -> str:
+    try:
+        with open(conf_path, encoding="utf-8", errors="replace") as file_handle:
+            return file_handle.read()
+    except OSError:
+        return ""
+
+
 def read_odoo_conf(conf_path: str) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not os.path.exists(conf_path):
-        return values
-
-    with open(conf_path, encoding="utf-8") as file_handle:
-        for raw_line in file_handle:
+    """The ``[options]`` of an odoo.conf as Odoo reads it (``RawConfigParser``: keys
+    lower-cased, a continued value kept whole with its newlines). A file with no
+    section header is read line by line, as before."""
+    text = _conf_text(conf_path)
+    if not text:
+        return {}
+    parser = configparser.RawConfigParser(strict=False, interpolation=None)
+    try:
+        parser.read_string(text)
+    except configparser.MissingSectionHeaderError:
+        values: dict[str, str] = {}
+        for raw_line in text.splitlines():
             line = raw_line.strip()
-            if (
-                not line
-                or line.startswith("#")
-                or line.startswith(";")
-                or line.startswith("[")
-            ):
-                continue
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            values[key.strip()] = value.strip()
+            if line and not line.startswith(("#", ";", "[")) and "=" in line:
+                key, value = line.split("=", 1)
+                values[key.strip().lower()] = value.strip()
+        return values
+    except configparser.Error:
+        return {}
+    return dict(parser["options"]) if parser.has_section("options") else {}
 
-    return values
+
+def read_conf_other_sections(conf_path: str) -> str:
+    """The text of every section of an odoo.conf other than ``[options]`` (a
+    module's own settings, such as ``[queue_job]``), as written."""
+    kept: list[str] = []
+    section = ""
+    for line in _conf_text(conf_path).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1].strip().lower()
+        if section and section != "options":
+            kept.append(line)
+    return "\n".join(kept).strip("\n")
 
 
 def detect_host_python() -> str | None:
@@ -333,28 +356,26 @@ def detect_os_release() -> dict[str, str]:
     return values
 
 
+def apt_candidate(package: str) -> str:
+    """The version apt would install for ``package`` ("" when it has none)."""
+    result = run(f"apt-cache policy {shlex.quote(package)} 2>/dev/null", check=False)
+    match = re.search(r"Candidate:\s*(\S+)", result.stdout)
+    return "" if not match or match.group(1) == "(none)" else match.group(1)
+
+
 def detect_nginx_version() -> tuple[int, int, int] | None:
-    """Parse ``nginx -v`` (``nginx version: nginx/1.24.0``) into a version tuple."""
-    if not command_ok("command -v nginx >/dev/null 2>&1"):
-        return None
-    # nginx prints its version banner to stderr.
-    result = run("nginx -v 2>&1", check=False)
-    match = re.search(r"nginx/(\d+)\.(\d+)\.(\d+)", result.stdout + result.stderr)
+    """The nginx a vhost is written for: the installed one (``nginx -v`` prints
+    ``nginx version: nginx/1.24.0``), else the one apt would install — a plan that
+    installs nginx is built before it is there. None when neither is known."""
+    if command_ok("command -v nginx >/dev/null 2>&1"):
+        # nginx prints its version banner to stderr.
+        result = run("nginx -v 2>&1", check=False)
+        match = re.search(r"nginx/(\d+)\.(\d+)\.(\d+)", result.stdout + result.stderr)
+    else:
+        match = re.match(r"(?:\d+:)?(\d+)\.(\d+)\.(\d+)", apt_candidate("nginx"))
     if not match:
         return None
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
-
-
-def detect_postgres_version() -> int | None:
-    """Detected local PostgreSQL server major version via ``SHOW server_version``."""
-    result = run(
-        'sudo -u postgres psql -tAc "SHOW server_version" 2>/dev/null',
-        check=False,
-    )
-    match = re.search(r"(\d+)", result.stdout.strip())
-    if result.returncode == 0 and match:
-        return int(match.group(1))
-    return None
 
 
 def list_databases(

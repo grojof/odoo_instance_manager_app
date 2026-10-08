@@ -63,18 +63,24 @@ def _uv(root: Path, env: dict[str, str]) -> Path | None:
     if not commands:
         print(f"skip  no pinned uv for {arch}")
         return None
-    script = commands[-1].command.replace("command -v uv >/dev/null 2>&1 && exit 0; ", "")
+    script = commands[-1].command
     dest = root / "bin"
     dest.mkdir()
-    good = script.replace("/usr/local/bin/", f"{dest}/")
+    good = script.replace("/usr/local/bin/", f"{dest}/").replace(support.UV_BIN, str(dest / "uv"))
     result = _run(good, env)
     version = subprocess.run([str(dest / "uv"), "--version"], capture_output=True, text=True)
     check("uv installs from the pinned, checksum-verified asset",
           result.returncode == 0 and support.UV_VERSION in version.stdout, result.stderr)
+    uv = dest / "uv"
+    stamp = uv.stat().st_mtime_ns
+    result = _run(good.replace("curl ", "false && curl "), env)
+    check("with that version in place, the step does nothing",
+          result.returncode == 0 and uv.stat().st_mtime_ns == stamp, result.stderr)
     bad_dest = root / "bad"
     bad_dest.mkdir()
     sha = support.UV_ASSETS[arch][1]
-    bad = script.replace(sha, "0" * 64).replace("/usr/local/bin/", f"{bad_dest}/")
+    bad = script.replace(sha, "0" * 64).replace("/usr/local/bin/", f"{bad_dest}/").replace(
+        support.UV_BIN, str(bad_dest / "uv"))
     result = _run(bad, env)
     check("a wrong checksum refuses the install", result.returncode != 0 and not any(bad_dest.iterdir()))
     return dest
@@ -114,7 +120,7 @@ def _venv(root: Path, major: int, clone: Path, env: dict[str, str]) -> None:
             subprocess.run([str(pip), "install", "-q", "--upgrade", "setuptools"], capture_output=True, env=env)
             found = subprocess.run([str(venv_python), "-c", "import importlib.metadata as m; print(m.version('setuptools'))"],
                                    capture_output=True, text=True, env=env).stdout.strip()
-            if int(found.split(".")[0] or 0) < 81:
+            if int(found.split(".")[0] or 0) < 82:
                 # pip resolves the newest setuptools the interpreter supports: on
                 # 3.8 that is 75.x, which still ships pkg_resources.
                 print(f"info  Odoo {major}: unpinned setuptools on Python {python} is {found}, "
@@ -147,7 +153,8 @@ def main() -> int:
         if uv_bin is None:
             return 1
         env["PATH"] = f"{stubs}:{uv_bin}:{env['PATH']}"
-        with mock.patch.object(support, "UV_PYTHON_DIR", str(uv_python)):
+        with mock.patch.object(support, "UV_PYTHON_DIR", str(uv_python)), \
+                mock.patch.object(support, "UV_BIN", str(uv_bin / "uv")):
             for major, clone in sorted(clones.items()):
                 _venv(root, major, clone, env)
     print(f"\n{len(FAILURES)} failure(s)" if FAILURES else "\nall checks passed")

@@ -47,6 +47,9 @@ jobs:
       - name: Verify what reaches root or a superuser (certificates, downloads, venvs, neutralisation)
         run: python tools/verify_privilege.py
 
+      - name: Verify the PostgreSQL install steps (port, scram, listen_addresses, pg_hba)
+        run: python tools/verify_postgres_setup.py
+
       - name: Verify nginx and fail2ban accept the generated configuration
         run: |
           sudo apt-get update -qq

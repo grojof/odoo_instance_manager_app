@@ -46,7 +46,8 @@ Generated vhosts SHALL proxy to the instance's internal HTTP and gevent ports, i
 live-chat/bus upstream with connection-upgrade handling, set forwarded headers for proxy mode, accept uploads
 up to 2048 MB and compress with gzip. The HTTPS vhost SHALL follow Odoo's deployment guide: its TLS settings
 (TLS 1.2 and 1.3, its cipher list, `ssl_prefer_server_ciphers off`, `ssl_session_timeout 30m`), HSTS, and the
-`session_id` cookie marked `secure` with `proxy_cookie_flags` on nginx ≥ 1.19.8. The vhost SHALL adapt to the
+`session_id` cookie marked `secure` with `proxy_cookie_flags` on nginx ≥ 1.19.3 (the version installed, or the
+one apt would install; when neither is known the directive is left out, as for an older nginx). The vhost SHALL adapt to the
 detected environment: the HTTP/2 form matches the detected nginx version (`listen … ssl http2` on nginx <
 1.25.1, `listen … ssl` + `http2 on;` on ≥ 1.25.1), and the live-chat location matches the Odoo major
 (`/websocket` on Odoo ≥ 16, `/longpolling/poll` on Odoo ≤ 15).
@@ -71,7 +72,7 @@ detected environment: the HTTP/2 form matches the detected nginx version (`liste
 
 #### Scenario: The HTTPS vhost follows Odoo's deployment guide
 
-- **WHEN** an HTTPS vhost is generated for nginx ≥ 1.19.8
+- **WHEN** an HTTPS vhost is generated for nginx ≥ 1.19.3
 - **THEN** each location sends HSTS and marks the `session_id` cookie `secure`, and the server uses the guide's
   TLS settings
 

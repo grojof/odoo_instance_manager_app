@@ -151,7 +151,9 @@ Updating an existing instance's configuration SHALL first back up the current co
 vhosts into a single private timestamped directory, then rewrite `odoo.conf` **merged** with the current one and
 rewrite the unit — without reinstalling anything — and optionally regenerate the Nginx vhost. The keys an
 operator tunes by hand (`addons_path`, `data_dir`, `logfile`, `http_interface`, `without_demo`) SHALL keep their
-current value, and keys the tool does not write SHALL be carried over. The Odoo version SHALL be read from the
+current value, and keys the tool does not write SHALL be carried over. The current file SHALL be read as Odoo
+reads it (`[options]` with keys lower-cased and a continued value kept whole), and its other sections (a
+module's own, such as `[queue_job]`) SHALL follow unchanged. The Odoo version SHALL be read from the
 instance's checkout and the domain from its vhost. A new DB password SHALL be set on the local role as well; a
 running service SHALL be restarted so the change is live.
 
@@ -163,8 +165,9 @@ running service SHALL be restarted so the change is live.
 
 #### Scenario: The current configuration is merged, not replaced
 
-- **WHEN** the current `odoo.conf` holds `data_dir`, extra `addons_path` entries, `smtp_*` or other keys
-- **THEN** the rewritten file keeps them
+- **WHEN** the current `odoo.conf` holds `data_dir`, extra `addons_path` entries (over several lines), `smtp_*`
+  or other keys, keys written in another case, or other sections
+- **THEN** the rewritten file keeps them, with each key once, and Odoo reads it
 
 #### Scenario: Nothing is reinstalled
 
