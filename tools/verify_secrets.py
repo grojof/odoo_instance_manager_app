@@ -110,7 +110,8 @@ def _role(root: Path) -> None:
         # PostgreSQL 13's default: the role SQL must still store a scram password.
         cluster.value("ALTER SYSTEM SET password_encryption = 'md5'")
         cluster.value("SELECT pg_reload_conf()")
-        config = InstanceConfig(instance="shop")
+        # The step names the instance's port; PGPORT alone would not reach it.
+        config = InstanceConfig(instance="shop", db_port=cluster.port)
         config.db_password, config.odoo_admin_passwd = SECRET, "x"
         step = next(c for c in planners.plan_ensure_db_role(config) if "OIM_SQL" in c.command)
         check("the role SQL is not in the command text", SECRET not in step.command and SECRET not in step.shown)
