@@ -71,9 +71,9 @@ the canonical interface.
 
 ### Requirement: Identifier validation
 
-Instance and PostgreSQL identifiers, and every other operator value that reaches a shell command, SQL or a
-configuration file, SHALL be validated against safe patterns before they are used to build any command or
-configuration. This applies to **every** flow that acts on an instance — provisioning, configuration, removal,
+Every operator value SHALL be validated against a safe pattern before it is used to build any command or
+configuration — instance and PostgreSQL identifiers, and every other value that reaches a shell command, SQL or
+a configuration file. This applies to **every** flow that acts on an instance — provisioning, configuration, removal,
 purge, backup, restore, and duplication — including instances selected or typed manually and duplication target
 names. The values are: the instance name, the database user, the Odoo version, the repo branch, the public
 domain, the DB host, the app-server IP, and every database name (Odoo's own `DBNAME_PATTERN`,
