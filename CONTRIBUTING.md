@@ -88,7 +88,10 @@ check and hand-over commands, and has Odoo itself try to send a mail from the co
 
 `tools/verify_ops_configs.py` downloads the distribution's nginx package (`apt-get download`, extracted, never
 installed) and fail2ban's source release, then runs `nginx -t`, `fail2ban-regex` and `fail2ban-client -t` on the
-generated vhosts, filter and jails, including their rollbacks. Run it after changing those planners.
+generated vhosts, filter and jails, including their rollbacks. It runs fail2ban 1.1.0, 1.0.2 and 0.11.2 (the
+older two on a Python 3.11/3.10 and 3.9/3.8 found on PATH or through uv, converted with lib2to3 as the
+distributions do), and has each ban a stub ufw. It also runs the staged writes' failure modes and logrotate's
+rollback. Run it after changing those planners.
 
 CI (`.github/workflows/ci.yml`) runs ruff, pytest, a byte-compile, `openspec validate`, and the eunomai
 `docs-check` / `provenance-check` gates on every push and PR to `main`.

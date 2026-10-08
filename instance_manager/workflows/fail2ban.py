@@ -8,9 +8,9 @@ import re
 
 from ..i18n import tf
 from ..planners import (
+    _fail2ban_odoo_filter_content,
     plan_fail2ban_base_setup,
     plan_fail2ban_enable_odoo_instance,
-    plan_fail2ban_ensure_odoo_filter,
 )
 from ..prompts import ask_bool, ask_int, ask_text, choose
 from ..system import (
@@ -20,6 +20,28 @@ from ..system import (
 )
 from ..ui import level_text, render_table, title
 from .common import _execute_plan, _quote, _select_existing_instance
+
+# fail2ban's time abbreviations (a number, optionally s/m/h/d/w/mo/y), or -1 for a
+# permanent ban. Anything else lands in a jail fail2ban refuses — or, with a newline,
+# in another section of it.
+_DURATION_RE = re.compile(r"-1|\d{1,9}(s|m|h|d|w|mo|y)?")
+
+
+def _duration_error(value: str) -> str | None:
+    if _DURATION_RE.fullmatch(value):
+        return None
+    return 'Use a duration such as 10m, 1h, 1d or 1w.'
+
+
+def _networks_error(value: str) -> str | None:
+    """Addresses or networks separated by spaces or commas, each one ufw and
+    fail2ban accept."""
+    for token in value.replace(",", " ").split():
+        try:
+            ipaddress.ip_network(token, strict=False)
+        except ValueError:
+            return tf('Not an IP address or network: {}', token)
+    return None
 
 
 def _fail2ban_jail_name_for_instance(instance: str) -> str:
@@ -183,8 +205,10 @@ def manage_fail2ban() -> None:
         if action == 'Install / configure secure baseline':
             extra_ignore = ask_text(
                 'Admin IPs/networks to exclude (space/comma separated)',
-                "",
+                # The address this session comes from, so the operator is not banned.
+                (os.environ.get("SSH_CLIENT", "").split() or [""])[0],
                 required=False,
+                validate=_networks_error,
             )
             extra_tokens = [
                 token.strip()
@@ -192,10 +216,10 @@ def manage_fail2ban() -> None:
                 if token.strip()
             ]
             ignore_ips = " ".join(["127.0.0.1/8", "::1", *extra_tokens])
-            bantime = ask_text('bantime', "1h", required=True)
-            findtime = ask_text('findtime', "10m", required=True)
+            bantime = ask_text('bantime', "1h", required=True, validate=_duration_error)
+            findtime = ask_text('findtime', "10m", required=True, validate=_duration_error)
             maxretry = ask_int('maxretry', 8, min_value=1, max_value=1000)
-            recidive_bantime = ask_text('recidive bantime', "24h", required=True)
+            recidive_bantime = ask_text('recidive bantime', "24h", required=True, validate=_duration_error)
 
             commands = plan_fail2ban_base_setup(
                 ignore_ips=ignore_ips,
@@ -204,6 +228,8 @@ def manage_fail2ban() -> None:
                 maxretry=maxretry,
                 recidive_bantime=recidive_bantime,
                 nginx_logs=os.path.isdir("/var/log/nginx"),
+                # No auth.log (Debian 12, a host without rsyslog): sshd from the journal.
+                sshd_systemd=not os.path.exists("/var/log/auth.log"),
             )
             _execute_plan(commands)
             continue
@@ -230,8 +256,8 @@ def manage_fail2ban() -> None:
             else:
                 print(level_text("WARN", ip_message))
 
-            bantime = ask_text('instance bantime', "1h", required=True)
-            findtime = ask_text('instance findtime', "10m", required=True)
+            bantime = ask_text('instance bantime', "1h", required=True, validate=_duration_error)
+            findtime = ask_text('instance findtime', "10m", required=True, validate=_duration_error)
             maxretry = ask_int('instance maxretry', 8, min_value=1, max_value=1000)
 
             commands = plan_fail2ban_enable_odoo_instance(
@@ -350,8 +376,17 @@ def manage_fail2ban() -> None:
             commands: list[Command] = [
                 Command('Validate the log file', f"test -f {_quote(log_path)}"),
             ]
-            if filter_path == "/etc/fail2ban/filter.d/odoo-auth.conf":
-                commands.extend(plan_fail2ban_ensure_odoo_filter())
+            # A test changes nothing: without the filter on disk, the tool's own is
+            # tested from a temporary copy.
+            if filter_path == "/etc/fail2ban/filter.d/odoo-auth.conf" and not os.path.exists(filter_path):
+                content = _fail2ban_odoo_filter_content()
+                commands.append(Command(
+                    "Test the fail2ban regex (the tool's odoo-auth filter, not installed)",
+                    "tmp=$(mktemp) && trap 'rm -f \"$tmp\"' EXIT && "
+                    f"printf '%s' {_quote(content)} > \"$tmp\" && fail2ban-regex {_quote(log_path)} \"$tmp\"",
+                ))
+                _execute_plan(commands)
+                continue
             commands.extend(
                 [
                     Command('Validate the filter file', f"test -f {_quote(filter_path)}"),

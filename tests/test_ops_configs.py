@@ -39,7 +39,8 @@ class NginxTests(unittest.TestCase):
         commands = planners.plan_nginx_https(_config(), (1, 24, 0))
         script = next(c.command for c in commands if "nginx -t" in c.command)
         self.assertLess(script.index("ln -sf"), script.index("nginx -t"))
-        self.assertIn("restore", script.split("nginx -t")[1])
+        self.assertIn("fail 'nginx refused", script.split("nginx -t")[1])
+        self.assertIn("trap 'fail Interrupted' INT TERM", script)
         self.assertFalse(any(c.command == "nginx -t" for c in commands))
 
 
@@ -53,9 +54,28 @@ class Fail2banTests(unittest.TestCase):
     def test_web_bans_are_scoped_and_recidive_uses_ufw(self) -> None:
         text = planners._fail2ban_base_content("127.0.0.1/8", "1h", "10m", 8, "24h", True)
         self.assertIn("banaction_allports = ufw", text)
-        self.assertEqual(text.count('banaction = ufw[application="Nginx Full"]'), 2)
+        self.assertEqual(text.count("banaction = ufw-odoo-web"), 2)
         jail = planners._fail2ban_odoo_jail_content("odoo-auth-shop", "/var/log/odoo/shop.log", "1h", "10m", 8)
-        self.assertIn('banaction = ufw[application="Nginx Full"]', jail)
+        self.assertIn("banaction = ufw-odoo-web", jail)
+        # Only the web ports, with nothing fail2ban 0.11.2 would leave unquoted.
+        self.assertIn("actionban = ufw prepend reject from <ip> to any port 80,443 proto tcp",
+                      planners._fail2ban_web_action_content())
+
+    def test_backend_is_never_set_for_every_jail(self) -> None:
+        text = planners._fail2ban_base_content("127.0.0.1/8", "1h", "10m", 8, "24h", True)
+        self.assertNotIn("backend", text.split("[sshd]")[0])
+        self.assertNotIn("backend = systemd", text)
+        journal = planners._fail2ban_base_content("127.0.0.1/8", "1h", "10m", 8, "24h", True, sshd_systemd=True)
+        self.assertIn("[sshd]\nenabled = true\nbackend = systemd", journal)
+
+    def test_typed_durations_and_networks(self) -> None:
+        from instance_manager.workflows.fail2ban import _duration_error, _networks_error
+        for good in ("10m", "1h", "1d", "2w", "1mo", "-1", "600"):
+            self.assertIsNone(_duration_error(good), good)
+        for bad in ("1 h", "1h\nenabled = false", "forever"):
+            self.assertIsNotNone(_duration_error(bad), bad)
+        self.assertIsNone(_networks_error("203.0.113.7, 10.0.0.0/8 2001:db8::/32"))
+        self.assertIsNotNone(_networks_error("203.0.113.7\nignoreip = 0.0.0.0/0"))
 
     def test_filter_is_tested_on_every_versions_line(self) -> None:
         commands = planners.plan_fail2ban_enable_odoo_instance("shop", "/var/log/odoo/shop.log")

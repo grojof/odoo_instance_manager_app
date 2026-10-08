@@ -480,7 +480,42 @@ def _maybe_plan_logrotate(config: InstanceConfig) -> list[Command]:
     return plan_logrotate_config(config, frequency="weekly", rotate_count=14, compress=True)
 
 
-def _maybe_plan_certs(config: InstanceConfig) -> list[Command]:
+_CERT_PATH_RE = re.compile(r"/[A-Za-z0-9/._@+-]{1,250}")
+
+
+def _vhost_certificate(config: InstanceConfig) -> tuple[str, str] | None:
+    """The certificate and key the instance's current HTTPS vhost names (certbot
+    rewrites them there), when both are plain absolute paths."""
+    found: dict[str, str] = {}
+    try:
+        with open(f"/etc/nginx/sites-available/{config.nginx_https_name}", encoding="utf-8",
+                  errors="replace") as handle:
+            for line in handle:
+                match = re.match(r"\s*(ssl_certificate|ssl_certificate_key)\s+(\S+?);", line)
+                if match and _CERT_PATH_RE.fullmatch(match.group(2)):
+                    found.setdefault(match.group(1), match.group(2))
+    except OSError:
+        return None
+    if "ssl_certificate" in found and "ssl_certificate_key" in found:
+        return found["ssl_certificate"], found["ssl_certificate_key"]
+    return None
+
+
+def _use_existing_certificate(config: InstanceConfig, cert: str, key: str, hint: str) -> bool:
+    """Point the vhost at ``cert``/``key`` if both exist; otherwise say why HTTPS
+    cannot be configured with this mode (nginx -t would refuse the vhost)."""
+    missing = [path for path in (cert, key) if not path_exists(path)]
+    if missing:
+        print(level_text("ERROR", tf('Certificate file not found: {}. {}', ", ".join(missing), t(hint))))
+        return False
+    config.tls_cert, config.tls_key = cert, key
+    return True
+
+
+def _maybe_plan_certs(config: InstanceConfig) -> list[Command] | None:
+    """The certificate steps for an HTTPS vhost, and where the vhost finds the
+    files. None when there is no certificate to use or the operator cancelled: the
+    vhost is then not written."""
     cert_mode = choose(
         'HTTPS certificate management',
         [
@@ -491,35 +526,43 @@ def _maybe_plan_certs(config: InstanceConfig) -> list[Command]:
         ],
         default_index=None,
     )
+    if cert_mode == "":
+        return None
 
-    if cert_mode in {"", 'Leave certificates untouched', "Let's Encrypt (managed externally)"}:
-        return []
+    if cert_mode == 'Leave certificates untouched':
+        # The ones the vhost names now (certbot's, for instance), else the tool's own.
+        cert, key = _vhost_certificate(config) or (config.ssl_fullchain_file, config.ssl_key_file)
+        ok = _use_existing_certificate(config, cert, key, 'Choose a mode that provides a certificate.')
+        return [] if ok else None
+
+    if cert_mode == "Let's Encrypt (managed externally)":
+        live = f"/etc/letsencrypt/live/{config.domain}"
+        ok = _use_existing_certificate(
+            config, f"{live}/fullchain.pem", f"{live}/privkey.pem",
+            'Obtain it first (for example: certbot certonly --webroot or --standalone for the domain).',
+        )
+        return [] if ok else None
 
     if cert_mode == 'Self-signed (detect or generate automatically)':
         return plan_ensure_self_signed_certs(config)
 
     print(level_text("INFO", 'Select the public certificate (server.crt)'))
-    cert_src = select_file_path(
-        ".",
-        'Public certificate (CRT)',
-        (".crt", ".pem", ".cer"),
-    )
+    cert_src = select_file_path(".", 'Public certificate (CRT)', (".crt", ".pem", ".cer"))
+    if not cert_src:
+        return None
     print(level_text("INFO", 'Select the private key (server.key)'))
-    key_src = select_file_path(
-        ".",
-        'Private key (KEY)',
-        (".key", ".pem"),
-    )
-    use_intermediate = ask_bool('Do you have an intermediate file?', True)
+    key_src = select_file_path(".", 'Private key (KEY)', (".key", ".pem"))
+    if not key_src:
+        return None
     intermediate_src = None
-    if use_intermediate:
+    if ask_bool('Do you have an intermediate file?', True):
         print(level_text("INFO", 'Select the intermediate chain / CA bundle'))
         intermediate_src = select_file_path(
-            ".",
-            'Intermediate chain (CA bundle / intermediate)',
+            ".", 'Intermediate chain (CA bundle / intermediate)',
             (".crt", ".pem", ".cer", ".bundle", ".ca-bundle"),
         )
-
+        if not intermediate_src:
+            return None
     return plan_copy_custom_certs(config, cert_src, key_src, intermediate_src)
 
 
@@ -681,7 +724,11 @@ def install_odoo_only() -> None:
     if nginx_mode == 'Configure HTTP':
         commands.extend(plan_nginx_http(config, nginx_version))
     elif nginx_mode == 'Configure HTTPS':
-        commands.extend(_maybe_plan_certs(config))
+        certs = _maybe_plan_certs(config)
+        if certs is None:
+            print(level_text("INFO", 'Operation cancelled.'))
+            return
+        commands.extend(certs)
         commands.extend(plan_nginx_https(config, nginx_version))
 
     commands.extend(_maybe_plan_logrotate(config))
@@ -730,7 +777,11 @@ def install_odoo_and_db() -> None:
     if nginx_mode == 'Configure HTTP':
         commands.extend(plan_nginx_http(config, nginx_version))
     elif nginx_mode == 'Configure HTTPS':
-        commands.extend(_maybe_plan_certs(config))
+        certs = _maybe_plan_certs(config)
+        if certs is None:
+            print(level_text("INFO", 'Operation cancelled.'))
+            return
+        commands.extend(certs)
         commands.extend(plan_nginx_https(config, nginx_version))
 
     commands.extend(_maybe_plan_logrotate(config))

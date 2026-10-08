@@ -154,8 +154,11 @@ operator tunes by hand (`addons_path`, `data_dir`, `logfile`, `http_interface`, 
 current value, and keys the tool does not write SHALL be carried over. The current file SHALL be read as Odoo
 reads it (`[options]` with keys lower-cased and a continued value kept whole), and its other sections (a
 module's own, such as `[queue_job]`) SHALL follow unchanged. The Odoo version SHALL be read from the
-instance's checkout and the domain from its vhost. A new DB password SHALL be set on the local role as well; a
-running service SHALL be restarted so the change is live.
+instance's checkout and the domain from its vhost. A new DB password SHALL be set on the local role first, then
+the login SHALL be checked with the new values, and only then are the files written; a running service SHALL be
+restarted so the change is live — except with a new password for a remote role, which only that server can set:
+the tool then leaves the service as it is and says so. The backup's location SHALL be shown even when a step
+fails.
 
 #### Scenario: Existing files are backed up before regeneration
 

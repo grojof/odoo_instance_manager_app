@@ -30,7 +30,7 @@ reloaded, and the plan waits for the socket.
 ```mermaid
 flowchart LR
     ssh["sshd · recidive"] --> all(["all ports<br/>of that address"])
-    web["nginx-http-auth · nginx-botsearch<br/>odoo-auth (per instance)"] --> webports(["web ports only<br/>ufw profile Nginx Full"])
+    web["nginx-http-auth · nginx-botsearch<br/>odoo-auth (per instance)"] --> webports(["ports 80 and 443 only<br/>action ufw-odoo-web"])
     ignore[("ignore list<br/>loopback + your admin networks")] -.-> never["never banned"]
     classDef step fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
     classDef guard fill:#dcfce7,stroke:#16a34a,color:#14532d
@@ -42,8 +42,16 @@ flowchart LR
     class ignore data
 ```
 
-A failed Odoo or web login therefore never blocks SSH. The `Nginx Full` profile comes with the nginx package;
-without it, fail2ban's ufw action blocks every port.
+A failed Odoo or web login therefore never blocks SSH. The web bans use the tool's own `ufw-odoo-web` action
+(`/etc/fail2ban/action.d/ufw-odoo-web.conf`), which rejects the address on ports 80 and 443. fail2ban's own
+`ufw[application="Nginx Full"]` is not used. On fail2ban 0.11.2 (Ubuntu 22.04, Debian 11) it passes the profile
+name unquoted, so ufw refuses every ban. On 1.0 and later it bans every port when the profile is missing.
+
+The base jails set `backend` per jail, never for all of them. Where `/var/log/auth.log` does not exist (Debian 12,
+or a host without rsyslog), `sshd` reads the journal, and the plan installs `python3-systemd` for it. Durations
+use fail2ban's units (`10m`, `1h`, `1d`). The ignore list takes addresses or networks and starts with the address
+your SSH session comes from. Every write is staged, and a refused configuration, a failed write or an
+interruption puts the previous files back.
 
 > **UFW prerequisite:** the ban action is `ufw`, so bans only take effect while **UFW is installed and
 > active**. This menu does not install UFW: set it up from **Firewall (UFW)**, which allows SSH before enabling

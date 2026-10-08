@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from ..i18n import tf
 from ..models import InstanceConfig
 from ..planners import plan_logrotate_config
@@ -89,7 +91,11 @@ def _configure_log_rotation(config: InstanceConfig) -> None:
     compress = ask_bool('Compress rotated logs?', True)
     maxsize = ""
     if ask_bool('Also rotate when a size is exceeded?', False):
-        maxsize = ask_text('Maximum size (e.g. 50M, 1G)', "50M", required=True)
+        maxsize = ask_text(
+            'Maximum size (e.g. 50M, 1G)', "50M", required=True,
+            validate=lambda value: None if re.fullmatch(r"[1-9][0-9]{0,8}[kMG]?", value)
+            else 'Use a size such as 500k, 50M or 1G.',
+        )
 
     conf_values = read_odoo_conf(config.odoo_conf_file)
     remove_obsolete = False
