@@ -34,7 +34,11 @@ Issues = "https://github.com/grojof/odoo_instance_manager_app/issues"
 
 [tool.setuptools]
 py-modules = ["odoo_instance_manager"]
-packages = ["instance_manager"]
+
+# Every subpackage (instance_manager.workflows): a fixed list shipped a wheel
+# whose CLI died on its first import.
+[tool.setuptools.packages.find]
+include = ["instance_manager*"]
 
 [tool.ruff]
 line-length = 100

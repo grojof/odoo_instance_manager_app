@@ -111,7 +111,12 @@ The resulting posture is later surfaced by the **Status: security & production**
 ## Nginx and TLS
 
 After the base setup you choose an Nginx mode: **leave untouched**, **HTTP**, or **HTTPS**. HTTP and HTTPS are
-mutually exclusive — enabling one removes the other's enabled vhost, then the plan runs `nginx -t` and reloads.
+mutually exclusive — enabling one removes the other's enabled vhost. The change is kept only if `nginx -t` accepts
+the whole configuration; otherwise the previous vhost and links are put back, so a broken vhost is never left
+enabled to stop nginx (and every instance) at its next restart.
+
+The vhosts accept uploads up to 2 GB and compress with gzip. The HTTPS vhost follows Odoo's deployment guide:
+TLS 1.2/1.3 with its cipher list, HSTS, and the `session_id` cookie marked `secure` (nginx ≥ 1.19.8).
 
 For HTTPS you pick a certificate strategy:
 
