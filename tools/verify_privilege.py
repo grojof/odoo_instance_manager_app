@@ -222,6 +222,42 @@ def _neutralise_as_owner(root: Path) -> None:
         _run(step.command, env)
         superuser = cluster.value("SELECT rolsuper FROM pg_roles WHERE rolname = 'dev'")
         check("negative control: run as the superuser, the trigger raises it", superuser == "t")
+        cluster.value("ALTER ROLE dev NOSUPERUSER")
+
+        # As the owner, the rules still find the tables: the copy is really neutralised.
+        cluster.value('CREATE DATABASE "copy_plain"')
+        for sql in (
+            "CREATE TABLE ir_config_parameter (id serial PRIMARY KEY, key varchar UNIQUE NOT NULL, value text)",
+            "CREATE TABLE ir_cron (id serial PRIMARY KEY, active boolean, cron_name varchar)",
+            "CREATE TABLE ir_model_data (id serial PRIMARY KEY, module varchar, name varchar, model varchar, "
+            "res_id int)",
+            "INSERT INTO ir_config_parameter (key, value) VALUES ('web.base.url', 'https://erp.example.com')",
+            "INSERT INTO ir_cron (active, cron_name) VALUES (true, 'send invoices')",
+            "ALTER TABLE ir_config_parameter OWNER TO dev",
+            "ALTER TABLE ir_cron OWNER TO dev",
+            "ALTER TABLE ir_model_data OWNER TO dev",
+        ):
+            cluster.value_in("copy_plain", sql)
+        steps = backup_restore._post_db_mode_commands(
+            backup_restore._psql_target_local("copy_plain"), "Moved (keep UUID)", True,
+            "http://127.0.0.1:8069", role="dev",
+        )
+        results = [_run(c.command, env) for c in steps]
+        check("as the owner, the neutralisation and its check run",
+              all(r.returncode == 0 for r in results), " ".join(r.stderr for r in results))
+        check("and reach the tables (base URL and crons changed)",
+              cluster.value_in("copy_plain", "SELECT value FROM ir_config_parameter WHERE key = 'web.base.url'")
+              == "http://127.0.0.1:8069"
+              and cluster.value_in("copy_plain", "SELECT count(*) FROM ir_cron WHERE active") == "0")
+
+        cluster.value('CREATE DATABASE "not_odoo"')
+        check_step = backup_restore._post_db_mode_commands(
+            backup_restore._psql_target_local("not_odoo"), "Moved (keep UUID)", True,
+            "http://127.0.0.1:8069", role="dev",
+        )[-1]
+        result = _run(check_step.command, env)
+        check("the check fails where it sees no Odoo table, instead of passing on nothing",
+              result.returncode != 0 and "no Odoo tables" in result.stderr, result.stderr)
     finally:
         cluster.stop()
 

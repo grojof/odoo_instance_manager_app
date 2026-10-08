@@ -124,12 +124,14 @@ def _post_db_mode_commands(
     Each step is one statement that stops the plan when it fails: a copy left
     half-neutralised must not be handed to a running Odoo.
 
-    With ``role`` (the copy's owner), the statements run as that role with a fixed
-    ``search_path``: a trigger or function the source database carries then runs with
-    the owner's rights, never the superuser's. Names MUST be safe.
+    With ``role`` (the copy's owner), the statements run as that role with
+    ``search_path = public``: a trigger or function the source database carries then
+    runs with the owner's rights, never the superuser's. ``pg_catalog`` stays searched
+    first (it is, unless listed), and ``public`` stays the current schema the
+    catalogue's guards look in. Names MUST be safe.
     """
     psql = f"{psql_target} -X -q -v ON_ERROR_STOP=1 -c"
-    prefix = f'SET ROLE "{role}"; SET search_path = pg_catalog, public; ' if role else ""
+    prefix = f'SET ROLE "{role}"; SET search_path = public; ' if role else ""
     commands: list[Command] = []
     if migration_mode == 'Copied (new UUID on target)':
         commands.append(

@@ -94,7 +94,7 @@ class InstanceUserTests(unittest.TestCase):
         )
         self.assertEqual(len(commands), 3)
         for command in commands:
-            self.assertIn("SET ROLE \"dev\"; SET search_path = pg_catalog, public; ", command.command)
+            self.assertIn("SET ROLE \"dev\"; SET search_path = public; ", command.command)
 
 
 class TemporaryFileTests(unittest.TestCase):

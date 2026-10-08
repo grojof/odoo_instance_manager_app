@@ -214,7 +214,7 @@ requested, apply every rule of the neutralisation catalogue (Odoo's `neutralize.
 12.0-19.0 and the OCA modules it lists), each guarded by the existence of its table and columns, as one statement
 that stops the plan on failure, and then verify that nothing can still act on the outside, failing the plan when
 something can. On the local server these statements SHALL run as the copy's owner role with
-`search_path = pg_catalog, public`, never as the superuser: a trigger or function the source database carries
+`search_path = public` (`pg_catalog` is still searched first), never as the superuser: a trigger or function the source database carries
 then runs with that role's rights. The neutralisation SHALL leave exactly one active outgoing mail server, pointing at a host that
 does not resolve, so Odoo never falls back to the `smtp_server` of `odoo.conf`, and SHALL drop production's SMTP
 credentials from the copy.
@@ -242,6 +242,11 @@ credentials from the copy.
 
 - **WHEN** the copied database has a trigger that tries to make its owner a superuser
 - **THEN** the trigger fails for lack of privilege, the step fails, and the role is unchanged
+
+#### Scenario: A check that sees no Odoo table fails
+
+- **WHEN** the check runs where the current schema holds no Odoo table (`ir_cron`)
+- **THEN** it fails instead of passing because no rule applied
 
 ### Requirement: Database name path safety
 
