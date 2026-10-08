@@ -24,9 +24,11 @@ from ..system import (
     run,
     service_exists,
 )
-from ..ui import render_table, title
+from ..ui import level_text, render_table, title
 from .common import (
     _execute_plan,
+    _instance_db_user,
+    _is_inside,
     _odoo_conf_candidates,
     _quote,
     _resolve_data_dir,
@@ -184,19 +186,91 @@ def _list_instance_databases(
     return _query_names(session, _instance_databases_sql(instance, db_user, by_owner))
 
 
-def _list_filestore_databases(config: InstanceConfig) -> tuple[list[str], str]:
-    filestore_root = f"{_resolve_data_dir(config)}/filestore"
-    if not os.path.isdir(filestore_root):
-        return [], filestore_root
+def _instance_data_dirs(config: InstanceConfig) -> list[str]:
+    """The data dirs that may hold this instance's filestores: the one its odoo.conf
+    names (or Odoo's default in the home) and the managed ``/var/lib/odoo/<instance>``,
+    which outlives a Delete instance that removed the odoo.conf."""
+    dirs = [_resolve_data_dir(config)]
+    if config.managed_data_dir not in dirs and os.path.isdir(config.managed_data_dir):
+        dirs.append(config.managed_data_dir)
+    return dirs
 
-    db_names = sorted(
-        [
-            entry
-            for entry in os.listdir(filestore_root)
-            if os.path.isdir(os.path.join(filestore_root, entry)) and not entry.startswith(".")
-        ]
+
+def _list_filestore_databases(config: InstanceConfig) -> list[str]:
+    """Folder names under the instance's ``filestore`` roots: candidates only. A
+    shared data dir holds other instances' filestores too, so a folder alone never
+    selects a database."""
+    names: set[str] = set()
+    for data_dir in _instance_data_dirs(config):
+        root = f"{data_dir}/filestore"
+        if os.path.isdir(root):
+            names.update(
+                entry for entry in os.listdir(root)
+                if os.path.isdir(os.path.join(root, entry)) and not entry.startswith(".")
+            )
+    return sorted(names)
+
+
+def _remove_data_commands(config: InstanceConfig, db_names: list[str]) -> list[Command]:
+    """Remove the instance's filestores. A data dir that is the instance's own (the
+    managed ``/var/lib/odoo/<instance>``; one inside the home goes with the home) is
+    removed whole; any other may be shared, so only the selected databases'
+    filestores are removed from it."""
+    commands: list[Command] = []
+    for data_dir in _instance_data_dirs(config):
+        if _is_inside(data_dir, config.odoo_home):
+            continue
+        if os.path.normpath(data_dir) == os.path.normpath(config.managed_data_dir):
+            commands.append(Command(
+                tf('Remove the instance data dir {}', data_dir), f"rm -rf {_quote(data_dir)}",
+            ))
+            continue
+        for db_name in db_names:
+            store = f"{data_dir}/filestore/{db_name}"
+            commands.append(Command(tf('Remove the filestore {}', store), f"rm -rf {_quote(store)}"))
+    return commands
+
+
+def _superuser_role_error(session: DbAdminSession, db_user: str) -> str | None:
+    """A superuser owns, or can reach, every database on the server: selecting
+    "the databases it owns" would select the server's."""
+    if db_user in {"postgres", session.admin_user}:
+        return tf('{} is an administrator role, not an instance role.', db_user)
+    rows, error = _query_names(
+        session, f"SELECT rolsuper FROM pg_roles WHERE rolname = '{_sql_literal(db_user)}';"
     )
-    return db_names, filestore_root
+    if error:
+        return tf('Could not check role {}: {}', db_user, error)
+    if rows == ["t"]:
+        return tf('{} is a superuser role, not an instance role.', db_user)
+    return None
+
+
+def _drop_database_commands(session: DbAdminSession | None, db_names: list[str]) -> list[Command]:
+    commands: list[Command] = []
+    if session is None:
+        return commands
+    for db_name in db_names:
+        terminate_sql = (
+            "SELECT pg_terminate_backend(pid) "
+            "FROM pg_stat_activity "
+            f"WHERE datname = '{_sql_literal(db_name)}' AND pid <> pg_backend_pid();"
+        )
+        commands.append(
+            Command(
+                tf('Close active connections of DB {}', db_name),
+                _db_admin_psql_command(session, terminate_sql) + " || true",
+                env=_admin_env(session),
+            )
+        )
+        commands.append(
+            Command(
+                tf('Delete DB {}', db_name),
+                _db_admin_dropdb_command(session, db_name),
+                env=_admin_env(session),
+            )
+        )
+    return commands
 
 
 def purge_instance_superuser() -> None:
@@ -209,11 +283,11 @@ def purge_instance_superuser() -> None:
     if config is None:
         return
 
-    filestore_dbs, filestore_root = _list_filestore_databases(config)
+    filestore_dbs = _list_filestore_databases(config)
 
     db_user = ask_text(
         'Instance DB user (to find associated databases)',
-        instance,
+        _instance_db_user(config),
         required=True,
         validate=lambda value: None
         if POSTGRES_IDENTIFIER_RE.fullmatch(value)
@@ -228,18 +302,26 @@ def purge_instance_superuser() -> None:
         ))
 
     session = _resolve_db_admin_access()
-    db_names: list[str] = list(filestore_dbs)
+    db_names: list[str] = []
     dbs_by_prefix: list[str] = []
     db_error: str | None = None
     if session:
+        role_error = _superuser_role_error(session, db_user)
+        if role_error:
+            print(level_text("ERROR", role_error))
+            return
         dbs_by_prefix, db_error = _list_instance_databases(
             instance, session, db_user, by_owner=not sharing
         )
         if db_error:
             print(tf("[WARN] Could not detect the databases of '{}': {}", instance, db_error))
-        for db_name in dbs_by_prefix:
-            if db_name not in db_names:
-                db_names.append(db_name)
+        db_names = list(dbs_by_prefix)
+        unowned = [name for name in filestore_dbs if name not in db_names]
+        if unowned:
+            print(tf(
+                "[INFO] Not selected — a filestore folder exists but role {} does not own the database: {}. Add any that belong to this instance below.",
+                db_user, ", ".join(unowned),
+            ))
         others, _error = _query_names(session, _prefix_only_databases_sql(instance, db_user))
         if others:
             print(tf(
@@ -273,6 +355,8 @@ def purge_instance_superuser() -> None:
     else:
         print(t('[INFO] No databases detected/specified for deletion.'))
 
+    # The service stops first and the databases go before their filestores: a
+    # database never outlives the files it points at.
     commands: list[Command] = [
         Command(
             'Stop the Odoo service',
@@ -282,6 +366,7 @@ def purge_instance_superuser() -> None:
             'Disable the Odoo service',
             f"systemctl disable {_quote(config.odoo_service)} || true",
         ),
+        *_drop_database_commands(session, db_names),
         Command(
             'Remove unit file',
             f"rm -f {_quote(f'/etc/systemd/system/{config.odoo_service}.service')}",
@@ -292,13 +377,19 @@ def purge_instance_superuser() -> None:
             'Remove Odoo configuration', f"rm -rf {_quote(config.odoo_conf_dir)}"
         ),
         Command('Remove instance home', f"rm -rf {_quote(config.odoo_home)}"),
+        # Only an account this tool made (home /opt/odoo/<instance>); its home is
+        # already gone, so no `userdel -r`, which would follow another home.
         Command(
             'Remove the instance Linux user',
-            f"id -u {_quote(config.odoo_user)} >/dev/null 2>&1 && userdel -r {_quote(config.odoo_user)} || true",
+            f"if id -u {_quote(config.odoo_user)} >/dev/null 2>&1; then "
+            f'if [ "$(getent passwd {_quote(config.odoo_user)} | cut -d: -f6)" = {_quote(config.odoo_home)} ]; '
+            f"then userdel {_quote(config.odoo_user)}; "
+            f"else echo {_quote(tf('Linux user {} kept: its home is not {}', config.odoo_user, config.odoo_home))}; fi; fi",
         ),
         Command(
-            'Remove the instance Odoo/Nginx logs',
-            f"rm -f {_quote(f'/var/log/odoo/{config.instance}.log')} {_quote(f'/var/log/nginx/{config.instance}.access.log')} {_quote(f'/var/log/nginx/{config.instance}.error.log')}",
+            'Remove the instance Odoo/Nginx logs and logrotate policy',
+            f"rm -f {_quote(config.odoo_log_file)} {_quote(config.nginx_access_log)} "
+            f"{_quote(config.nginx_error_log)} {_quote(config.logrotate_config_file)}",
         ),
         Command(
             'Remove Nginx HTTP',
@@ -316,47 +407,26 @@ def purge_instance_superuser() -> None:
             f"rm -f {_quote(f'/etc/fail2ban/jail.d/odoo-auth-{_safe_token(config.instance)}.local')} && "
             "{ ! systemctl is-active --quiet fail2ban || systemctl reload fail2ban; }",
         ),
-        Command('Remove the instance filestore root', f"rm -rf {_quote(filestore_root)}"),
-        Command('Validate/reload Nginx (best effort)', "nginx -t && systemctl reload nginx || true"),
+        *_remove_data_commands(config, db_names),
+        Command(
+            'Validate/reload Nginx (best effort)',
+            "if command -v nginx >/dev/null 2>&1; then nginx -t && systemctl reload nginx || true; fi",
+        ),
     ]
 
     if session:
-        for db_name in db_names:
-            db_literal = _sql_literal(db_name)
-            terminate_sql = (
-                "SELECT pg_terminate_backend(pid) "
-                "FROM pg_stat_activity "
-                f"WHERE datname = '{db_literal}' AND pid <> pg_backend_pid();"
-            )
-            commands.append(
-                Command(
-                    tf('Close active connections of DB {}', db_name),
-                    _db_admin_psql_command(session, terminate_sql) + " || true",
-                    env=_admin_env(session),
-                )
-            )
-            commands.append(
-                Command(
-                    tf('Delete DB {}', db_name),
-                    _db_admin_dropdb_command(session, db_name),
-                    env=_admin_env(session),
-                )
-            )
-
+        # A role another instance connects as stays; so does one named after the
+        # instance that another instance uses.
         role_candidates = [] if sharing else [db_user]
-        if config.instance not in _instances_sharing_role(instance, config.instance):
+        if not _instances_sharing_role(instance, config.instance):
             role_candidates.append(config.instance)
-        unique_roles: list[str] = []
-        for role in role_candidates:
-            if role and role not in unique_roles:
-                unique_roles.append(role)
-
-        for role in unique_roles:
-            drop_role_sql = f"DROP ROLE IF EXISTS {role};"
+        for role in dict.fromkeys(r for r in role_candidates if r):
+            drop_role_sql = f'DROP ROLE IF EXISTS "{role}";'
             commands.append(
                 Command(
                     tf('Delete PostgreSQL role {} (if it exists)', role),
-                    _db_admin_psql_command(session, drop_role_sql) + " || true",
+                    _db_admin_psql_command(session, drop_role_sql)
+                    + " || echo " + _quote(tf('Role {} kept: it still owns objects or is in use.', role)),
                     env=_admin_env(session),
                 )
             )
@@ -370,8 +440,8 @@ def purge_instance_superuser() -> None:
         ['Nginx HTTP detected', "yes" if path_exists(f"/etc/nginx/sites-available/{config.nginx_http_name}") else "no"],
         ['Nginx HTTPS detected', "yes" if path_exists(f"/etc/nginx/sites-available/{config.nginx_https_name}") else "no"],
         ['SSL detected', "yes" if path_exists(config.nginx_ssl_dir) else "no"],
-        ['Filestore root detected', f"{'yes' if path_exists(filestore_root) else 'no'} ({filestore_root})"],
-        ['DBs by filestore', ", ".join(filestore_dbs) if filestore_dbs else '(none)'],
+        ['Data dirs', ", ".join(_instance_data_dirs(config))],
+        ['Filestore folders', ", ".join(filestore_dbs) if filestore_dbs else '(none)'],
         ['DBs by owner/name', ", ".join(dbs_by_prefix) if dbs_by_prefix else '(none)'],
         ['DB admin access', session.mode if session else 'unavailable (local cleanup only)'],
         ['DBs to remove', ", ".join(db_names) if db_names else '(none detected)'],

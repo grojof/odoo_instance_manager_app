@@ -21,9 +21,10 @@ policy for an instance's Odoo log (`/var/log/odoo/<instance>.log`).
 - **Compression** — gzip the rotated files (adds `compress` + `delaycompress`).
 - **Size threshold** (optional) — also rotate when the log exceeds a size (e.g. `50M`, `1G`).
 
-The policy uses **`copytruncate`**, so Odoo keeps writing to the same file and does **not** need a restart. An
-`su <instance> <instance>` directive lets logrotate rotate the instance-owned log safely. The plan installs
-`logrotate` if missing and validates the file with `logrotate -d` before finishing.
+The policy uses **`copytruncate`**, so Odoo keeps writing to the same file and does **not** need a restart.
+`/var/log/odoo` belongs to root and each instance owns only its own log, so root rotates it with no `su`
+directive. The plan installs `logrotate` if missing and validates the file with `logrotate -d` before
+finishing.
 
 Log rotation is also offered **at install time** (recommended, default yes), so a fresh instance starts with a
 rotation policy in place.

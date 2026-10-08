@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from instance_manager import planners, system  # noqa: E402
 from instance_manager.models import InstanceConfig  # noqa: E402
-from instance_manager.workflows import backup_restore, common, purge  # noqa: E402
+from instance_manager.workflows import backup_restore, common, install, manage, purge  # noqa: E402
 
 FAILURES: list[str] = []
 
@@ -180,6 +180,180 @@ def _keep_data_dir(root: Path) -> None:
         check("the home itself is gone", not Path(config.odoo_home).exists())
 
 
+def _retention_by_name(root: Path) -> None:
+    """A copied or restored backup gets a new mtime: the newest is the latest name."""
+    backup_dir = root / "byname"
+    backup_dir.mkdir()
+    names = [f"shop--acme--2025010{day}_000000.dump" for day in (1, 2, 3)]
+    for age, name in enumerate(names):
+        path = backup_dir / name
+        path.write_text("x", encoding="utf-8")
+        stamp = time.time() - 3600 * age  # the oldest name has the newest mtime
+        os.utime(path, (stamp, stamp))
+    for command in planners.plan_backup_retention(InstanceConfig(instance="shop"), str(backup_dir), 1, ["acme"]):
+        _run(command.command, dict(os.environ))
+    left = sorted(p.name for p in backup_dir.iterdir())
+    check("retention keeps the newest name, whatever the mtimes", left == [names[-1]], str(left))
+
+
+# Host paths the plans name, moved under a temp root so their shell can run.
+_HOST_DIRS = ("/var/log/odoo", "/etc/logrotate.d", "/opt/odoo", "/etc/odoo", "/etc/systemd/system",
+              "/etc/nginx", "/var/lib/odoo", "/var/log/nginx", "/etc/fail2ban")
+
+
+def _rebase(command: str, root: Path) -> str:
+    for directory in _HOST_DIRS:
+        command = command.replace(directory, f"{root}{directory}")
+    return command
+
+
+def _host_stubs(root: Path, passwd: dict[str, str]) -> dict[str, str]:
+    """chown/userdel/systemctl record their calls; id/getent answer from ``passwd``."""
+    bindir = root / "hoststubs"
+    bindir.mkdir()
+    calls = root / "calls"
+    for name in ("chown", "userdel", "systemctl"):
+        _write_exe(bindir / name, f'echo "{name} $*" >> {calls}\n')
+    entries = "\n".join(f"{user}:x:999:999::{home}:/usr/sbin/nologin" for user, home in passwd.items())
+    _write_exe(bindir / "getent", f"grep \"^$2:\" <<'EOF'\n{entries}\nEOF\n")
+    _write_exe(bindir / "id", 'getent passwd "${@: -1}" >/dev/null\n')
+    return dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}")
+
+
+def _calls(root: Path) -> str:
+    path = root / "calls"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def _filestore_copy(root: Path) -> None:
+    with mock.patch.object(InstanceConfig, "base_instances_dir", str(root / "opt")):
+        source, target = InstanceConfig(instance="prod"), InstanceConfig(instance="dev")
+        src = Path(common._filestore_path(source, "prod"))
+        dst = Path(common._filestore_path(target, "dev"))
+        (src / "ab").mkdir(parents=True)
+        (src / "ab" / "new").write_text("new", encoding="utf-8")
+        (dst / "cd").mkdir(parents=True)
+        (dst / "cd" / "old").write_text("old", encoding="utf-8")
+        env = _host_stubs(root, {})
+        commands = backup_restore._filestore_copy_commands(source, "prod", target, "dev")
+        failed = [c.description for c in commands if _run(c.command, env).returncode != 0]
+        check("the filestore copy runs", not failed, str(failed))
+        check("it lands in the target, not nested in it", (dst / "ab" / "new").is_file() and not (dst / "prod").exists(),
+              str(list(dst.iterdir())))
+        aside = [p for p in dst.parent.iterdir() if p.name.startswith("dev.replaced-")]
+        check("the previous target filestore is moved aside, not removed",
+              len(aside) == 1 and (aside[0] / "cd" / "old").is_file(), str(list(dst.parent.iterdir())))
+        check("the private data dir is handed to the target user",
+              f"chown -R dev:dev {Path(common._resolve_data_dir(target))}" in _calls(root), _calls(root))
+
+        shutil.rmtree(src)
+        before = sorted(p.name for p in dst.parent.iterdir())
+        results = []
+        for command in backup_restore._filestore_copy_commands(source, "prod", target, "dev"):
+            results.append(_run(command.command, env).returncode)
+            if results[-1]:
+                break
+        check("a missing source stops the copy before the target is touched",
+              results == [1] and sorted(p.name for p in dst.parent.iterdir()) == before, str(results))
+
+
+def _log_dir(root: Path) -> None:
+    env = _host_stubs(root, {"shop": f"{root}/opt/odoo/shop", "other": f"{root}/opt/odoo/other",
+                             "stranger": "/home/stranger"})
+    logs = root / "var/log/odoo"
+    logs.mkdir(parents=True)
+    for name in ("other", "stranger"):
+        (logs / f"{name}.log").write_text("x", encoding="utf-8")
+    rotate = root / "etc/logrotate.d"
+    rotate.mkdir(parents=True)
+    (rotate / "odoo-other").write_text(
+        f"{root}/var/log/odoo/other.log {{\n    weekly\n    copytruncate\n    su other other\n}}\n", encoding="utf-8")
+    foreign = "/srv/app/app.log {\n    su app app\n}\n"
+    (rotate / "odoo-foreign").write_text(foreign, encoding="utf-8")
+    config = InstanceConfig(instance="shop")
+    failed = [c.description for c in planners.plan_odoo_log_dir(config)
+              if _run(_rebase(c.command, root), env).returncode != 0]
+    calls = _calls(root)
+    check("the log directory steps run", not failed, str(failed))
+    check("the directory goes to root", f"chown root:root {logs}" in calls, calls)
+    check("the new instance gets its own log", f"chown shop:shop {logs}/shop.log" in calls, calls)
+    check("an earlier instance gets its log back", f"chown other:other {logs}/other.log" in calls, calls)
+    check("a log of an account that is not an instance is left alone", "stranger" not in calls, calls)
+    check("su leaves the tool's logrotate policies",
+          " su " not in (rotate / "odoo-other").read_text(encoding="utf-8")
+          and "copytruncate" in (rotate / "odoo-other").read_text(encoding="utf-8"))
+    check("a policy for other logs is not edited", (rotate / "odoo-foreign").read_text(encoding="utf-8") == foreign)
+
+
+def _install_cleanup(root: Path) -> None:
+    config = InstanceConfig(instance="shop", data_dir="/var/lib/odoo/shop")
+    config.normalize_defaults()
+    env = _host_stubs(root, {"shop": f"{root}/opt/odoo/shop"})
+    made = [root / "opt/odoo/shop/odoo", root / "etc/odoo/shop", root / "var/lib/odoo/shop/filestore/kept"]
+    for directory in made:
+        directory.mkdir(parents=True)
+    for kept_data_dir in (True, False):
+        cleanup = install._build_partial_install_cleanup(config, False, data_dir_is_new=not kept_data_dir)
+        failed = [c.description for c in cleanup if _run(_rebase(c.command, root), env).returncode != 0]
+        check("the install cleanup runs", not failed, str(failed))
+        check("it removes what the install made",
+              not (root / "opt/odoo/shop").exists() and not (root / "etc/odoo/shop").exists())
+        check(f"a data dir {'that was there is kept' if kept_data_dir else 'the run made is removed'}",
+              (root / "var/lib/odoo/shop").exists() == kept_data_dir)
+    check("the account it made is removed", "userdel shop" in _calls(root), _calls(root))
+
+
+def _purge_user(root: Path) -> None:
+    for home, removed in ((f"{root}/opt/odoo/shop", True), ("/var/backups", False)):
+        case = root / ("own" if removed else "system")
+        case.mkdir()
+        env = _host_stubs(case, {"shop": home})
+        with mock.patch.object(InstanceConfig, "base_instances_dir", str(root / "opt/odoo")):
+            config = InstanceConfig(instance="shop")
+            step = next(c for c in _purge_commands(config) if c.description == "Remove the instance Linux user")
+        result = _run(step.command, env)
+        check(f"purge {'removes the account it made' if removed else 'keeps an account with another home'}",
+              result.returncode == 0 and ("userdel shop" in _calls(case)) == removed, _calls(case) + result.stderr)
+        check("never with userdel -r", "-r" not in _calls(case))
+
+
+def _purge_commands(config: InstanceConfig) -> list[system.Command]:
+    """The purge's local steps, built through its flow with the prompts answered."""
+    execute = mock.Mock()
+    with mock.patch.multiple(
+        purge, _select_existing_instance=mock.Mock(return_value=config.instance),
+        _validate_instance_or_abort=mock.Mock(return_value=config),
+        _resolve_db_admin_access=mock.Mock(return_value=None),
+        ask_text=mock.Mock(side_effect=lambda label, default="", **_: default),
+        confirm_with_phrase=mock.Mock(return_value=True), _execute_plan=execute,
+        path_exists=mock.Mock(return_value=False), service_exists=mock.Mock(return_value=False),
+        list_instances=mock.Mock(return_value=[]), print=mock.Mock(), create=True,
+    ):
+        purge.purge_instance_superuser()
+    return execute.call_args.args[0]
+
+
+def _delete_without_nginx(root: Path) -> None:
+    config = InstanceConfig(instance="shop")
+    execute = mock.Mock()
+    with mock.patch.multiple(
+        manage, ask_bool=mock.Mock(return_value=False), confirm_with_phrase=mock.Mock(return_value=True),
+        _execute_plan=execute,
+    ):
+        manage._delete_instance(config)
+    commands = execute.call_args.args[0]
+    step = next(c for c in commands if "nginx" in c.description.lower() and "Validate" in c.description)
+    bare = root / "bare"
+    bare.mkdir()
+    for name in ("bash", "true"):
+        (bare / name).symlink_to(shutil.which(name))
+    result = subprocess.run(["bash", "-c", step.command], capture_output=True, text=True, env={"PATH": str(bare)})
+    check("delete goes on without nginx installed", result.returncode == 0, result.stderr)
+    _write_exe(bare / "nginx", "exit 1\n")
+    result = subprocess.run(["bash", "-c", step.command], capture_output=True, text=True, env={"PATH": str(bare)})
+    check("and when nginx -t fails", result.returncode == 0, result.stderr)
+
+
 # --- against a PostgreSQL of our own ------------------------------------------
 
 
@@ -299,6 +473,14 @@ def _against_a_server(root: Path) -> None:
         others = cluster.value(purge._prefix_only_databases_sql("shop", "shop")).split()
         check("the prefix report lists look-alikes it did not select",
               sorted(others) == ["shop2", "shopXeu", "shop_eu"], str(others))
+
+        cluster.value("CREATE ROLE boss LOGIN SUPERUSER")
+        admin = purge.DbAdminSession("local", "127.0.0.1", cluster.port, "", "")
+        with mock.patch.dict(os.environ, env):
+            check("purge refuses postgres as the instance role",
+                  purge._superuser_role_error(admin, "postgres") is not None)
+            check("purge refuses a superuser role", purge._superuser_role_error(admin, "boss") is not None)
+            check("purge accepts an instance role", purge._superuser_role_error(admin, "shop") is None)
     finally:
         cluster.stop()
 
@@ -306,11 +488,18 @@ def _against_a_server(root: Path) -> None:
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="oim-verify-data-") as tmp:
         root = Path(tmp)
-        for part in ("sched", "manual", "keep", "pg"):
+        parts = ("sched", "manual", "byname", "keep", "copy", "logs", "cleanup", "purge", "delete", "pg")
+        for part in parts:
             (root / part).mkdir()
         _scheduled_backup(root / "sched")
         _manual_retention(root / "manual")
+        _retention_by_name(root / "byname")
         _keep_data_dir(root / "keep")
+        _filestore_copy(root / "copy")
+        _log_dir(root / "logs")
+        _install_cleanup(root / "cleanup")
+        _purge_user(root / "purge")
+        _delete_without_nginx(root / "delete")
         _against_a_server(root / "pg")
     print(f"\n{len(FAILURES)} failure(s)" if FAILURES else "\nall checks passed")
     return 1 if FAILURES else 0

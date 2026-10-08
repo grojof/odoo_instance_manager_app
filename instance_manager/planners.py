@@ -458,7 +458,6 @@ def _logrotate_content(
         "    missingok",
         "    notifempty",
         "    copytruncate",
-        f"    su {config.odoo_user} {config.odoo_user}",
     ]
     if compress:
         lines.append("    compress")
@@ -738,6 +737,39 @@ def plan_fail2ban_ensure_odoo_filter() -> list[Command]:
     ]
 
 
+def plan_odoo_log_dir(config: InstanceConfig) -> list[Command]:
+    """The shared ``/var/log/odoo`` belongs to root (755) and each instance owns only
+    its own log (640): every instance writes its log, none can touch another's, and
+    logrotate (as root) rotates them with no ``su``.
+
+    Earlier installs gave the whole directory to the newest instance; the logs of
+    the other tool-made instances (user home ``/opt/odoo/<name>``) get their owner
+    back, and their logrotate policies lose the ``su`` that root rotation no longer
+    needs."""
+    log = shlex.quote(config.odoo_log_file)
+    owner = f"{shlex.quote(config.odoo_user)}:{shlex.quote(config.odoo_user)}"
+    return [
+        Command(
+            'Make /var/log/odoo root-owned (755)',
+            "install -d -m 755 /var/log/odoo && chown root:root /var/log/odoo && chmod 755 /var/log/odoo",
+        ),
+        Command(
+            tf('Give each instance its own log back ({} included)', config.odoo_log_file),
+            f"touch {log} && chown {owner} {log} && chmod 640 {log} && "
+            "for f in /var/log/odoo/*.log; do [ -f \"$f\" ] || continue; "
+            'u=$(basename "$f" .log); '
+            '[ "$(getent passwd "$u" | cut -d: -f6)" = "/opt/odoo/$u" ] && chown "$u:$u" "$f"; '
+            "done; true",
+        ),
+        Command(
+            'Drop su from the Odoo logrotate policies (root rotates them)',
+            "for f in /etc/logrotate.d/odoo-*; do [ -f \"$f\" ] || continue; "
+            "grep -q '^/var/log/odoo/' \"$f\" || continue; "
+            "sed -i '/^[[:space:]]*su [a-z_][a-z0-9_]* [a-z_][a-z0-9_]*$/d' \"$f\"; done; true",
+        ),
+    ]
+
+
 def plan_odoo_base_setup(
     config: InstanceConfig, service_autostart: bool = True, start_now: bool = True
 ) -> list[Command]:
@@ -759,12 +791,13 @@ def plan_odoo_base_setup(
         ),
         Command(
             'Create instance directories',
-            f"mkdir -p '{config.odoo_home}/odoo' '{config.odoo_home}/addons-oca' '{config.odoo_home}/addons-custom' '{config.odoo_conf_dir}' /var/log/odoo",
+            f"mkdir -p '{config.odoo_home}/odoo' '{config.odoo_home}/addons-oca' '{config.odoo_home}/addons-custom' '{config.odoo_conf_dir}'",
         ),
         Command(
             'Adjust base ownership',
-            f"chown -R '{config.odoo_user}:{config.odoo_user}' '{config.odoo_home}' /var/log/odoo",
+            f"chown -R '{config.odoo_user}:{config.odoo_user}' '{config.odoo_home}'",
         ),
+        *plan_odoo_log_dir(config),
         Command('Permissions on config folder', f"chmod 750 '{config.odoo_conf_dir}'"),
     ]
     if config.data_dir:
@@ -1245,11 +1278,13 @@ def _prune_command(dir_word: str, glob_word: str, keep: int) -> str:
     Both arguments are shell words the caller has already quoted (a literal path, or
     a quoted ``"$VAR"`` in a script). ``find`` exits 0 when nothing matches, so the
     command is safe under ``set -euo pipefail``; the glob is exact (prefix +
-    timestamp + suffix), so it never reaches another instance's or database's files."""
+    timestamp + suffix), so it never reaches another instance's or database's files.
+    The newest are the latest *names*: the timestamp in the name is when the backup
+    was taken, while a copied or restored file's mtime is not."""
     return (
         f"find {dir_word} -maxdepth 1 -type f -name {glob_word} "
-        "-printf '%T@ %p\\n' | sort -rn | tail -n +" + str(int(keep) + 1) + " "
-        "| cut -d' ' -f2- | xargs -r -d '\\n' rm -f --"
+        "-printf '%p\\n' | sort -r | tail -n +" + str(int(keep) + 1) + " "
+        "| xargs -r -d '\\n' rm -f --"
     )
 
 

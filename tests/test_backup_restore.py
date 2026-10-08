@@ -147,20 +147,32 @@ class FilestoreCopyTests(unittest.TestCase):
     def test_copies_into_target_and_owns_it(self) -> None:
         source = InstanceConfig(instance="prod")
         target = InstanceConfig(instance="dev")
-        cmds = [c.command for c in _filestore_copy_commands(source, "prod", target, "dev", overwrite=False)]
+        cmds = [c.command for c in _filestore_copy_commands(source, "prod", target, "dev")]
         joined = "\n".join(cmds)
-        self.assertIn("cp -a", joined)
-        self.assertIn("/opt/odoo/prod/.local/share/Odoo/filestore/prod", joined)
-        self.assertIn("/opt/odoo/dev/.local/share/Odoo/filestore/dev", joined)
-        # The whole data dir is chowned (so Odoo can create sessions/), not just filestore.
+        self.assertIn("test -d /opt/odoo/prod/.local/share/Odoo/filestore/prod", joined)
+        # Into the target, never nested inside an existing one.
+        self.assertIn(
+            "cp -a /opt/odoo/prod/.local/share/Odoo/filestore/prod/. /opt/odoo/dev/.local/share/Odoo/filestore/dev/",
+            joined,
+        )
+        # A data dir inside the home is the instance's own: it is handed over whole.
         self.assertIn("chown -R dev:dev /opt/odoo/dev/.local/share/Odoo", joined)
         self.assertNotIn("rm -rf", joined)
 
-    def test_overwrite_removes_previous_target(self) -> None:
+    def test_a_previous_target_is_moved_aside_not_removed(self) -> None:
         source = InstanceConfig(instance="prod")
         target = InstanceConfig(instance="dev")
-        cmds = [c.command for c in _filestore_copy_commands(source, "prod", target, "dev", overwrite=True)]
-        self.assertTrue(any("rm -rf" in c and "filestore/dev" in c for c in cmds))
+        cmds = [c.command for c in _filestore_copy_commands(source, "prod", target, "dev")]
+        self.assertTrue(any("mv -- /opt/odoo/dev/.local/share/Odoo/filestore/dev " in c and ".replaced-" in c
+                            for c in cmds))
+        self.assertFalse(any("rm -rf" in c for c in cmds))
+
+    def test_a_shared_data_dir_gets_only_this_filestore_chowned(self) -> None:
+        source = InstanceConfig(instance="prod")
+        target = InstanceConfig(instance="dev", data_dir="/srv/odoo-data")
+        cmds = [c.command for c in _filestore_copy_commands(source, "prod", target, "dev")]
+        self.assertIn("chown -R dev:dev /srv/odoo-data/filestore/dev", cmds)
+        self.assertNotIn("chown -R dev:dev /srv/odoo-data", cmds)
 
 
 class NginxServerNameInUseTests(unittest.TestCase):

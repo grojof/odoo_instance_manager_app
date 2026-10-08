@@ -73,15 +73,15 @@ flowchart LR
     confirm -- no --> menu
     confirm -- yes --> apply["Apply in order<br/>(root only)"]
     apply -- a step fails --> stop(["Stop at that step<br/>report it by name"])
-    stop -- install --> cleanup["Clean the install's residues"]
-    cleanup --> menu
+    stop -- install --> cleanup{"Undo what<br/>this run made?"}
+    cleanup -- yes or no --> menu
     classDef step fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
     classDef ask fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef guard fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
     class collect,build,apply step
-    class phrase,confirm ask
-    class preview,cleanup guard
+    class phrase,confirm,cleanup ask
+    class preview guard
     class stop,menu stop
 ```
 
@@ -92,8 +92,8 @@ flowchart LR
 - Destructive actions first ask for `confirm_with_phrase` — the operator types an exact phrase naming the
   operation and instance — and only then show the plan.
 - `preview_commands` renders the whole plan before anything runs; `apply_commands` runs it in order and stops
-  at the first failing step. An install that fails, or is interrupted with Ctrl+C, then removes what it created
-  and returns to the menu.
+  at the first failing step. An install that fails, or is interrupted with Ctrl+C while it runs, previews the
+  steps that undo what it made and asks before running them; then it returns to the menu.
 
 ## Diagram conventions
 

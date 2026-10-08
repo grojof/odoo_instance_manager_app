@@ -1,20 +1,4 @@
-# disk-usage Specification
-
-## Purpose
-Show what an instance occupies on disk (home, data dir, logs, backups) and the free space where its data lives, read-only, and prune old backups per database and kind without touching another instance's or another database's files.
-
-## Requirements
-
-### Requirement: Disk usage report
-
-The tool SHALL report an instance's disk footprint read-only: the size of its home, data directory
-(filestore), logs, and backup directory, plus the free space of the filesystem holding the data directory.
-
-#### Scenario: Usage report shows sizes without changes
-
-- **WHEN** the operator views disk usage for an instance
-- **THEN** the tool shows the sizes of the home, data dir, Odoo logs, and backup directory, the free space of
-  the data-dir filesystem, and a listing of present backup files — running only inspection commands
+## MODIFIED Requirements
 
 ### Requirement: Backup retention cleanup
 

@@ -26,6 +26,8 @@ from ..system import (
     read_odoo_conf,
     require_root_for_apply,
     run,
+    service_exists,
+    user_exists,
 )
 from ..ui import level_text
 
@@ -61,18 +63,23 @@ def _read_text_file(path: str) -> str:
         return ""
 
 
-def _execute_plan(commands: list[Command]) -> None:
+def _confirm_plan(commands: list[Command]) -> bool:
+    """Show the plan and ask for confirmation; True only on an explicit yes. Nothing
+    runs here, so an interruption at this prompt has changed nothing."""
     if not commands:
         print(level_text("INFO", 'There are no actions to run.'))
-        return
-
+        return False
     preview_commands(commands)
     mode = choose(
         'Confirm action',
         ['Cancel', 'Confirm plan and run'],
         default_index=None,
     )
-    if mode in {"", 'Cancel'}:
+    return mode == 'Confirm plan and run'
+
+
+def _execute_plan(commands: list[Command]) -> None:
+    if not _confirm_plan(commands):
         return
     require_root_for_apply()
     apply_commands(commands)
@@ -175,11 +182,78 @@ def _probe_databases_for_management(instance: str) -> tuple[str, str | None, lis
 
 
 def _resolve_data_dir(config: InstanceConfig) -> str:
-    values = read_odoo_conf(config.odoo_conf_file)
-    data_dir = values.get("data_dir", "").strip()
-    if data_dir:
-        return data_dir
+    """The instance's data dir: the one the config being built names (a new instance
+    has no odoo.conf on disk yet), else ``data_dir`` from its odoo.conf (current or
+    legacy location), else Odoo's default under the home."""
+    if config.data_dir:
+        return config.data_dir
+    for conf_path in _odoo_conf_candidates(config.instance):
+        data_dir = read_odoo_conf(conf_path).get("data_dir", "").strip()
+        if data_dir:
+            return data_dir
     return f"{config.odoo_home}/.local/share/Odoo"
+
+
+def _data_dir_is_private(config: InstanceConfig, data_dir: str) -> bool:
+    """True when ``data_dir`` can only be this instance's: the managed
+    ``/var/lib/odoo/<instance>`` or a directory inside its home. A custom data dir
+    elsewhere may be shared with other instances, so nothing is done to it as a whole."""
+    return os.path.normpath(data_dir) == os.path.normpath(config.managed_data_dir) or _is_inside(
+        data_dir, config.odoo_home
+    )
+
+
+def _own_filestore_commands(config: InstanceConfig, db_name: str) -> list[Command]:
+    """Give a restored or copied filestore to the instance user. A private data dir is
+    handed over whole (Odoo creates ``sessions`` and ``filestore`` in it); a data dir
+    that may be shared gets only this database's filestore."""
+    data_dir = _resolve_data_dir(config)
+    owner = f"{_quote(config.odoo_user)}:{_quote(config.odoo_user)}"
+    if _data_dir_is_private(config, data_dir):
+        return [Command(
+            'Own the data dir by the instance user (filestore, sessions, …)',
+            f"chown -R {owner} {_quote(data_dir)}",
+        )]
+    return [Command(
+        tf('Own the filestore of {} by the instance user', db_name),
+        f"chown -R {owner} {_quote(_filestore_path(config, db_name))}",
+    )]
+
+
+# Directories a backup must not be written into directly: making them private
+# (chmod 700) or pruning in them would affect everything else they hold.
+_SHARED_DIRS = frozenset({
+    "/", "/tmp", "/var", "/var/tmp", "/var/backups", "/var/lib", "/var/log", "/etc", "/usr",
+    "/home", "/root", "/opt", "/opt/odoo", "/srv", "/mnt", "/media", "/boot", "/run", "/dev",
+})
+
+
+def _backup_dir_error(path: str) -> str | None:
+    """An absolute, dedicated directory: the tool makes it private (700) and prunes
+    in it, so a shared system directory is refused."""
+    if not path.startswith("/") or "\n" in path or ".." in path.split("/"):
+        return 'Use an absolute directory path.'
+    if os.path.normpath(path) in _SHARED_DIRS:
+        return tf('{} is a shared directory: use a dedicated one, such as /var/backups/<instance>.', path)
+    return None
+
+
+def _existing_instance_artifacts(config: InstanceConfig) -> list[str]:
+    """What already exists under this instance's names: an install must not take
+    them over, and its cleanup could otherwise remove them."""
+    found = []
+    for label, present in (
+        ('home', path_exists(config.odoo_home)),
+        ('config', path_exists(config.odoo_conf_dir)),
+        ('systemd unit', service_exists(config.odoo_service)),
+        ('Nginx vhost', path_exists(f"/etc/nginx/sites-available/{config.nginx_http_name}")
+         or path_exists(f"/etc/nginx/sites-available/{config.nginx_https_name}")),
+        ('SSL directory', path_exists(config.nginx_ssl_dir)),
+        ('Linux user', user_exists(config.odoo_user)),
+    ):
+        if present:
+            found.append(label)
+    return found
 
 
 def _filestore_path(config: InstanceConfig, db_name: str) -> str:
@@ -280,6 +354,28 @@ def _database_exists(creds: DbCredentials, db_name: str) -> bool:
     )
     result = run(cmd, check=False, env=pg_env(creds.password))
     return result.returncode == 0 and result.stdout.strip() == "1"
+
+
+def _instance_db_user(config: InstanceConfig) -> str:
+    for conf_path in _odoo_conf_candidates(config.instance):
+        db_user = read_odoo_conf(conf_path).get("db_user", "").strip()
+        if db_user:
+            return db_user
+    return config.db_user or config.instance
+
+
+def _database_owner(creds: DbCredentials, db_name: str) -> str:
+    """The role owning ``db_name``, or "" when it is absent or cannot be read."""
+    sql = (
+        "SELECT r.rolname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "
+        "WHERE d.datname = '" + db_name.replace("'", "''") + "'"
+    )
+    cmd = (
+        f"psql -X -h {shlex.quote(creds.host)} -p {int(creds.port)} -U {shlex.quote(creds.user)} "
+        f"-d postgres -tAc {shlex.quote(sql)}"
+    )
+    result = run(cmd, check=False, env=pg_env(creds.password))
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _is_self_signed_certificate(cert_path: str) -> bool:

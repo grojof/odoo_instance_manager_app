@@ -43,6 +43,31 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **Installing over an existing instance removed it.** The install never checked the name was free, and its
+  cleanup ran on a failure — or on Ctrl+C at the confirmation prompt — removing that instance's home, config,
+  unit and vhosts. A new instance now needs a free name (no system account or service such as `backup`, whose
+  home is `/var/backups`), Ctrl+C at the confirmation changes nothing, and a failure while running previews the
+  undo of what that run made and asks first; a data dir or role that was already there is kept.
+- **The purge dropped other instances' databases.** Every filestore folder selected a database, with no owner
+  check, so on a shared `/var/lib/odoo` it dropped the others' databases and removed their filestores; a role
+  named after the instance was dropped even when another instance used it, and `postgres` was accepted as the
+  instance role. Databases are now selected by owner or exact name, superusers are refused, a shared data dir
+  loses only the selected filestores, and the Linux user is removed only when the tool made it.
+- **Every install took `/var/log/odoo`** (`chown -R`), so the other instances could not write their logs, their
+  fail2ban jails saw nothing and logrotate's `su` failed. The directory is root's, each instance owns its log,
+  earlier logs get their owner back, and the logrotate policies lose `su`.
+- **Delete instance** without nginx never dropped the database (`nginx -t` failed first); it now drops only a
+  database its role owns, reloads nginx only if installed, reads the data dir from the legacy config location
+  too, and removes the logrotate policy, as the purge does.
+- **Copies:** a duplicate chowned the whole data dir (other instances' files when shared), nested the copy in an
+  existing target, and a refresh deleted the target filestore and asked for a phrase naming the source. The copy
+  now lands in the target, an existing one is moved aside, ownership is scoped, and a refresh asks for
+  `REPLACE <target>`. A replica's filestore went to `~/.local/share/Odoo` while its config named
+  `/var/lib/odoo/<target>`.
+- **Backups:** a shared directory (`/tmp`, `/`) was accepted and made `700`; retention kept the newest by mtime,
+  so an old backup copied back in outlived newer ones. Backup directories must be dedicated and retention keeps
+  the newest names.
+
 - **A failed install could drop a PostgreSQL role it had not created.** The cleanup of the PostgreSQL and
   Odoo + PostgreSQL installs dropped the instance's role even when it existed before; it now drops it only when
   this run created it.

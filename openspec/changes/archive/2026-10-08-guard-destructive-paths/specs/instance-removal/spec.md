@@ -1,14 +1,4 @@
-# instance-removal Specification
-
-## Purpose
-
-Remove an instance and its residues. Two levels are supported: a scoped delete
-of an instance's service, config, home, Nginx vhosts, and SSL (optionally its
-database and filestore), and a total superuser purge that additionally removes
-the Linux user, logs, the databases its role owns or named like it, and PostgreSQL roles.
-Both are gated by an exact confirmation phrase.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Scoped instance delete
 

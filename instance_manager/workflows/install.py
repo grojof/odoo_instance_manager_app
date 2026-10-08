@@ -8,6 +8,7 @@ import re
 from .. import support
 from ..i18n import t, tf
 from ..models import (
+    INSTANCE_NAME_RE,
     InstanceConfig,
     branch_error,
     db_host_error,
@@ -15,6 +16,7 @@ from ..models import (
     generate_secret,
     ip_error,
     is_valid_db_name,
+    reserved_name_error,
     version_error,
 )
 from ..planners import (
@@ -36,7 +38,7 @@ from ..prompts import ask_bool, ask_int, ask_text, choose, select_file_path
 from ..system import (
     Command,
     apply_commands,
-    db_role_exists,
+    db_role_absent,
     detect_arch,
     detect_cpu_count,
     detect_host_python,
@@ -44,11 +46,19 @@ from ..system import (
     detect_os_release,
     detect_total_ram_bytes,
     list_instances,
+    path_exists,
+    preview_commands,
     read_odoo_conf,
+    require_root_for_apply,
     run,
 )
 from ..ui import level_text
-from .common import _execute_plan, _odoo_conf_candidates, _quote
+from .common import (
+    _confirm_plan,
+    _existing_instance_artifacts,
+    _odoo_conf_candidates,
+    _quote,
+)
 
 
 def _supported_version_error(version: str) -> str | None:
@@ -240,9 +250,32 @@ def _maybe_plan_wkhtmltopdf() -> list[Command]:
     return []
 
 
+def _new_instance_name_error(name: str, with_odoo: bool = True) -> str | None:
+    """A new instance takes a free name: not a system account or service, and with
+    Odoo, nothing on the host under it yet — its install would take those over, and
+    the cleanup of a failed install would remove them."""
+    if not INSTANCE_NAME_RE.fullmatch(name):
+        return 'invalid instance. Use the format: start with a lowercase letter and only [a-z0-9_] (max 32).'
+    if not with_odoo:
+        return None
+    error = reserved_name_error(name)
+    if error:
+        return error
+    found = _existing_instance_artifacts(InstanceConfig(instance=name))
+    if found:
+        return tf(
+            'Something named {} already exists on this host ({}). Update or delete it from Manage instances, or choose another name.',
+            name, ", ".join(t(item) for item in found),
+        )
+    return None
+
+
 def _collect_instance_config(with_odoo: bool = True) -> InstanceConfig:
     while True:
-        instance = ask_text('Instance name', "odoo18", required=True)
+        instance = ask_text(
+            'Instance name', "odoo18", required=True,
+            validate=lambda value: _new_instance_name_error(value, with_odoo),
+        )
         config = InstanceConfig(instance=instance)
         config.version = ask_text(
             'Odoo version', config.version, required=True, validate=_supported_version_error
@@ -307,9 +340,13 @@ def _collect_instance_config(with_odoo: bool = True) -> InstanceConfig:
 
 
 def _build_partial_install_cleanup(
-    config: InstanceConfig, cleanup_db_role: bool
+    config: InstanceConfig, cleanup_db_role: bool, data_dir_is_new: bool = False,
+    with_odoo: bool = True,
 ) -> list[Command]:
-    commands: list[Command] = [
+    """Undo a failed install. The name was free when the install started (see
+    ``_new_instance_name_error``), so everything under it was made by this run; the
+    data dir only when it did not exist before, and the role only when it is new."""
+    commands: list[Command] = [] if not with_odoo else [
         Command(
             '[Cleanup] Stop the Odoo service',
             f"systemctl stop {_quote(config.odoo_service)} || true",
@@ -330,15 +367,17 @@ def _build_partial_install_cleanup(
         Command(
             '[Cleanup] Remove instance home', f"rm -rf {_quote(config.odoo_home)}"
         ),
-        # Only while it holds no filestore: a data dir kept from an earlier delete
-        # of the same instance may be reused, and must not be removed with it.
         *(
-            [Command(
-                '[Cleanup] Remove the new data dir (if it holds no filestore)',
-                f'[ -n "$(ls -A {_quote(config.data_dir + "/filestore")} 2>/dev/null)" ] || '
-                f"rm -rf {_quote(config.data_dir)}",
-            )]
-            if config.data_dir else []
+            [Command('[Cleanup] Remove the new data dir', f"rm -rf {_quote(config.data_dir)}")]
+            if config.data_dir and data_dir_is_new else []
+        ),
+        Command(
+            '[Cleanup] Remove the instance log and logrotate policy',
+            f"rm -f {_quote(config.odoo_log_file)} {_quote(config.logrotate_config_file)}",
+        ),
+        Command(
+            '[Cleanup] Remove the instance Linux user',
+            f"if id -u {_quote(config.odoo_user)} >/dev/null 2>&1; then userdel {_quote(config.odoo_user)}; fi",
         ),
         Command(
             '[Cleanup] Remove Nginx HTTP',
@@ -359,7 +398,8 @@ def _build_partial_install_cleanup(
         commands.append(
             Command(
                 '[Cleanup] Remove the instance PostgreSQL role (if it exists)',
-                f'sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DROP ROLE IF EXISTS {config.db_user};" || true',
+                "sudo -u postgres psql -X -v ON_ERROR_STOP=1 -c "
+                + _quote('DROP ROLE IF EXISTS "' + config.db_user + '";') + " || true",
             )
         )
 
@@ -370,30 +410,44 @@ def _execute_install_with_cleanup(
     commands: list[Command],
     config: InstanceConfig,
     cleanup_db_role: bool,
+    with_odoo: bool = True,
 ) -> None:
+    """Confirm and run an install; if it fails or is interrupted while running, offer
+    to undo what it made. Cancelling or interrupting at the confirmation changes
+    nothing, so there is nothing to undo."""
+    # Probed before anything runs: a data dir that is already there is not this run's.
+    data_dir_is_new = bool(config.data_dir) and not path_exists(config.data_dir)
+    if not _confirm_plan(commands):
+        return
+    require_root_for_apply()
     try:
-        _execute_plan(commands)
+        apply_commands(commands)
     except (RuntimeError, KeyboardInterrupt) as error:
         reason = (
             'was interrupted (Ctrl+C)'
             if isinstance(error, KeyboardInterrupt)
             else 'failed'
         )
+        print(f"\n{level_text('WARN', tf('The installation {}.', t(reason)))}")
         cleanup_commands = _build_partial_install_cleanup(
-            config, cleanup_db_role=cleanup_db_role
+            config, cleanup_db_role=cleanup_db_role, data_dir_is_new=data_dir_is_new,
+            with_odoo=with_odoo,
         )
-        print(
-            f"\n{level_text('WARN', tf('The installation {}. Running automatic cleanup of the instance residues...', t(reason)))}"
-        )
+        if not cleanup_commands:
+            return
+        preview_commands(cleanup_commands)
+        try:
+            undo = ask_bool('Undo what this installation made (the steps above)?', True)
+        except KeyboardInterrupt:
+            undo = False
+        if not undo:
+            print(level_text("WARN", 'Nothing was undone: the steps above list what the installation may have left.'))
+            return
         apply_commands(cleanup_commands, stop_on_error=False)
-        print(
-            level_text(
-                "WARN",
-                'Automatic cleanup finished. Review the messages above.',
-            )
-        )
+        print(level_text("WARN", 'Cleanup finished. Review the messages above.'))
         # Return to the menu instead of crashing the CLI with an uncaught raise.
         return
+    print(f"\n{level_text('OK', 'Plan executed successfully.')}")
 
 
 def _choose_nginx_mode() -> str:
@@ -591,7 +645,9 @@ def install_odoo_only() -> None:
 
     commands.extend(_maybe_plan_logrotate(config))
 
-    _execute_install_with_cleanup(commands, config, cleanup_db_role=False)
+    # The role is dropped on failure only if this run creates it (local DB only).
+    role_is_new = not config.is_remote_db_host and db_role_absent(config.db_user)
+    _execute_install_with_cleanup(commands, config, cleanup_db_role=role_is_new)
 
 
 def install_db_only() -> None:
@@ -600,9 +656,9 @@ def install_db_only() -> None:
         'Configure listen_addresses and pg_hba for remote access?', True
     )
     # Dropped on failure only if this run creates it: an existing role is reused.
-    role_is_new = not db_role_exists(config.db_user)
+    role_is_new = db_role_absent(config.db_user)
     commands = plan_db_setup(config, ensure_remote_access=ensure_remote_access)
-    _execute_install_with_cleanup(commands, config, cleanup_db_role=role_is_new)
+    _execute_install_with_cleanup(commands, config, cleanup_db_role=role_is_new, with_odoo=False)
 
 
 def install_odoo_and_db() -> None:
@@ -611,7 +667,7 @@ def install_odoo_and_db() -> None:
         'Enable the Odoo service to start on boot?',
         True,
     )
-    role_is_new = not db_role_exists(config.db_user)
+    role_is_new = db_role_absent(config.db_user)
     commands: list[Command] = []
     commands.extend(_plan_runtime(config))
     # Odoo and PostgreSQL on one host talk over loopback: nothing is opened to the
