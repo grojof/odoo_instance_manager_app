@@ -38,6 +38,17 @@ jobs:
           /tmp/wheel-check/bin/pip install dist/*.whl
           cd /tmp && /tmp/wheel-check/bin/python -c "import odoo_instance_manager, instance_manager.workflows.manage, instance_manager.support, instance_manager.neutralise"
 
+      - name: Verify the generated data commands (stubs + a throwaway PostgreSQL)
+        run: python tools/verify_data_safety.py
+
+      - name: Verify secrets stay out of process arguments, previews and errors
+        run: python tools/verify_secrets.py
+
+      - name: Verify nginx and fail2ban accept the generated configuration
+        run: |
+          sudo apt-get update -qq
+          python tools/verify_ops_configs.py
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:

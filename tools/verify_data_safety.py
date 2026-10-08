@@ -231,6 +231,8 @@ class Cluster:
 def _against_a_server(root: Path) -> None:
     bindir = _postgres_bindir()
     if bindir is None:
+        # In CI a skip would pass silently: there it is a failure.
+        check("PostgreSQL binaries found (initdb)", not os.environ.get("CI"))
         print("skip  PostgreSQL binaries not found — the server-backed checks need initdb")
         return
     if os.geteuid() == 0:

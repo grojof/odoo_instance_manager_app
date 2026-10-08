@@ -12,7 +12,7 @@ are held to a careful, spec-first standard.
   confirmations, and identifier validation are load-bearing (see
   [`docs/decisions/0001-plan-preview-apply-safety.md`](docs/decisions/0001-plan-preview-apply-safety.md)).
 - **Keep planners pure.** Functions in `planners.py` build `list[Command]` and must not execute anything or
-  perform I/O. Execution lives in `system.py`; orchestration in `workflows.py`.
+  perform I/O. Execution lives in `system.py`; orchestration in the `workflows/` package.
 - **Validate and quote every operator-supplied value** that reaches a shell command or SQL string. Use the
   existing `_quote`/`shlex.quote` and the identifier validators — do not interpolate raw input.
 
@@ -22,11 +22,13 @@ are held to a careful, spec-first standard.
 |------|------|
 | `odoo_instance_manager.py` | Entry point, root check, main menu |
 | `instance_manager/models.py` | `InstanceConfig`, identifier validation, path derivation |
+| `instance_manager/support.py` | Per-version facts: Python, setuptools, PostgreSQL floor, cores, pinned uv |
+| `instance_manager/neutralise.py` | Neutralisation rules for copied databases (pure SQL builders) |
 | `instance_manager/planners.py` | Pure command-plan builders (config/systemd/nginx/fail2ban) |
 | `instance_manager/system.py` | Execution primitives, existence checks, preview/apply |
 | `instance_manager/prompts.py` | Interactive input, file picker, phrase confirmation |
 | `instance_manager/ui.py` | Terminal rendering |
-| `instance_manager/workflows.py` | Menus, plan assembly, discovery/audit |
+| `instance_manager/workflows/` | Menus, plan assembly, discovery/audit — one module per capability over `common.py` |
 | `openspec/specs/` | Capability specifications (the source of truth for behavior) |
 | `docs/` | User- and operator-facing documentation |
 
@@ -53,12 +55,13 @@ python3 tools/verify_ops_configs.py    # nginx -t and fail2ban on the generated 
 python3 tools/verify_secrets.py        # secrets in no process argument, preview or error
 ```
 
-`tools/verify_data_safety.py` is not part of CI: it executes the generated scheduled-backup script, the
+`tools/verify_data_safety.py`, `tools/verify_secrets.py` and `tools/verify_ops_configs.py` also run in CI.
+`tools/verify_data_safety.py` executes the generated scheduled-backup script, the
 retention prune and the delete step against stub binaries, and the template copy, forced drop and purge
 discovery against a PostgreSQL cluster of its own (it needs `initdb` and refuses to run as root). Run it after
 changing any of those.
 
-`tools/verify_install_runtime.py` is not part of CI either: it downloads the pinned uv (and refuses a wrong
+`tools/verify_install_runtime.py` is not part of CI: it downloads the pinned uv (and refuses a wrong
 checksum), installs the interpreter the matrix picks, builds a real venv for each Odoo checkout you pass and
 starts `odoo-bin --version`; for Odoo <= 16 it also shows the unpinned setuptools breaks it. It needs network
 access and the build dependencies, and writes only to a temp directory. Run it after changing

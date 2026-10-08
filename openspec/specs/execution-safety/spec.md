@@ -6,7 +6,9 @@ Cross-cutting safety controls that every system-mutating action in the manager
 MUST pass through: privilege enforcement, a preview-before-apply gate, explicit
 confirmation for sensitive operations, strict identifier validation, automatic
 port allocation, and best-effort cleanup when a provisioning run fails partway.
+
 ## Requirements
+
 ### Requirement: Root privilege enforcement
 
 The tool SHALL require root privileges to run, and SHALL re-check for root
@@ -53,11 +55,13 @@ steps are not silent.
 ### Requirement: Phrase confirmation for sensitive actions
 
 Destructive or data-altering actions SHALL require the operator to type an exact
-confirmation phrase that names the operation and target instance.
+confirmation phrase that names the operation and target instance. The phrases are English, like the rest of
+the canonical interface.
 
 #### Scenario: Correct phrase authorizes execution
 
-- **WHEN** the operator types the exact required phrase (e.g. `ELIMINAR <instance>`, `RESTORE <instance>`, `DUPLICAR <instance>`)
+- **WHEN** the operator types the exact required phrase (e.g. `DELETE <instance>`, `DELETE-ALL <instance>`,
+  `RESTORE <instance>`, `DUPLICATE <instance>`)
 - **THEN** the plan proceeds to execution
 
 #### Scenario: Wrong phrase cancels execution
@@ -67,10 +71,14 @@ confirmation phrase that names the operation and target instance.
 
 ### Requirement: Identifier validation
 
-Instance and PostgreSQL identifiers SHALL be validated against safe patterns before they are used to build any
-command or configuration. This applies to **every** flow that acts on an instance — provisioning,
-configuration, removal, purge, and duplication — including instances selected or typed manually and
-duplication target names.
+Every operator value SHALL be validated against a safe pattern before it is used to build any command or
+configuration — instance and PostgreSQL identifiers, and every other value that reaches a shell command, SQL or
+a configuration file. This applies to **every** flow that acts on an instance — provisioning, configuration, removal,
+purge, backup, restore, and duplication — including instances selected or typed manually and duplication target
+names. The values are: the instance name, the database user, the Odoo version, the repo branch, the public
+domain, the DB host, the app-server IP, and every database name (Odoo's own `DBNAME_PATTERN`,
+`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`, at most 63 characters). Prompts SHALL ask again when a value is refused.
+Existence probes, which run before any plan is previewed, SHALL quote the value they receive.
 
 #### Scenario: Invalid instance name is rejected
 
@@ -81,6 +89,17 @@ duplication target names.
 
 - **WHEN** a database user does not match the PostgreSQL identifier pattern `[a-z_][a-z0-9_]{0,62}`
 - **THEN** validation fails with a descriptive error before any plan is built
+
+#### Scenario: A value that could break out of a shell word is refused
+
+- **WHEN** the operator enters a repo branch, domain, DB host, app-server IP or database name containing a
+  quote, `$`, a backtick, a space, a `;` or a leading `-`
+- **THEN** the prompt refuses it with a descriptive error and asks again, and no command is built from it
+
+#### Scenario: Probes quote their argument
+
+- **WHEN** an existence probe (path, user, service, database, role) runs before a plan is previewed
+- **THEN** the value is passed as one quoted shell word or one escaped SQL literal
 
 #### Scenario: Manually selected instance is validated before any destructive plan
 
@@ -155,3 +174,32 @@ to the menu rather than terminating with an uncaught error.
   raises an error on a failing command
 - **THEN** the tool reports the failure and returns to the main menu, keeping the session alive
 
+### Requirement: Secrets out of sight
+
+A secret — a database password, the master password, a file holding them — SHALL never be part of a plan step's
+command text: it SHALL travel in the step's environment (which only root can read), a libpq client SHALL take
+its password from `PGPASSWORD` there, and SQL holding a password SHALL be fed to `psql` on stdin. The plan
+preview SHALL show such a step with its secrets masked, and a failed step's error SHALL name the step rather than
+print its command. Database probes SHALL give up connecting after 10 seconds (`PGCONNECT_TIMEOUT`).
+
+#### Scenario: A password is not visible to other users while a step runs
+
+- **WHEN** a step connects to PostgreSQL with a password
+- **THEN** the password is in the step's environment and in no process's arguments
+
+#### Scenario: The preview masks secrets
+
+- **WHEN** the plan writes `odoo.conf` or sets a role's password
+- **THEN** the preview shows the file or statement with `admin_passwd`, `db_password` and the role password as
+  `********`
+
+#### Scenario: Files are written atomically
+
+- **WHEN** a plan writes a file
+- **THEN** it writes a private temporary file in the same directory, sets the mode, and renames it over the
+  target, so the file is never seen half-written or with a wider mode
+
+#### Scenario: A failure does not print the command
+
+- **WHEN** a step fails
+- **THEN** the error names the step's description

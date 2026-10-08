@@ -22,7 +22,7 @@ could destroy the wrong instance or open an injection path.
 
 Every host-mutating action follows one pipeline:
 
-1. **Plan** — pure builders in `planners.py` (and inline assembly in `workflows.py`) produce an ordered
+1. **Plan** — pure builders in `planners.py` (and inline assembly in the `workflows/` package) produce an ordered
    `list[Command]`, where each `Command` is a `(description, command)` pair. Building a command never runs it.
 2. **Preview** — `preview_commands` renders the full, numbered plan to the operator before anything executes.
 3. **Confirm** — the operator explicitly confirms; **destructive or data-altering** actions additionally

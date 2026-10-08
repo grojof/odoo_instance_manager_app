@@ -27,10 +27,10 @@ def _http_probe(port: str) -> tuple[bool, str]:
         url = f"http://127.0.0.1:{port}{path}"
         try:
             with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310 (local only)
-                return 200 <= resp.status < 400, f"HTTP {resp.status} en {path}"
+                return 200 <= resp.status < 400, tf('HTTP {} on {}', resp.status, path)
         except urllib.error.HTTPError as error:
             # A 3xx/4xx still means the server answered.
-            return 200 <= error.code < 500, f"HTTP {error.code} en {path}"
+            return 200 <= error.code < 500, tf('HTTP {} on {}', error.code, path)
         except (urllib.error.URLError, OSError):
             continue
     return False, 'no response on 127.0.0.1'

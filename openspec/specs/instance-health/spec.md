@@ -1,7 +1,7 @@
 # instance-health Specification
 
 ## Purpose
-TBD - created by archiving change add-instance-health. Update Purpose after archive.
+Answer "is this instance working?" in one read-only view: its service, its local HTTP port, its database login and the disk holding its data.
 ## Requirements
 ### Requirement: Instance health check
 

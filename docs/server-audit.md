@@ -9,7 +9,7 @@ updated: 2026-07-04
 
 # Auditing a server (external report)
 
-**Informe para servidor externo** produces a **strictly read-only** report of an Ubuntu host running Odoo. It
+**External server report** produces a **strictly read-only** report of an Ubuntu host running Odoo. It
 discovers instances and inspects their state without building or applying any mutating plan — safe to run on a
 server you are auditing or preparing to hand off.
 

@@ -6,13 +6,15 @@ Inspect and adjust an already-installed instance without destroying data:
 discover instances under `/opt/odoo`, show a technical status summary, update
 the instance configuration (with a pre-update backup), repair Nginx per-instance
 log files, and install Python packages into the instance virtualenv.
+
 ## Requirements
+
 ### Requirement: Instance discovery and selection
 
 The tool SHALL discover instances as directories under `/opt/odoo` and let the operator select a detected
 instance or type a known name, and SHALL optionally query PostgreSQL to list available databases for
-validation, **scoped to the instance's database role** (databases owned by that role or named after it) rather
-than every database on the server.
+validation, **scoped to the instance's database role** (databases owned by that role or named exactly like it)
+rather than every database on the server. A name prefix SHALL NOT widen the listing.
 
 #### Scenario: Detected instances are listed for selection
 
@@ -22,9 +24,9 @@ than every database on the server.
 #### Scenario: Optional database listing is scoped to the instance role
 
 - **WHEN** the operator opts to connect to PostgreSQL during management
-- **THEN** the tool lists only the databases owned by the connected instance role (or whose name starts with
-  it), letting the operator pick one as the validation target, or reports the connection error without blocking
-  management
+- **THEN** the tool lists only the databases owned by the connected instance role or named exactly like it
+  (instance `shop` does not list `shop2`), letting the operator pick one as the validation target, or reports
+  the connection error without blocking management
 
 ### Requirement: Instance status inspection
 
@@ -53,29 +55,6 @@ mode, and optional database existence.
 - **THEN** each checked resource (Linux user, home, config, service existence/active, DB role, data
   dir, TLS mode, and optional database) is marked present or missing, and the TLS certificate mode is
   classified (self-signed / custom-CA / external / Let's Encrypt / incomplete / not configured)
-
-### Requirement: Configuration update with pre-update backup
-
-Updating an existing instance's configuration SHALL first back up the current config, systemd unit, and Nginx
-vhosts into a single timestamped directory, then **replay the full Odoo base setup** to regenerate the config
-and unit, and optionally regenerate the Nginx vhost.
-
-#### Scenario: Existing files are backed up before regeneration
-
-- **WHEN** the operator updates an instance configuration
-- **THEN** the plan copies the current config, unit, and Nginx vhosts into a single
-  `/var/backups/<instance>/config_preupdate/<timestamp>/` directory before writing new versions
-
-#### Scenario: Update replays the full base setup
-
-- **WHEN** the configuration update is applied
-- **THEN** it runs the same base-setup plan as provisioning (package install, user/dir creation, repo clone if
-  absent, venv creation and `pip install -r requirements.txt`), not only a config rewrite
-
-#### Scenario: Autostart state is preserved across update
-
-- **WHEN** the configuration is regenerated
-- **THEN** the service autostart choice mirrors whether the service is currently enabled at boot
 
 ### Requirement: Nginx log repair
 
@@ -157,3 +136,39 @@ short. Selecting a group SHALL open a submenu of its actions, each of which beha
 - **WHEN** the operator selects Delete instance from the top menu
 - **THEN** the destructive delete flow (with its phrase confirmation) runs directly, not nested in a submenu
 
+### Requirement: Configuration update merges and applies
+
+Updating an existing instance's configuration SHALL first back up the current config, systemd unit, and Nginx
+vhosts into a single private timestamped directory, then rewrite `odoo.conf` **merged** with the current one and
+rewrite the unit — without reinstalling anything — and optionally regenerate the Nginx vhost. The keys an
+operator tunes by hand (`addons_path`, `data_dir`, `logfile`, `http_interface`, `without_demo`) SHALL keep their
+current value, and keys the tool does not write SHALL be carried over. The Odoo version SHALL be read from the
+instance's checkout and the domain from its vhost. A new DB password SHALL be set on the local role as well; a
+running service SHALL be restarted so the change is live.
+
+#### Scenario: Existing files are backed up before regeneration
+
+- **WHEN** the operator updates an instance configuration
+- **THEN** the plan copies the current config, unit, and Nginx vhosts into a single
+  `/var/backups/<instance>/config_preupdate/<timestamp>/` directory (mode `700`) before writing new versions
+
+#### Scenario: The current configuration is merged, not replaced
+
+- **WHEN** the current `odoo.conf` holds `data_dir`, extra `addons_path` entries, `smtp_*` or other keys
+- **THEN** the rewritten file keeps them
+
+#### Scenario: Nothing is reinstalled
+
+- **WHEN** the configuration update is applied
+- **THEN** the plan runs no package install, clone or `pip install`
+
+#### Scenario: The change is live when the plan ends
+
+- **WHEN** the service is running
+- **THEN** the plan restarts it after writing the configuration; and when a new DB password was entered for a
+  local database, the plan sets it on the role before the restart
+
+#### Scenario: Autostart state is preserved across update
+
+- **WHEN** the configuration is regenerated
+- **THEN** the service's enabled-at-boot state is left as it was

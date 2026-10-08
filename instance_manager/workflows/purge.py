@@ -373,9 +373,9 @@ def purge_instance_superuser() -> None:
         ['Filestore root detected', f"{'yes' if path_exists(filestore_root) else 'no'} ({filestore_root})"],
         ['DBs by filestore', ", ".join(filestore_dbs) if filestore_dbs else '(none)'],
         ['DBs by owner/name', ", ".join(dbs_by_prefix) if dbs_by_prefix else '(none)'],
-        ["Acceso admin DB", session.mode if session else 'unavailable (local cleanup only)'],
+        ['DB admin access', session.mode if session else 'unavailable (local cleanup only)'],
         ['DBs to remove', ", ".join(db_names) if db_names else '(none detected)'],
-        ["Comandos a ejecutar", str(len(commands))],
+        ['Commands to run', str(len(commands))],
     ]
     print(render_table(['Field', 'Value'], summary_rows))
 

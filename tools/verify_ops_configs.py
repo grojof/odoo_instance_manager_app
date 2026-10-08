@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import os
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,7 @@ def _nginx_binary(root: Path, given: str | None) -> Path | None:
     result = _run(["apt-get", "download", "nginx"], cwd=root)
     debs = sorted(root.glob("nginx_*.deb"))
     if result.returncode != 0 or not debs:
+        check("the nginx package can be downloaded", not os.environ.get("CI"), result.stderr[-200:])
         print(f"skip  could not download the nginx package: {result.stderr.strip()[-200:]}")
         return None
     _run(["dpkg-deb", "-x", str(debs[0]), str(root / "pkg")])
@@ -161,6 +163,7 @@ def _fail2ban_src(root: Path, given: str | None) -> Path | None:
     try:
         urllib.request.urlretrieve(url, archive)  # noqa: S310 - fixed https URL
     except OSError as error:
+        check("fail2ban's source can be downloaded", not os.environ.get("CI"), str(error))
         print(f"skip  could not download fail2ban: {error}")
         return None
     _run(["tar", "-xzf", str(archive), "-C", str(root)])
