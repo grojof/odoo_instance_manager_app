@@ -44,16 +44,19 @@ instance's `odoo.conf` plus host facts (no mutation):
 
 ## Updating configuration
 
-**Update existing configuration** regenerates the instance config, systemd unit, and (optionally) the
-Nginx vhost with new values — but first it **backs up** the current config, unit, and vhosts into one
+**Update existing configuration** rewrites the instance config, systemd unit, and (optionally) the Nginx
+vhost with new values — but first it **backs up** the current config, unit, and vhosts into one private
 timestamped directory under `/var/backups/<instance>/config_preupdate/`. The service's autostart state is
 preserved.
 
-> **Note:** this update **replays the full Odoo base setup** — it re-runs the package install, ensures the
-> user/directories, clones the repo if absent, and rebuilds the venv (`pip install -r requirements.txt`) — not
-> just a config rewrite. The prompts now **read and preserve the instance's current credentials and
-> production-posture settings** from its `odoo.conf` (rather than resetting them to class defaults), but still
-> review every value before confirming.
+- The current `odoo.conf` is **merged**, not replaced: `addons_path`, `data_dir`, `logfile`, `http_interface`
+  and `without_demo` keep their value, and every key the tool does not write (`smtp_*`, `server_wide_modules`,
+  `db_name`, …) is carried over.
+- **Nothing is reinstalled**: no apt, clone or pip run (pip could move setuptools under an Odoo that needs it
+  pinned).
+- The Odoo version is read from the instance's checkout and the domain from its vhost.
+- The passwords are kept unless you choose to set new ones; a new DB password is also set on the local role.
+- A running service is **restarted**, so the change is live when the plan ends.
 
 ## Health check
 

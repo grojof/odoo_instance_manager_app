@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 
+from . import support
 from .i18n import tf
 from .models import InstanceConfig, host_cidr
 from .system import Command
@@ -95,7 +96,88 @@ def _odoo_conf_content(config: InstanceConfig) -> str:
         lines.insert(3, f"dbfilter = {config.dbfilter}")
     if config.is_remote_db_host and config.db_sslmode:
         lines.append(f"db_sslmode = {config.db_sslmode}")
+    if config.data_dir:
+        lines += ["", f"data_dir = {config.data_dir}"]
+    # A production database never wants demo data; Odoo <= 18 loads it into a new
+    # database (CLI `-i base`, or the database manager) unless told not to.
+    if config.odoo_major <= support.DEMO_BY_DEFAULT_LAST_MAJOR:
+        lines.append("without_demo = all")
     return "\n".join(lines) + "\n"
+
+
+# Keys an operator may have tuned by hand whose current value a regeneration keeps;
+# every other key the tool writes takes the tool's value, and keys it does not
+# write are carried over unchanged.
+CONF_KEYS_KEPT_ON_UPDATE = ("addons_path", "data_dir", "logfile", "http_interface", "without_demo")
+# The bus port has two names; writing one drops the other.
+_BUS_PORT_KEYS = ("gevent_port", "longpolling_port")
+
+
+def _conf_key(line: str) -> str | None:
+    if "=" not in line or line.lstrip().startswith(("#", ";", "[")):
+        return None
+    return line.split("=", 1)[0].strip()
+
+
+def render_merged_odoo_conf(config: InstanceConfig, existing: dict[str, str]) -> str:
+    """The instance's ``odoo.conf`` regenerated without losing what it held: the
+    keys in ``CONF_KEYS_KEPT_ON_UPDATE`` keep their current value, and every key the
+    tool does not write (``smtp_*``, ``server_wide_modules``, ``db_name``, …) is
+    carried over below. Pure — ``existing`` is the parsed current file."""
+    lines = _odoo_conf_content(config).rstrip("\n").split("\n")
+    written: set[str] = set()
+    for index, line in enumerate(lines):
+        key = _conf_key(line)
+        if key is None:
+            continue
+        written.add(key)
+        if key in CONF_KEYS_KEPT_ON_UPDATE and existing.get(key, "") != "":
+            lines[index] = f"{key} = {existing[key]}"
+    for key in CONF_KEYS_KEPT_ON_UPDATE:
+        if key not in written and existing.get(key, "") != "":
+            lines.append(f"{key} = {existing[key]}")
+            written.add(key)
+    if written & set(_BUS_PORT_KEYS):
+        written |= set(_BUS_PORT_KEYS)
+    carried = [f"{key} = {value}" for key, value in existing.items() if key not in written]
+    if carried:
+        lines += ["", "; kept from the previous configuration", *carried]
+    return "\n".join(lines) + "\n"
+
+
+def plan_update_instance_config(
+    config: InstanceConfig,
+    existing: dict[str, str],
+    *,
+    new_db_password: bool,
+    restart: bool,
+) -> list[Command]:
+    """Rewrite an existing instance's ``odoo.conf`` (merged) and unit, and apply them.
+
+    Nothing is reinstalled — no apt, clone or pip, which could move setuptools under
+    an Odoo that needs it pinned. A new DB password is set on the local role too, or
+    the next start could not connect. The service is restarted when it runs, since
+    ``systemctl start`` on a running unit loads nothing."""
+    commands = write_text_file_command(config.odoo_conf_file, render_merged_odoo_conf(config, existing), "640")
+    commands.append(
+        Command("Owner config Odoo", f"chown root:{shlex.quote(config.odoo_user)} {shlex.quote(config.odoo_conf_file)}")
+    )
+    service_path = f"/etc/systemd/system/{config.odoo_service}.service"
+    commands += write_text_file_command(service_path, _systemd_content(config), "644")
+    commands.append(Command('Reload systemd', "systemctl daemon-reload"))
+    if new_db_password and not config.is_remote_db_host:
+        sql = f"ALTER ROLE {config.db_user} WITH PASSWORD '{_sql_literal(config.db_password)}';"
+        commands.append(
+            Command(
+                'Set the new password on the local PostgreSQL role',
+                f"sudo -u postgres psql -X -q -v ON_ERROR_STOP=1 -c {shlex.quote(sql)}",
+            )
+        )
+    if restart:
+        commands.append(
+            Command('Restart the Odoo service to load the configuration', f"systemctl restart {shlex.quote(config.odoo_service)}")
+        )
+    return commands
 
 
 _GIB = 1024**3
@@ -128,9 +210,13 @@ def compute_worker_tuning(cpu_count: int, ram_bytes: int | None) -> dict[str, in
 
 
 def _systemd_content(config: InstanceConfig) -> str:
+    """The unit, after Odoo's own (debian/odoo.service): ``KillMode=mixed`` lets the
+    master stop its workers itself. A local database is waited for."""
+    after = "network-online.target" + ("" if config.is_remote_db_host else " postgresql.service")
     return f"""[Unit]
 Description=Odoo {config.version} ({config.instance})
-After=network.target
+Wants=network-online.target
+After={after}
 
 [Service]
 Type=simple
@@ -138,6 +224,7 @@ User={config.odoo_user}
 Group={config.odoo_user}
 WorkingDirectory={config.odoo_home}/odoo
 ExecStart={config.odoo_home}/venv/bin/python3 {config.odoo_home}/odoo/odoo-bin -c {config.odoo_conf_file}
+KillMode=mixed
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -362,7 +449,7 @@ def plan_logrotate_config(
     commands: list[Command] = [
         Command(
             'Ensure logrotate is installed',
-            "command -v logrotate >/dev/null 2>&1 || (apt-get update && apt-get -y install logrotate)",
+            "command -v logrotate >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install logrotate)",
         ),
     ]
     commands.extend(
@@ -464,7 +551,7 @@ def plan_fail2ban_base_setup(
     jail_base_path = "/etc/fail2ban/jail.d/odoo-instance-manager.local"
     commands: list[Command] = [
         Command('Update packages', "apt-get update"),
-        Command('Install fail2ban', "apt-get -y install fail2ban"),
+        Command('Install fail2ban', "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install fail2ban"),
         Command('Create /etc/fail2ban/jail.d', "mkdir -p /etc/fail2ban/jail.d"),
     ]
     commands.extend(
@@ -507,7 +594,7 @@ def plan_fail2ban_enable_odoo_instance(
     jail_path = f"/etc/fail2ban/jail.d/{jail_name}.local"
 
     commands: list[Command] = [
-        Command('Ensure fail2ban is installed', "apt-get update && apt-get -y install fail2ban"),
+        Command('Ensure fail2ban is installed', "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install fail2ban"),
         Command('Create fail2ban directories', "mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d"),
     ]
     commands.extend(
@@ -575,7 +662,7 @@ def plan_odoo_base_setup(
         Command('Update packages', "apt-get update"),
         Command(
             'Install Odoo base dependencies',
-            "apt-get -y install git build-essential pkg-config python3 python3-venv python3-dev python3-pip "
+            "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install git build-essential pkg-config python3 python3-venv python3-dev python3-pip "
             "libpq-dev libldap2-dev libsasl2-dev libssl-dev libffi-dev libxml2-dev libxslt1-dev "
             "libjpeg-dev zlib1g-dev libtiff-dev libopenjp2-7-dev liblcms2-dev libwebp-dev "
             "libharfbuzz-dev libfribidi-dev fontconfig postgresql-client xfonts-75dpi xfonts-base",
@@ -593,14 +680,26 @@ def plan_odoo_base_setup(
             f"chown -R '{config.odoo_user}:{config.odoo_user}' '{config.odoo_home}' /var/log/odoo",
         ),
         Command('Permissions on config folder', f"chmod 750 '{config.odoo_conf_dir}'"),
+    ]
+    if config.data_dir:
+        commands.append(
+            Command(
+                tf('Create the data dir {} (filestores, sessions)', config.data_dir),
+                f"install -d -m 750 -o {shlex.quote(config.odoo_user)} -g {shlex.quote(config.odoo_user)} "
+                f"{shlex.quote(config.data_dir)}",
+            )
+        )
+    commands += [
         Command(
-            'Clone Odoo repo if missing',
-            f"sudo -u '{config.odoo_user}' bash -lc \"test -d '{config.odoo_home}/odoo/.git' || git clone --depth 1 --branch '{config.repo_branch}' https://github.com/odoo/odoo.git '{config.odoo_home}/odoo'\"",
+            tf('Clone {} {} if missing', support.CORE_LABELS[config.core], config.repo_branch),
+            _as_instance_user(
+                config,
+                f"test -d {shlex.quote(config.odoo_home + '/odoo/.git')} || git clone --depth 1 "
+                f"--branch {shlex.quote(config.repo_branch)} {shlex.quote(support.CORE_URLS[config.core])} "
+                f"{shlex.quote(config.odoo_home + '/odoo')}",
+            ),
         ),
-        Command(
-            'Create/update venv and install requirements',
-            f"sudo -u '{config.odoo_user}' bash -lc \"python3 -m venv '{config.odoo_home}/venv' && source '{config.odoo_home}/venv/bin/activate' && pip install --upgrade pip wheel setuptools && pip install -r '{config.odoo_home}/odoo/requirements.txt'\"",
-        ),
+        *_venv_commands(config),
     ]
 
     commands.extend(
@@ -662,6 +761,118 @@ def _pg_hba_append_command(config: InstanceConfig) -> str:
     )
 
 
+def _as_instance_user(config: InstanceConfig, script: str) -> str:
+    """``script`` run by bash as the instance user, passed as one quoted word."""
+    return f"sudo -u {shlex.quote(config.odoo_user)} -H bash -c {shlex.quote(script)}"
+
+
+def _requirements_install(pip: str, requirements: str, major: int) -> str:
+    """``pip install -r`` of the branch's requirements, with any substitute applied:
+    the dropped project's line is filtered out and its replacement installed in the
+    same resolution (see ``support.REQUIREMENT_SUBSTITUTES``)."""
+    substitute = support.REQUIREMENT_SUBSTITUTES.get(major)
+    if substitute is None:
+        return f"{shlex.quote(pip)} install -r {shlex.quote(requirements)}"
+    dropped, replacement = substitute
+    pattern = shlex.quote(f"^{dropped}([=<>!~; ]|$)")
+    return (
+        f"set -o pipefail && grep -v -i -E {pattern} {shlex.quote(requirements)} | "
+        f"{shlex.quote(pip)} install -r /dev/stdin {shlex.quote(replacement)}"
+    )
+
+
+def _venv_commands(config: InstanceConfig) -> list[Command]:
+    """Build the venv with the interpreter chosen for the version, then install
+    pip/wheel, the setuptools the version needs, and its requirements."""
+    venv = f"{config.odoo_home}/venv"
+    if config.python_source == support.UV:
+        create = (
+            f"env UV_PYTHON_INSTALL_DIR={shlex.quote(support.UV_PYTHON_DIR)} UV_PYTHON_DOWNLOADS=never "
+            "UV_PYTHON_PREFERENCE=only-managed "
+            f"uv venv --seed --allow-existing --no-project --python {shlex.quote(config.python)} "
+            f"{shlex.quote(venv)}"
+        )
+        label = tf('Create the venv with Python {} (uv)', config.python)
+    else:
+        create = f"python3 -m venv {shlex.quote(venv)}"
+        label = 'Create the venv with the host python3'
+    pip = f"{venv}/bin/pip"
+    major = config.odoo_major
+    return [
+        Command(label, _as_instance_user(config, create)),
+        Command(
+            tf('Install pip, wheel and {} in the venv', support.setuptools_requirement(major)),
+            _as_instance_user(
+                config,
+                f"{shlex.quote(pip)} install --upgrade pip wheel "
+                f"{shlex.quote(support.setuptools_requirement(major))}",
+            ),
+        ),
+        Command(
+            tf('Install the Odoo {} requirements', config.repo_branch),
+            _as_instance_user(
+                config, _requirements_install(pip, f"{config.odoo_home}/odoo/requirements.txt", major)
+            ),
+        ),
+    ]
+
+
+def plan_ensure_uv(arch: str) -> list[Command]:
+    """Install the pinned uv into /usr/local/bin when it is missing, from GitHub's
+    release asset, checked against its published SHA-256 before anything runs."""
+    asset = support.UV_ASSETS.get(arch)
+    if asset is None:
+        return []
+    filename, sha256 = asset
+    url = f"https://github.com/astral-sh/uv/releases/download/{support.UV_VERSION}/{filename}"
+    stem = filename.removesuffix(".tar.gz")
+    script = (
+        "command -v uv >/dev/null 2>&1 && exit 0; "
+        'tmp=$(mktemp -d) && trap \'rm -rf "$tmp"\' EXIT && '
+        f'curl -fsSL -o "$tmp/{filename}" {shlex.quote(url)} && '
+        f'echo {shlex.quote(sha256 + "  ")}"$tmp/{filename}" | sha256sum -c - && '
+        f'tar -xzf "$tmp/{filename}" -C "$tmp" && '
+        f'install -m 755 "$tmp/{stem}/uv" "$tmp/{stem}/uvx" /usr/local/bin/'
+    )
+    return [
+        Command(
+            'Ensure curl is available',
+            "command -v curl >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install curl)",
+        ),
+        Command(tf('Install uv {} (checksum-verified) if missing', support.UV_VERSION), script),
+    ]
+
+
+def plan_uv_python(python: str) -> list[Command]:
+    """Install a uv-managed CPython into the shared, root-owned interpreter dir,
+    readable (not writable) by every instance user."""
+    directory = shlex.quote(support.UV_PYTHON_DIR)
+    return [
+        Command(
+            tf('Install Python {} with uv into {}', python, support.UV_PYTHON_DIR),
+            f"install -d -m 755 {directory} && "
+            f"UV_PYTHON_INSTALL_DIR={directory} uv python install {shlex.quote(python)} && "
+            f"chmod -R a+rX,go-w {directory}",
+        )
+    ]
+
+
+def _postgres_floor_commands(config: InstanceConfig) -> list[Command]:
+    """Refuse a local server older than the Odoo version's documented floor."""
+    version = support.version_support(config.version)
+    if version is None or version.postgres_min is None:
+        return []
+    floor = version.postgres_min
+    return [
+        Command(
+            tf('Check PostgreSQL is {} or newer (Odoo {} requirement)', floor, version.major),
+            "v=$(sudo -u postgres psql -X -tAc 'SHOW server_version_num') && "
+            f'[ "$v" -ge {floor * 10000} ] || '
+            f"{{ echo \"PostgreSQL $v is older than {floor}, the floor of Odoo {version.major}.\" >&2; exit 1; }}",
+        )
+    ]
+
+
 def plan_db_setup(
     config: InstanceConfig, ensure_remote_access: bool = True
 ) -> list[Command]:
@@ -672,9 +883,10 @@ def plan_db_setup(
 
     commands: list[Command] = [
         Command(
-            'Install PostgreSQL', "apt-get update && apt-get -y install postgresql"
+            'Install PostgreSQL', "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install postgresql"
         ),
         Command('Enable and start PostgreSQL', "systemctl enable --now postgresql"),
+        *_postgres_floor_commands(config),
         Command(
             'Ensure PostgreSQL role (create if missing)',
             f"sudo -u postgres psql -v ON_ERROR_STOP=1 -c {shlex.quote(role_sql)}",
@@ -744,7 +956,7 @@ def plan_nginx_http(
     site_enabled_https = f"/etc/nginx/sites-enabled/{config.nginx_https_name}"
 
     commands: list[Command] = [
-        Command('Install Nginx', "apt-get update && apt-get -y install nginx"),
+        Command('Install Nginx', "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install nginx"),
         Command('Enable Nginx', "systemctl enable --now nginx"),
     ]
     commands.extend(
@@ -775,7 +987,7 @@ def plan_nginx_https(
     site_enabled_https = f"/etc/nginx/sites-enabled/{config.nginx_https_name}"
 
     commands: list[Command] = [
-        Command('Install Nginx', "apt-get update && apt-get -y install nginx"),
+        Command('Install Nginx', "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install nginx"),
         Command('Enable Nginx', "systemctl enable --now nginx"),
     ]
     commands.extend(
@@ -900,7 +1112,7 @@ def plan_ensure_self_signed_certs(config: InstanceConfig) -> list[Command]:
             + "' ]; then "
             + "echo '[INFO] Existing self-signed certificate, reusing it.'; "
             + "else "
-            + "command -v openssl >/dev/null 2>&1 || (apt-get update && apt-get -y install openssl); "
+            + "command -v openssl >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install openssl); "
             + "openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 825 "
             + "-keyout '"
             + config.ssl_key_file
@@ -1133,7 +1345,7 @@ def plan_ufw_base_setup(
     commands: list[Command] = [
         Command(
             'Ensure UFW is installed',
-            "command -v ufw >/dev/null 2>&1 || (apt-get update && apt-get -y install ufw)",
+            "command -v ufw >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install ufw)",
         ),
         Command('Default policy: deny incoming', "ufw default deny incoming"),
         Command('Default policy: allow outgoing', "ufw default allow outgoing"),
@@ -1219,7 +1431,7 @@ def plan_install_wkhtmltopdf(mode: str, codename: str = "") -> list[Command]:
         return [
             Command(
                 'Install distro wkhtmltopdf (un-patched, reduced fidelity)',
-                "apt-get update && apt-get -y install wkhtmltopdf",
+                "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install wkhtmltopdf",
             )
         ]
     if mode != "patched":
@@ -1232,7 +1444,7 @@ def plan_install_wkhtmltopdf(mode: str, codename: str = "") -> list[Command]:
     return [
         Command(
             'Ensure curl is available',
-            "command -v curl >/dev/null 2>&1 || (apt-get update && apt-get -y install curl)",
+            "command -v curl >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install curl)",
         ),
         Command(
             tf('Download patched wkhtmltopdf ({})', filename),
@@ -1244,7 +1456,7 @@ def plan_install_wkhtmltopdf(mode: str, codename: str = "") -> list[Command]:
         ),
         Command(
             'Install verified wkhtmltopdf .deb',
-            f"apt-get update && apt-get -y install {shlex.quote(tmp)}",
+            f"apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install {shlex.quote(tmp)}",
         ),
         Command('Remove downloaded wkhtmltopdf .deb', f"rm -f {shlex.quote(tmp)}"),
     ]

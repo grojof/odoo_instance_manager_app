@@ -31,20 +31,40 @@ From **Installation menu** you choose one of three modes:
 |------|--------------|
 | **Install Odoo instance** | Ensures the DB role/login, runs the Odoo base setup, and optionally configures Nginx. Does **not** install PostgreSQL. |
 | **Install PostgreSQL (without Odoo)** | Installs and enables PostgreSQL, ensures the instance role, validates login, and optionally opens remote access. |
-| **Install Odoo instance + PostgreSQL** | DB setup (with remote access) followed by the Odoo base setup, and optionally Nginx. |
+| **Install Odoo instance + PostgreSQL** | DB setup on this host followed by the Odoo base setup, and optionally Nginx. Odoo reaches PostgreSQL over loopback, so nothing is opened to the network. |
 
 ## What the Odoo base setup does
 
 For an instance named `<instance>` (see the [configuration reference](configuration-reference.md) for every
 derived path):
 
-1. Installs OS build dependencies and the PostgreSQL client.
+1. Installs OS build dependencies and the PostgreSQL client (apt runs unattended and waits for the dpkg lock).
 2. Creates the system user `<instance>` and the directory layout under `/opt/odoo/<instance>`
-   (`odoo`, `addons-oca`, `addons-custom`) plus `/etc/odoo/<instance>` and `/var/log/odoo`.
-3. Clones Odoo at the requested branch (only if absent) and builds a virtualenv with `requirements.txt`.
-4. Writes `/etc/odoo/<instance>/<instance>.conf` (mode `640`, owner `root:<instance>`).
-5. Writes the systemd unit and reloads systemd.
-6. Enables + starts the service, or just starts it, depending on your autostart choice.
+   (`odoo`, `addons-oca`, `addons-custom`) plus `/etc/odoo/<instance>`, `/var/log/odoo` and the data dir
+   `/var/lib/odoo/<instance>` (filestores and sessions, outside the home).
+3. Clones the core you chose — **Odoo** (official) or **OCB** (OCA's backports, same branches) — at the
+   requested branch (only if absent).
+4. Builds the virtualenv with the Python interpreter the version needs (see below), installs pip, wheel and the
+   setuptools the version needs, then `requirements.txt`.
+5. Writes `/etc/odoo/<instance>/<instance>.conf` (mode `640`, owner `root:<instance>`).
+6. Writes the systemd unit (after Odoo's own: `KillMode=mixed`, started after a local PostgreSQL) and reloads
+   systemd.
+7. Enables + starts the service, or just starts it, depending on your autostart choice.
+
+### Odoo version, Python and setuptools
+
+You type the Odoo version (12–19); the branch defaults to `<version>.0`. Each version accepts a range of Python
+versions (see [Supported platforms](platforms.md)), and the tool checks the host's `python3` against it before
+the plan:
+
+- **Inside the range** → the venv is built with the host `python3`.
+- **Outside it** (e.g. Odoo 14 on Ubuntu 24.04's Python 3.12, or Odoo 17 on Debian 11's 3.9) → the plan
+  installs **uv** (one pinned release, checked against its published SHA-256) and the CPython the matrix names
+  into `/opt/odoo-python` (root-owned, readable by the instances), and builds the venv with it.
+- Odoo 16–19 never use a host Python 3.10: their requirements pin a gevent for 3.10 that pip cannot build.
+
+setuptools is pinned per version: `<58` up to Odoo 13 (`vatnumber` uses `use_2to3`) and `<81` up to Odoo 16
+(they import `pkg_resources`, which setuptools 81 removed). Odoo 12's `pyldap` is replaced by `python-ldap`.
 
 ### Port suggestion
 
@@ -70,6 +90,8 @@ explicit warning.
 - **Database manager (`list_db`).** Defaults to `False` (recommended); choosing `True` is warned because the
   manager becomes reachable over HTTP, guarded only by the master password. With `list_db = False` you create
   the first database via CLI (`odoo-bin -d <db> -i base --stop-after-init`) or by temporarily re-enabling it.
+- **Demo data.** Odoo 18 and older load demo data into a new database unless told not to, so the config holds
+  `without_demo = all` (Odoo 19 loads none unless asked).
 - **dbfilter.** *Optional* (recommended). If you opt in, it binds the instance to its database(s) with a
   suggested exact match on the DB name; if you decline, **no** `dbfilter` is written and Odoo serves all
   databases (fine for a single-database or manager-disabled instance).
@@ -103,8 +125,8 @@ For HTTPS you pick a certificate strategy:
 ## If an install fails
 
 If applying an install plan errors partway, the tool runs a **best-effort cleanup** of that instance's
-residues (service, config, home, Nginx vhosts, SSL dir, and — when the run created it — the DB role) so you
-can retry cleanly. The original error is then re-raised.
+residues (service, config, home, Nginx vhosts, SSL dir, the new data dir while it holds no filestore, and —
+when the run created it — the DB role) so you can retry cleanly. The original error is then re-raised.
 
 ## Related
 

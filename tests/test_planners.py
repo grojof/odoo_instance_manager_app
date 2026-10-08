@@ -86,7 +86,7 @@ class UfwPlanTests(unittest.TestCase):
         cmds = plan_ufw_base_setup(ssh_port=2222, allow_http=True, allow_https=True, pg_from_ip="10.0.0.5")
         text = [c.command for c in cmds]
         joined = "\n".join(text)
-        self.assertIn("apt-get -y install ufw", joined)
+        self.assertIn("DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install ufw", joined)
         self.assertIn("ufw default deny incoming", joined)
         self.assertIn("ufw allow 2222/tcp", joined)
         self.assertIn("ufw allow 80/tcp", joined)

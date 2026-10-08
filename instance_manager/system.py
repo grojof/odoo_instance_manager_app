@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -191,6 +192,18 @@ def read_odoo_conf(conf_path: str) -> dict[str, str]:
             values[key.strip()] = value.strip()
 
     return values
+
+
+def detect_host_python() -> str | None:
+    """The host python3's ``major.minor`` (e.g. ``3.12``), or None when absent."""
+    result = run('python3 -c "import sys; print(\'%d.%d\' % sys.version_info[:2])"', check=False)
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and re.fullmatch(r"3\.\d{1,2}", value) else None
+
+
+def detect_arch() -> str:
+    """The machine architecture as uv names its assets (``x86_64``, ``aarch64``)."""
+    return platform.machine()
 
 
 def detect_cpu_count() -> int:

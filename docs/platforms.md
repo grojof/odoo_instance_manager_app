@@ -33,7 +33,8 @@ assuming a single stack:
 |----------|-------|-------------|
 | OS codename | `/etc/os-release` | wkhtmltopdf asset selection; unsupported-family warning |
 | nginx version | `nginx -v` | `listen … ssl http2` (nginx < 1.25.1) vs `http2 on;` (≥ 1.25.1) |
-| Odoo major | provided at install | `gevent_port` (≥ 16) vs `longpolling_port` (≤ 15); Nginx `/websocket` vs `/longpolling/poll` |
+| Odoo major | provided at install | `gevent_port` (≥ 16) vs `longpolling_port` (≤ 15); Nginx `/websocket` vs `/longpolling/poll`; `without_demo` (≤ 18); Python and setuptools |
+| Host `python3` | `python3 -c sys.version_info` | host venv when it can build the version, else uv's interpreter |
 | PostgreSQL version | `SHOW server_version` | `scram-sha-256` support check (audit signal) |
 | CPU / RAM | `nproc`, `/proc/meminfo` | derived `workers` and memory limits |
 
@@ -45,9 +46,29 @@ assuming a single stack:
 | Ubuntu | 22.04 (jammy), 24.04 (noble) | Validated primary targets. Newer releases work; the wkhtmltopdf table maps noble → the jammy build. |
 | Debian | 11 (bullseye), 12 (bookworm) | wkhtmltopdf assets pinned for both. |
 | nginx | 1.18 → 1.25+ | HTTP/2 directive form chosen by detected version; `nginx -t` passes on either. |
-| PostgreSQL | 10+ | `scram-sha-256` requires ≥ 10 (every supported Ubuntu/Debian ships newer). |
-| Odoo Community | 15 → 18 (and newer) | Live-chat/bus key and Nginx location adapt to the major. |
+| PostgreSQL | 13+ | Local drops use `dropdb --force` (13+); Odoo's own floor per version is below. Every supported Ubuntu/Debian ships 13 or newer. |
+| Odoo Community | 12 → 19 | Per-version interpreter, setuptools, config keys — see the table below. Official Odoo or OCB. |
 | wkhtmltopdf | 0.12.6.1-3 (patched) | jammy/noble, bookworm, bullseye assets, each SHA-256-pinned; other codenames use the distro package or skip. |
+
+## Odoo versions
+
+Python ranges are those Odoo declares; a maximum marked *derived* is the newest interpreter bucket the branch's
+`requirements.txt` declares (only Odoo 19 states one outright). The fallback interpreter is the one uv installs
+when the host's cannot build the version. Facts kept in `instance_manager/support.py`, as in the sibling
+odoo_dwg project, which built and started every version on Ubuntu 24.04.
+
+| Odoo | Python | Fallback (uv) | setuptools | PostgreSQL floor | Notes |
+|------|--------|---------------|------------|------------------|-------|
+| 12 | 3.5 – no maximum stated | 3.8 | `<58` | not stated | host used only up to 3.8; `pyldap` → `python-ldap==3.1.0` |
+| 13 | 3.6 – no maximum stated | 3.8 | `<58` | not stated | host used only up to 3.8 |
+| 14 | 3.7 – 3.10 (derived) | 3.8 | `<81` | 12 | |
+| 15 | 3.7 – 3.12 (derived) | 3.12 | `<81` | 12 | |
+| 16 | 3.7 – 3.13 (derived) | 3.12 | `<81` | 12 | never a host 3.10 (gevent pin) |
+| 17 | 3.10 – 3.14 (derived) | 3.12 | current | 12 | never a host 3.10 (gevent pin) |
+| 18 | 3.10 – 3.14 (derived) | 3.12 | current | 12 | never a host 3.10 (gevent pin) |
+| 19 | 3.10 – 3.14 (official) | 3.12 | current | 13 | demo data off by default in Odoo itself |
+
+On Ubuntu 24.04 (Python 3.12) the host interpreter builds Odoo 15–19; Odoo 12–14 get uv's 3.8.
 
 ## Out of scope
 

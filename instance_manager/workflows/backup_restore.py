@@ -14,7 +14,6 @@ from ..models import (
     branch_error,
     domain_error,
     is_valid_db_name,
-    version_error,
 )
 from ..planners import (
     BACKUP_DUMP_SUFFIX,
@@ -58,9 +57,11 @@ from .install import (
     _choose_nginx_mode,
     _maybe_plan_certs,
     _maybe_plan_wkhtmltopdf,
+    _plan_runtime,
     _prompt_production_hardening,
     _prompt_secret,
     _suggest_instance_ports,
+    _supported_version_error,
 )
 
 _INVALID_DB_NAME = (
@@ -418,6 +419,16 @@ def _detect_source_repo_branch(config: InstanceConfig) -> str:
     return branch if branch and branch != "HEAD" else ""
 
 
+def _detect_source_core(config: InstanceConfig) -> str:
+    """``ocb`` when the source checkout's origin is OCA's OCB, else ``odoo``, so a
+    replica runs the same core."""
+    result = run(
+        f"git -C {_quote(config.odoo_home + '/odoo')} remote get-url origin 2>/dev/null",
+        check=False,
+    )
+    return "ocb" if "/oca/ocb" in result.stdout.strip().lower() else "odoo"
+
+
 def _nginx_server_name_in_use(domain: str, directory: str = "/etc/nginx/sites-enabled") -> bool:
     """True if ``domain`` is already a ``server_name`` in an enabled Nginx vhost.
 
@@ -619,7 +630,11 @@ def _plan_replica_target(
     target_config.repo_branch = ask_text(
         'Odoo repo branch (from source)', target_config.repo_branch, required=True, validate=branch_error
     )
-    target_config.version = ask_text('Odoo version', target_config.version, required=True, validate=version_error)
+    target_config.version = ask_text(
+        'Odoo version', target_config.version, required=True, validate=_supported_version_error
+    )
+    target_config.core = _detect_source_core(source_config)
+    target_config.data_dir = target_config.managed_data_dir
 
     suggested_http, suggested_gevent = _suggest_instance_ports(
         target_config.http_port, target_config.gevent_port
@@ -675,6 +690,7 @@ def _plan_replica_target(
     )
 
     commands: list[Command] = []
+    commands.extend(_plan_runtime(target_config))
     commands.extend(plan_ensure_db_role(target_config))
     commands.extend(_seed_db_commands(source_db, target_db, target_db, method))
     commands.extend(plan_odoo_base_setup(target_config, service_autostart=True, start_now=False))
