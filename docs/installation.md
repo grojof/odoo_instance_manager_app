@@ -4,7 +4,7 @@ title: "Installing and provisioning instances"
 description: "Run the manager and provision an Odoo instance, PostgreSQL, or both, including Nginx and TLS."
 tags: [installation, provisioning, nginx, tls]
 audience: [operator]
-updated: 2026-07-04
+updated: 2026-10-08
 ---
 
 # Installing and provisioning instances
@@ -53,18 +53,29 @@ derived path):
 
 ### Odoo version, Python and setuptools
 
-You type the Odoo version (12–19); the branch defaults to `<version>.0`. Each version accepts a range of Python
-versions (see [Supported platforms](platforms.md)), and the tool checks the host's `python3` against it before
-the plan:
+You type the Odoo version (12–19) and choose the core; the branch defaults to `<version>.0`. Before the plan is
+shown, the tool decides which Python builds the virtualenv:
 
-- **Inside the range** → the venv is built with the host `python3`.
-- **Outside it** (e.g. Odoo 14 on Ubuntu 24.04's Python 3.12, or Odoo 17 on Debian 11's 3.9) → the plan
-  installs **uv** (one pinned release, checked against its published SHA-256) and the CPython the matrix names
-  into `/opt/odoo-python` (root-owned, readable by the instances), and builds the venv with it.
-- Odoo 16–19 never use a host Python 3.10: their requirements pin a gevent for 3.10 that pip cannot build.
+```mermaid
+flowchart LR
+    version["Odoo version<br/>12–19"] --> core{"Core<br/>Odoo or OCB"}
+    core --> fit{"Can the host's<br/>python3 build it?"}
+    fit -- yes --> host["Host python3"]
+    fit -- no --> uv["uv (pinned, SHA-256 checked)<br/>installs the matrix's Python<br/>into /opt/odoo-python"]
+    host & uv --> venv["venv + pip, wheel,<br/>the version's setuptools,<br/>requirements.txt"]
+    classDef step fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef ask fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef guard fill:#dcfce7,stroke:#16a34a,color:#14532d
+    class version,host,venv step
+    class core,fit ask
+    class uv guard
+```
 
-setuptools is pinned per version: `<58` up to Odoo 13 (`vatnumber` uses `use_2to3`) and `<81` up to Odoo 16
-(they import `pkg_resources`, which setuptools 81 removed). Odoo 12's `pyldap` is replaced by `python-ldap`.
+The host's `python3` "can build" a version when it is inside the version's Python range, is not 3.10 for Odoo
+16–19 (their requirements pin a gevent for 3.10 that pip cannot build) and, for Odoo 12 and 13, which state no
+maximum, is not newer than 3.8. So on Ubuntu 24.04 (Python 3.12) the host builds Odoo 15–19, and Odoo 12–14 get
+uv's Python 3.8. The ranges, the fallback interpreters and the setuptools pins (`<58` up to Odoo 13, `<81` up to
+Odoo 16) are in the [support matrix](platforms.md#odoo-versions).
 
 ### Port suggestion
 
@@ -76,7 +87,9 @@ override the suggestion.
 
 The tool ensures the instance's PostgreSQL role exists with `LOGIN CREATEDB`, **creating it only if missing**
 and never changing an existing role's password. For a **remote** DB host it skips role creation (no admin
-credentials assumed) and only validates the configured user's login.
+credentials assumed) and only validates the configured user's login. When the plan installs PostgreSQL, it also
+checks the server is at least the Odoo version's documented floor (13 for Odoo 19, 12 for 14–18) and stops if
+it is older.
 
 ## Production hardening
 
@@ -100,7 +113,7 @@ explicit warning.
 - **`db_sslmode`.** For a **remote** DB host it defaults to `require` (offered `require` / `verify-full` /
   `prefer` / `disable`, with a warning for the cleartext-capable modes). Local hosts are left untouched.
 - **wkhtmltopdf.** Odoo PDF reports (invoices, quotations, …) require wkhtmltopdf. A three-way choice:
-  the **patched 0.12.6** build (recommended, checksum-verified, selected by the detected OS codename), the
+  the **patched 0.12.6** build (recommended, checksum-verified, selected by the detected OS codename; amd64), the
   **distribution package** (un-patched, reduced report fidelity), or **skip** (warned that PDF reports will
   fail until it is installed).
 
@@ -129,9 +142,10 @@ For HTTPS you pick a certificate strategy:
 
 ## If an install fails
 
-If applying an install plan errors partway, the tool runs a **best-effort cleanup** of that instance's
-residues (service, config, home, Nginx vhosts, SSL dir, the new data dir while it holds no filestore, and —
-when the run created it — the DB role) so you can retry cleanly. The original error is then re-raised.
+If an install plan fails partway, or you interrupt it with Ctrl+C, the tool runs a **best-effort cleanup** of
+that instance's residues — service, config, home, Nginx vhosts, SSL dir, the new data dir while it holds no
+filestore, and the DB role when this run created it (a role that already existed is kept) — and returns to the
+menu, so you can retry cleanly.
 
 ## Related
 

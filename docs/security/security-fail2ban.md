@@ -4,7 +4,7 @@ title: "Fail2ban protection"
 description: "Install a secure base, protect Odoo instances per jail, verify real client IPs, and operate bans."
 tags: [security, fail2ban, hardening]
 audience: [operator]
-updated: 2026-07-03
+updated: 2026-10-08
 ---
 
 # Fail2ban protection
@@ -25,14 +25,29 @@ The file is written through a **staged step**: it is kept only if `fail2ban-clie
 configuration, otherwise the previous one is put back and the plan stops. Then the service is enabled and
 reloaded, and the plan waits for the socket.
 
-**What a ban blocks.** `sshd` and `recidive` bans block every port from the address. The web jails and the Odoo
-jail block **only the web ports**, through ufw's `Nginx Full` application profile (installed with the nginx
-package), so a mistyped Odoo password from your office never locks you out of SSH. Without that profile,
-fail2ban's ufw action blocks every port. List your admin networks in the ignore list anyway.
+**What a ban blocks.**
 
-> **UFW prerequisite:** the ban action is `ufw`, so bans only take effect if **UFW is installed and active**.
-> The tool does not install UFW — set it up separately (`apt-get install ufw && ufw enable`) or the jails will
-> run but never actually block traffic.
+```mermaid
+flowchart LR
+    ssh["sshd · recidive"] --> all(["all ports<br/>of that address"])
+    web["nginx-http-auth · nginx-botsearch<br/>odoo-auth (per instance)"] --> webports(["web ports only<br/>ufw profile Nginx Full"])
+    ignore[("ignore list<br/>loopback + your admin networks")] -.-> never["never banned"]
+    classDef step fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef guard fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef data fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    class ssh,web step
+    class all,webports stop
+    class never guard
+    class ignore data
+```
+
+A failed Odoo or web login therefore never blocks SSH. The `Nginx Full` profile comes with the nginx package;
+without it, fail2ban's ufw action blocks every port.
+
+> **UFW prerequisite:** the ban action is `ufw`, so bans only take effect while **UFW is installed and
+> active**. This menu does not install UFW: set it up from **Firewall (UFW)**, which allows SSH before enabling
+> it ([Firewall](firewall.md)). Until then the jails run but block nothing.
 
 ## Per-instance Odoo jail
 
@@ -46,9 +61,8 @@ The filter matches Odoo's own login-failure line, which changed in Odoo 19:
 
 It is anchored on the `odoo.addons.base.models.res_users` logger, and only the request's performance numbers
 may follow the address. The plan **tests the filter** with `fail2ban-regex` on one line of each format and fails
-unless both match. An empty production log would prove nothing: `fail2ban-regex` succeeds with zero matches.
-
-When you purge an instance, its jail is removed with its log.
+unless both match (a test against the instance's own log could not tell: `fail2ban-regex` succeeds with zero
+matches).
 
 ### Real-client-IP check (important behind a proxy)
 

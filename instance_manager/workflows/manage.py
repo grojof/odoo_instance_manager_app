@@ -36,7 +36,7 @@ from ..system import (
     user_exists,
     wkhtmltopdf_version,
 )
-from ..ui import level_tag, level_text, render_table, title
+from ..ui import level_tag, level_text, prompt_label, render_table, title
 from .addons import show_addon_inventory
 from .backup_restore import (
     _backup_instance,
@@ -145,7 +145,7 @@ def _show_detected_state_view(
         ["OK" if path_exists(data_dir) else "MISSING", "Data dir", data_dir],
     ]
     cert_mode, cert_ok = _detect_certificate_mode(config)
-    status_rows.append(["OK" if cert_ok else "MISSING", "Certificado TLS", cert_mode])
+    status_rows.append(["OK" if cert_ok else "MISSING", t('TLS certificate'), cert_mode])
 
     if db_error:
         status_rows.append(["MISSING", "DB listing", tf("connection/query failure -> {}", db_error)])
@@ -301,7 +301,7 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
         extra_lines: list[str] = []
         print(level_text("INFO", 'Add more packages (one per line). Empty Enter to finish.'))
         while True:
-            line = input("Paquete adicional: ").strip()
+            line = input(f"{prompt_label('Additional package')}: ").strip()
             if not line:
                 break
             extra_lines.append(line)

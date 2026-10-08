@@ -1,195 +1,206 @@
 ---
 type: how-to
 title: "Managing existing instances"
-description: "Day-2 operations: status, config updates, services, backup/restore, duplicate, and removal."
-tags: [management, backup, restore, services, lifecycle]
+description: "Day-2 operations: status, configuration updates, services, backup, restore, duplicate and neutralise, removal."
+tags: [management, backup, restore, neutralise, services, lifecycle]
 audience: [operator]
-updated: 2026-07-04
+updated: 2026-10-08
 ---
 
 # Managing existing instances
 
-Once an instance exists under `/opt/odoo`, the **Manage instances** and **Instance services** menus
-handle day-2 operations. Instances are discovered automatically; you may also type a known name.
+Once an instance exists under `/opt/odoo`, **Manage instances** handles its day-2 operations and **Instance
+services** (main menu) starts and stops services. Instances are discovered automatically; you may also type a
+known name.
 
-The management menu is grouped into submenus — **Status & health**, **Configuration**, and **Backups &
-duplication** — plus a top-level **Delete instance**.
+**Manage instances** groups its actions into three submenus — **Status & health**, **Configuration**,
+**Backups & duplication** — plus **Delete instance**. This page follows that order.
 
-## Status and inspection
+## Status & health
 
-Status is **on-demand**: the management menu no longer prints every status table on each iteration. Instead it
-offers four selectable entries:
+The status views are shown on demand:
 
 - **Status: locations & names** — the instance's expected paths and derived names.
-- **Status: detected resources** — the detected-state table: Linux user, home, config file, systemd service
-  (present + active), DB role, data dir, and TLS certificate mode (self-signed / custom-CA / external /
-  Let's Encrypt / incomplete / not configured). Optionally connect to PostgreSQL to list databases for
-  validation — the listing is **scoped to the instance's DB role** (databases owned by it or named after it),
-  not every database on the server.
+- **Status: detected resources** — Linux user, home, config file, systemd service (present and active), DB
+  role, data dir, and TLS certificate mode (self-signed / custom CA / custom external / Let's Encrypt /
+  incomplete / not configured). Optionally connects to PostgreSQL to list the databases its role owns or that
+  are named like it.
 - **Status: config values** — useful keys read from the instance's `odoo.conf`.
-- **Status: security & production** — the production-posture view (below).
+- **Status: security & production** — the posture checks below.
+
+Other entries of this submenu have their own pages: [Health check](health-check.md),
+[Addon inventory](addon-inventory.md) and [Disk usage and cleanup](disk-usage.md). **Check a copy is
+neutralised** is described under [neutralisation](#restore-and-duplicate--copied-vs-moved).
 
 ### Security & production posture
 
-**Status: security & production** flags each posture check `OK` / `WARN` / `INFO` with a reason, read from the
-instance's `odoo.conf` plus host facts (no mutation):
+Each check is flagged `OK` / `WARN` / `INFO` with a reason, read from the instance's `odoo.conf` and host facts;
+nothing is changed. The [server report](../server-audit.md) shows the same checks for every instance.
 
 - **Database manager (`list_db`)** — exposed vs disabled.
+- **dbfilter** — set vs unset.
 - **Master / DB passwords** — guessable when they equal the instance name; a **hashed** master password is
-  treated as `OK`.
+  `OK`.
 - **wkhtmltopdf** — presence and version (patched vs un-patched).
 - **workers** — sizing against the detected CPU count.
-- **`db_sslmode`** — for a remote DB host; local hosts are treated as `OK`.
-- **dbfilter** — set vs unset.
+- **`db_sslmode`** — for a remote DB host; a local host is `OK`.
+- **`proxy_mode`** — must be `True` behind Nginx.
 
-## Updating configuration
+## Configuration
 
-**Update existing configuration** rewrites the instance config, systemd unit, and (optionally) the Nginx
-vhost with new values — but first it **backs up** the current config, unit, and vhosts into one private
-timestamped directory under `/var/backups/<instance>/config_preupdate/`. The service's autostart state is
-preserved.
+### Update existing configuration
+
+Rewrites the instance's `odoo.conf` and systemd unit with new values, and optionally its Nginx vhost. First it
+**backs up** the current config, unit and vhosts into one private timestamped directory under
+`/var/backups/<instance>/config_preupdate/`.
 
 - The current `odoo.conf` is **merged**, not replaced: `addons_path`, `data_dir`, `logfile`, `http_interface`
   and `without_demo` keep their value, and every key the tool does not write (`smtp_*`, `server_wide_modules`,
   `db_name`, …) is carried over.
-- **Nothing is reinstalled**: no apt, clone or pip run (pip could move setuptools under an Odoo that needs it
-  pinned).
+- **Nothing is reinstalled** — no apt, clone or pip run — so the venv's pinned setuptools stays as it is.
 - The Odoo version is read from the instance's checkout and the domain from its vhost.
-- The passwords are kept unless you choose to set new ones; a new DB password is also set on the local role.
-- A running service is **restarted**, so the change is live when the plan ends.
+- Passwords are kept unless you choose to set new ones; a new DB password is also set on the local role.
+- A running service is **restarted**, so the change is live when the plan ends. Autostart is left as it was.
 
-## Health check
+To go back, copy the files from the `config_preupdate/<timestamp>` directory and restart the service.
 
-**Health check** runs a read-only check of the instance — systemd service, local HTTP
-response, database connectivity, and disk usage — flagging any problems. See
-[Instance health check](health-check.md).
+### Other configuration actions
 
-## Service control
+- **Repair instance Nginx logs** recreates the per-instance access/error logs with their ownership
+  (`www-data:adm`, mode `640`) and reopens Nginx's logs.
+- **Log rotation** — see [Log rotation](log-rotation.md).
+- **Install Python packages in the venv** installs into the instance's virtualenv from a requirements file or an
+  inline package list, running pip as the instance user.
 
-**Instance services** lists instance services with their run state and autostart state, and offers start,
-stop, restart, enable-autostart, and disable-autostart. Each action runs the single matching `systemctl`
-command through the preview/confirm/apply flow.
+## Backups & duplication
 
-## Backups
+> **Credentials are asked once per session:** the first data action that needs a database connection asks for
+> host, port, user and password (without echo); later actions offer to reuse them.
 
-**Create backup** exports the database and/or filestore into a timestamped file in your chosen backup
-directory:
+### Backups
+
+**Create backup** exports the database and/or filestore into the backup directory you choose:
 
 - Database → `pg_dump -Fc` → `<instance>--<db>--<timestamp>.dump`
 - Filestore → gzipped tar → `<instance>--<db>--<timestamp>.filestore.tar.gz`
 
-The name carries the database, so retention keeps N backups of each database. The backup directory is made
-private (`700`) and the files are readable by root only: a dump holds password hashes, API keys and mail or
-payment secrets.
+The name carries the database, so retention keeps N backups of each database
+([Disk usage and backup retention](disk-usage.md)). The directory is private (`700`) and the files are readable
+by root only: a dump holds password hashes, API keys and mail or payment secrets.
+**Scheduled backups** run the same backup on a systemd timer — see [Scheduled backups](scheduled-backups.md).
 
-**Scheduled backups** sets up unattended backups on a systemd timer — see [Scheduled backups](scheduled-backups.md).
+### Restore and duplicate — copied vs moved
 
-> **Credentials are collected once per session:** the first data action (backup / restore / duplicate /
-> delete) that needs a database connection prompts for host/port/user/password; subsequent actions offer to
-> reuse them. Passwords are read without echo.
+**Restore backup**, **Duplicate database** and **Duplicate instance** ask how the copy relates to its source,
+and each asks for its confirmation phrase (`RESTORE <instance>` / `DUPLICATE <instance>`):
 
-## Restore and duplicate — copied vs moved
+- **Copied (new UUID on target)** — the target gets its own `database.uuid`, `database.secret` and creation
+  date, as Odoo's own copy does.
+- **Moved (keep UUID)** — the target keeps its identity: the database "moves".
+- **Neutralize** (recommended) — the copy cannot act as production. It follows Odoo's own `neutralize.sql`
+  (16.0–19.0) on every version from 12 to 19, plus the OCA modules a Spanish or queue-based instance runs:
+  - crons off, except Odoo's autovacuum and queue_job's cleanup; queued jobs held;
+  - outgoing mail servers off with their credentials dropped, fetchmail off, templates' fixed servers cleared,
+    and one active **mail sink** (`invalid:1025`) so Odoo never falls back to the `smtp_server` of `odoo.conf`;
+  - payment providers, external carriers and their production mode, OAuth providers;
+  - Google and Microsoft calendar tokens, webhooks, IAP accounts;
+  - SII, TicketBAI, EDI proxy and Peppol in test mode;
+  - website domain and CDN cleared, `web.base.url` pointing at the target, the "neutralised" banner and flag.
 
-Both **Restore backup** and **Duplicate instance** apply Odoo's migration semantics and require an exact
-confirmation phrase (`RESTORE <instance>` / `DUPLICATE <instance>`):
+  The rules, each with its source, are in `instance_manager/neutralise.py`.
 
-- **Copied (new UUID on target)** — gives the target its own `database.uuid`, `database.secret` and creation
-  date, as Odoo's own copy does, so it is a distinct database from the source.
-- **Moved (keep UUID)** — keeps the identity (the database "moves").
-- **Neutralize** (optional, recommended) — makes the copy unable to act as production. It follows Odoo's own
-  `neutralize.sql` (16.0–19.0) on every version from 12 to 19, plus the OCA modules a Spanish or queue-based
-  instance runs: crons off (except Odoo's autovacuum and queue_job's cleanup), mail servers off with their
-  credentials dropped, fetchmail off, and one active **mail sink** (`invalid:1025`) so Odoo never falls back to
-  the `smtp_server` of `odoo.conf`; payment providers, external carriers and their production mode, OAuth,
-  calendar tokens, webhooks, IAP, SII/TicketBAI/EDI/Peppol production modes and queued jobs; `web.base.url`
-  points at the target. The plan then **checks** that nothing can still act on the outside and stops if
-  something can.
+A copy is never visible to a running Odoo before it is neutralised. An Odoo's cron worker lists every database
+its role owns, whatever the `dbfilter`, so a duplication goes this way:
 
-A copy cannot be picked up by a running Odoo before it is neutralised. An Odoo's cron worker lists every
-database its role owns, whatever the `dbfilter`. So a duplicated database stays owned by `postgres` until it is
-neutralised, and only then is handed to its role. A restore stops the instance's service while the copy is
-restored and neutralised.
+```mermaid
+flowchart LR
+    seed[("Copy the database<br/>owned by postgres")] --> identity["Copied mode:<br/>new identity"]
+    identity --> neutralise["Neutralise<br/>one statement"]
+    neutralise --> check{"Anything left<br/>that acts outside?"}
+    check -- yes --> stop(["Stop the plan"])
+    check -- no --> handover["Hand the database<br/>to the target role"]
+    handover --> start["Start the<br/>target service"]
+    classDef step fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef ask fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef guard fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef data fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    class identity,start step
+    class check ask
+    class neutralise,handover guard
+    class stop stop
+    class seed data
+```
 
-A module update switches crons back on: **Check a copy is neutralised** (in *Status & health*) lists, read-only,
-what in a database can still act on the outside.
+A **restore** creates the database with the credentials you give, so it stops the instance's service while the
+copy is restored and neutralised, and starts it again afterwards.
 
-Guardrails: restore refuses to overwrite an existing target **database**; an existing target **filestore**
-requires an explicit overwrite confirmation, and is then moved aside to `<filestore>.replaced-<timestamp>`
-rather than deleted. The restored files are handed to the instance user.
+A module update switches crons back on. **Check a copy is neutralised** (in *Status & health*) lists, read-only,
+what in a database can still act on the outside, rule by rule, and whether the mail sink is in place.
+
+Restore refuses to overwrite an existing target **database**. An existing target **filestore** needs an explicit
+overwrite, and is then moved aside to `<filestore>.replaced-<timestamp>`, not deleted; the restored files are
+handed to the instance user.
 
 ### Duplicate instance — replica or refresh
 
-*Duplicate instance* is **existence-aware and end-to-end** (local PostgreSQL; for a remote DB use Backup +
-Restore). You pick the **copy method**: *pg_dump → restore* (robust, reassigns ownership to the target role —
-recommended for **production → development** with different DB users) or a fast *template* copy, which the
-tool only allows when the target role already owns the source database (a template copy keeps the source role
-as owner of every table).
+*Duplicate instance* needs a local PostgreSQL; for a remote database use Backup and Restore. You pick the copy
+method: **pg_dump → restore** (re-owns every object to the target role; recommended) or a fast **template**
+copy, which keeps the source role as owner of every table and is therefore refused whenever the target role
+differs from the source database's owner.
 
-- **Target does not exist → replica:** the tool provisions the whole target instance — system user, home, Odoo
-  checkout at the **source's version**, virtualenv, `odoo.conf`, systemd service, and optionally Nginx —
-  following the **same prompts as a fresh install** (secrets, `list_db`, `dbfilter`, workers, `db_sslmode`,
-  wkhtmltopdf), with **auto-suggested non-colliding internal ports**. When it fronts Nginx you must give a
-  **domain not already used by another instance** — instances share ports 80/443 and Nginx routes by
-  `server_name`, so a duplicate domain would be silently ignored and the replica unreachable. It then seeds the
-  target with the source database (+ filestore), optionally **replicates the source venv's Python packages**
-  (so addon dependencies beyond `requirements.txt` are present), applies copied/moved + neutralize, and starts
-  it.
-- **Target exists → refresh in place:** the tool stops the target service, replaces its database and filestore
-  from the source, applies the semantics, and restarts — **without** recreating its config or service. This is
-  the "keep a dev environment up to date with production" flow. The target's database is dropped only when it
-  belongs to the target's own role (from its `odoo.conf`) and you confirm the overwrite; the source instance or
-  database can never be the target.
+- **Target does not exist → replica.** The tool provisions the whole instance: system user, home, the
+  **source's core** (Odoo or OCB) at its branch, a virtualenv built with the Python the version needs on this
+  host, `odoo.conf` with its own data dir, systemd service, and optionally Nginx — following the same prompts as
+  a fresh install, with free internal ports suggested. With Nginx, the domain must not be served by another
+  vhost already. The replica's database role is named after its database, so a replica is always seeded with
+  the pg_dump copy. It can also install the source venv's extra Python packages.
+- **Target exists → refresh in place.** The tool stops the target service, replaces its database and filestore
+  from the source, applies the semantics, and restarts it, without recreating its config or service. The
+  target's database is dropped only when it belongs to the target's own role (from its `odoo.conf`) and you
+  confirm the overwrite; the source instance or database can never be the target.
 
-The filestore always lands under the **target** instance's data directory. The template method closes the
-source to new sessions, terminates its sessions (brief disconnect), copies, and reopens it even if the copy
-fails; the dump method reads the source live.
-
-Every seeded database is **isolated to its owner** (`CONNECT` revoked from `PUBLIC`, granted to the owning
-role) so an instance's role can't reach other instances' databases, and the target **data dir is owned by the
-target user** so Odoo can create its `sessions`/`filestore`.
+Every seeded database is **restricted to its owner** (`CONNECT` revoked from `PUBLIC`, granted to the owning
+role), and the target's data dir is owned by the target user.
 
 ### Duplicate database
 
-**Duplicate database** copies just a database (no instance provisioning), with the same copy method and
-copied/moved + neutralize semantics, and an optional filestore copy under the current instance's data
-directory. It touches no service or config. If the target database already exists it asks for an explicit
-overwrite, and it refuses a target database owned by another role. Local PostgreSQL only.
+Copies one database within the instance, with the same copy methods and semantics and an optional filestore
+copy into the instance's data dir. It touches no service or config, asks before overwriting an existing target
+database, and refuses one owned by another role. Local PostgreSQL only.
 
-## Repairing Nginx logs & venv packages
+## Instance services
 
-- **Repair instance Nginx logs** recreates the per-instance access/error logs with correct ownership
-  (`www-data:adm`, mode `640`) and reopens Nginx logs.
-- **Log rotation** configures and queries a system `logrotate` policy for the instance's Odoo log — see
-  [Log rotation](log-rotation.md).
-- **Install Python packages in the venv** installs into the instance virtualenv from a selected requirements
-  file or an inline package list, running pip as the instance user.
-- **Addon inventory** lists modules by origin (core/OCA/custom) with versions and installed state — see
-  [Addon inventory](addon-inventory.md).
-- **Disk usage and cleanup** shows the instance footprint and prunes old backups by retention — see
-  [Disk usage and backup retention](disk-usage.md).
+**Instance services** (main menu) lists the instance services with their run and autostart state, and offers
+start, stop, restart, enable autostart and disable autostart — each the single matching `systemctl` command,
+previewed and confirmed.
 
 ## Removing an instance
 
-Two levels, both phrase-gated:
+Two levels, both phrase-gated and asked before the plan is shown:
 
 | Action | Removes | Phrase |
 |--------|---------|--------|
 | **Delete instance** (in *Manage instances*) | Service, backup timer, config, home, Nginx vhosts, SSL; optionally the database and one database's filestore | `DELETE <instance>` |
-| **Remove instances** (main menu → total purge) | Everything above **plus** the Linux user, logs, fail2ban jail, filestore root, the instance's databases, and the PostgreSQL roles | `DELETE-ALL <instance>` |
+| **Remove instances** (main menu → total purge) | Everything above **plus** the Linux user, Odoo and Nginx logs, the fail2ban jail, the filestore root, the instance's databases, and its PostgreSQL roles | `DELETE-ALL <instance>` |
 
-**Delete instance** keeps the filestores you did not ask to delete. Without a `data_dir` in `odoo.conf`, Odoo
-keeps them inside the instance home, so the plan first moves the data dir to
+Neither removes the instance's logrotate policy (`/etc/logrotate.d/odoo-<instance>`).
+
+**Delete instance keeps the filestores you did not ask to delete.** An instance installed with
+`data_dir = /var/lib/odoo/<instance>` keeps its data dir where it is. An older instance without a `data_dir`
+keeps its filestores inside the home, so the plan first moves its data dir to
 `/var/backups/<instance>/kept-data-dir-<timestamp>` and only then removes the home.
 
-The total purge selects the databases its DB role owns and the one named exactly like the instance (plus those
-found in the filestore and any you add). Databases whose name merely starts with the instance name (`shop2`,
-`shop_eu` when purging `shop`) are listed as **not selected**; add them yourself if they belong to it. When
-another instance connects with the same DB role, the purge says so, selects nothing by owner and keeps the role. Without
-admin DB access it performs local cleanup only (skipping DB/role deletion). See the
-[removal spec](../../openspec/specs/instance-removal/spec.md) for the full contract.
+The **total purge** selects the databases the instance's DB role owns and the one named exactly like the
+instance, plus those found in its filestore root and any you add. Databases whose name merely starts with the
+instance name (`shop2`, `shop_eu` when purging `shop`) are listed as **not selected**; add them yourself if they
+belong to it. When another instance connects with the same DB role, the purge says so, selects nothing by owner
+and keeps the role. Without admin DB access it performs the local cleanup only. It removes the filestore root
+(`<data_dir>/filestore`), not the rest of the data dir. The full contract is the
+[removal spec](../../openspec/specs/instance-removal/spec.md).
 
 ## Related
 
-- [Installation & provisioning](../installation.md)
-- [Fail2ban security](../security/security-fail2ban.md)
+- [Installing and provisioning instances](../installation.md)
 - [Configuration reference](../configuration-reference.md)
+- [Fail2ban protection](../security/security-fail2ban.md)

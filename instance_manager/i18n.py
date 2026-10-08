@@ -862,6 +862,8 @@ _ES: dict[str, str] = {
     "invalid data_dir. Use an absolute path.": "data_dir no válido. Usa una ruta absoluta.",
     "[WARN] Role {} is also used by: {}. Its databases are not selected by owner and the role is not dropped.": "[WARN] El rol {} también lo usa: {}. Sus bases de datos no se seleccionan por dueño y el rol no se elimina.",
     # --- labels moved to English (phase 5) ---
+    'TLS certificate': 'Certificado TLS',
+    'Additional package': 'Paquete adicional',
     'Owner config Odoo': 'Propietario del config de Odoo',
     'Owner config dir': 'Propietario del directorio de config',
     'Owner fullchain': 'Propietario del fullchain',

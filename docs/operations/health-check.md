@@ -4,12 +4,12 @@ title: "Instance health check"
 description: "A read-only check of an instance: service, HTTP, database, and disk."
 tags: [health, monitoring, maintenance]
 audience: [operator]
-updated: 2026-07-03
+updated: 2026-10-08
 ---
 
 # Instance health check
 
-From **Manage instances → Health check**, the tool runs a **read-only** check and reports
+From **Manage instances → Status & health → Health check**, the tool runs a **read-only** check and reports
 whether the instance is actually working — not just whether its files exist.
 
 ## What it checks
@@ -17,9 +17,9 @@ whether the instance is actually working — not just whether its files exist.
 | Check | Healthy when | How |
 |-------|--------------|-----|
 | **Odoo service** | the systemd service is active | `systemctl is-active` (+ autostart state) |
-| **HTTP local** | the instance answers on its HTTP port | stdlib `urllib` GET to `127.0.0.1:<http_port>` (`/web/health` → `/web/login` → `/`); any 2xx/3xx counts |
+| **HTTP local** | the instance answers on its HTTP port | stdlib `urllib` GET to `127.0.0.1:<http_port>` (`/web/health` → `/web/login` → `/`); any status below 500 counts as answering |
 | **DB connection** | the database is reachable | `psql SELECT 1` with the instance's own config credentials |
-| **Disco (home / data dir)** | the filesystem is below 90% used | `df -Ph`; ≥ 90% is flagged |
+| **Disk (home)** / **Disk (data dir)** | the filesystem is below 90% used | `df -Ph`; ≥ 90% is flagged |
 
 Each row is tagged healthy or a problem. If the service is active but HTTP does not answer, the check warns to
 look at the Odoo log; if the service is down, it points you to *Instance services*.

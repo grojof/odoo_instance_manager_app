@@ -4,12 +4,12 @@ title: "Log rotation"
 description: "Configure and query system logrotate for an instance's Odoo log."
 tags: [logs, logrotate, maintenance]
 audience: [operator]
-updated: 2026-07-03
+updated: 2026-10-08
 ---
 
 # Log rotation
 
-From **Manage instances → Log rotation**, the tool configures and inspects a **system `logrotate`**
+From **Manage instances → Configuration → Log rotation**, the tool configures and inspects a **system `logrotate`**
 policy for an instance's Odoo log (`/var/log/odoo/<instance>.log`).
 
 ## Configure
@@ -30,7 +30,7 @@ rotation policy in place.
 
 ### Obsolete `logrotate` conf key
 
-Odoo's built-in `logrotate` option was **removed in Odoo 13**, so the generated `odoo.conf` no longer sets it.
+Odoo's built-in `logrotate` option was **removed in Odoo 13**; the generated `odoo.conf` does not set it.
 If an older instance's `odoo.conf` still has a `logrotate` key, Configure detects it (it is an ignored no-op)
 and offers to delete the line — no restart needed.
 

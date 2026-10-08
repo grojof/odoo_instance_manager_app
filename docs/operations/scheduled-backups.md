@@ -4,12 +4,12 @@ title: "Scheduled backups"
 description: "Run automatic backups of an instance on a systemd timer, with retention."
 tags: [backups, systemd, timer, automation]
 audience: [operator]
-updated: 2026-07-03
+updated: 2026-10-08
 ---
 
 # Scheduled backups
 
-From **Manage instances → Scheduled backups**, the tool sets up **unattended** backups of an instance on
+From **Manage instances → Backups & duplication → Scheduled backups**, the tool sets up **unattended** backups of an instance on
 a systemd timer.
 
 ## Configure scheduled backup
@@ -21,7 +21,7 @@ Installs, for `odoo-backup-<instance>`:
   (`pg_restore --list`), optionally tars the filestore, then prunes that database's backups to your retention
   count;
 - a **service** (`oneshot`, `UMask=0077`) that runs the script;
-- a **timer** with your schedule — **Daily** (02:30), **Weekly** (Sun 03:00), or **Monthly** (day 1, 03:30) —
+- a **timer** with your schedule — **Daily** (02:30), **Weekly** (Sunday 03:00), or **Monthly** (day 1, 03:30) —
   with `Persistent=true` so a missed run catches up after downtime.
 
 You choose the database, destination directory, whether to include the filestore, and how many backups to keep.

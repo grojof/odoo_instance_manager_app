@@ -4,12 +4,12 @@ title: "Disk usage and backup retention"
 description: "See an instance's disk footprint and prune old backups by retention count."
 tags: [disk, backups, retention, maintenance]
 audience: [operator]
-updated: 2026-07-03
+updated: 2026-10-08
 ---
 
 # Disk usage and backup retention
 
-From **Manage instances → Disk usage and cleanup**, the tool shows an instance's disk footprint and prunes
+From **Manage instances → Status & health → Disk usage and cleanup**, the tool shows an instance's disk footprint and prunes
 old backups.
 
 ## Show disk usage (read-only)

@@ -36,6 +36,7 @@ from ..prompts import ask_bool, ask_int, ask_text, choose, select_file_path
 from ..system import (
     Command,
     apply_commands,
+    db_role_exists,
     detect_arch,
     detect_cpu_count,
     detect_host_python,
@@ -598,8 +599,10 @@ def install_db_only() -> None:
     ensure_remote_access = ask_bool(
         'Configure listen_addresses and pg_hba for remote access?', True
     )
+    # Dropped on failure only if this run creates it: an existing role is reused.
+    role_is_new = not db_role_exists(config.db_user)
     commands = plan_db_setup(config, ensure_remote_access=ensure_remote_access)
-    _execute_install_with_cleanup(commands, config, cleanup_db_role=True)
+    _execute_install_with_cleanup(commands, config, cleanup_db_role=role_is_new)
 
 
 def install_odoo_and_db() -> None:
@@ -608,6 +611,7 @@ def install_odoo_and_db() -> None:
         'Enable the Odoo service to start on boot?',
         True,
     )
+    role_is_new = not db_role_exists(config.db_user)
     commands: list[Command] = []
     commands.extend(_plan_runtime(config))
     # Odoo and PostgreSQL on one host talk over loopback: nothing is opened to the
@@ -626,4 +630,4 @@ def install_odoo_and_db() -> None:
 
     commands.extend(_maybe_plan_logrotate(config))
 
-    _execute_install_with_cleanup(commands, config, cleanup_db_role=True)
+    _execute_install_with_cleanup(commands, config, cleanup_db_role=role_is_new)
