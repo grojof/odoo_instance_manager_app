@@ -100,29 +100,40 @@ for a refresh in place):
 - **Copied (new UUID on target)** — the target gets its own `database.uuid`, `database.secret` and creation
   date, as Odoo's own copy does.
 - **Moved (keep UUID)** — the target keeps its identity: the database "moves".
-- **Neutralize** (recommended) — the copy cannot act as production. It follows Odoo's own `neutralize.sql`
-  (16.0–19.0) on every version from 12 to 19, plus the OCA modules a Spanish or queue-based instance runs:
+- **Neutralize** (recommended) — the copy cannot act as production. On 16.0–19.0 it first runs Odoo's own
+  neutralisation: the `neutralize.sql` of every module installed in the copy, read from the instance's
+  checkout, including payment terminals and foreign EDIs. Then, on every version from 12 to 19, it applies the
+  tool's own rules, which follow Odoo's and add the OCA modules a Spanish or queue-based instance runs:
   - crons off, except Odoo's autovacuum and queue_job's cleanup; queued jobs held;
-  - outgoing mail servers off with their credentials dropped, fetchmail off, templates' fixed servers cleared,
-    and one active **mail sink** (`invalid:1025`) so Odoo never falls back to the `smtp_server` of `odoo.conf`;
+  - mail:
+    - outgoing mail servers are switched off, their credentials dropped and their host pointed nowhere;
+    - fetchmail is off and templates' fixed servers are cleared;
+    - one active **mail sink** (`invalid:1025`, logging in) stays, so Odoo never falls back to the
+      `smtp_server` of `odoo.conf`;
   - payment providers, external carriers and their production mode, OAuth providers;
-  - Google and Microsoft calendar tokens, webhooks, IAP accounts;
-  - SII, TicketBAI, EDI proxy and Peppol in test mode;
+  - Google and Microsoft calendar tokens, webhooks, IAP accounts, web push keys and devices, cloud storage,
+    certificate and SMS passwords;
+  - test mode for the tax and invoicing links:
+    - Spain: SII, TicketBAI and VERI*FACTU, both Odoo's and OCA's;
+    - the EDI proxy, Peppol, and the Malaysian and Greek EDI;
   - website domain and CDN cleared, `web.base.url` pointing at the target, the "neutralised" banner and flag.
 
-  The rules, each with its source, are in `instance_manager/neutralise.py`. They run as the copy's owner role,
-  not as the PostgreSQL superuser, so code the source database carries (a trigger, a function) gets no more
-  rights than its own role has.
+  The rules, each with its source, are in `instance_manager/neutralise.py`. Everything runs as the copy's owner
+  role, not as the PostgreSQL superuser, so code the source database carries (a trigger, a function) gets no
+  more rights than its own role has.
 
 A copy is never visible to a running Odoo before it is neutralised. An Odoo's cron worker lists every database
-its role owns, whatever the `dbfilter`, so a duplication goes this way:
+its role owns, whatever the `dbfilter`, and one with `db_name` set connects to it by name. So the copy is owned
+by postgres, and closed to every role, until it is handed over. The whole copy is **one step**: if any part
+fails, the database it created is dropped, and nothing half-made is left behind.
 
 ```mermaid
 flowchart LR
     seed[("Copy the database<br/>owned by postgres")] --> identity["Copied mode:<br/>new identity"]
-    identity --> neutralise["Neutralise<br/>one statement"]
+    identity --> odoo["Odoo's own<br/>neutralize.sql"]
+    odoo --> neutralise["The tool's rules<br/>one statement"]
     neutralise --> check{"Anything left<br/>that acts outside?"}
-    check -- yes --> stop(["Stop the plan"])
+    check -- yes --> stop(["Drop the copy,<br/>stop the plan"])
     check -- no --> handover["Hand the database<br/>to the target role"]
     handover --> start["Start the<br/>target service"]
     classDef step fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
@@ -132,16 +143,22 @@ flowchart LR
     classDef data fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
     class identity,start step
     class check ask
-    class neutralise,handover guard
+    class odoo,neutralise,handover guard
     class stop stop
     class seed data
 ```
 
-A **restore** creates the database with the credentials you give, so it stops the instance's service while the
-copy is restored and neutralised, and starts it again afterwards.
+A **restore** into a local database goes the same way, restored as the instance's role; the service keeps
+running. Into a remote database it uses the credentials you give: the service is stopped while the copy is
+restored and neutralised, and started again afterwards — also if the restore fails, which drops the database it
+created.
 
 A module update switches crons back on. **Check a copy is neutralised** (in *Status & health*) lists, read-only,
-what in a database can still act on the outside, rule by rule, and whether the mail sink is in place.
+what in a database can still act on the outside, rule by rule, whether the mail sink is in place, and any
+`cli` mail server.
+
+A copy an interrupted run left behind (owned by postgres, marked as unfinished) is recognised and replaced by
+the next restore or duplication; any other database is never taken for one.
 
 Restore refuses to overwrite an existing target **database**. An existing target **filestore** needs an explicit
 overwrite, and is then moved aside to `<filestore>.replaced-<timestamp>`, not deleted; the restored files are

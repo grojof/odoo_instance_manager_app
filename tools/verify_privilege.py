@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -258,8 +259,48 @@ def _neutralise_as_owner(root: Path) -> None:
         result = _run(check_step.command, env)
         check("the check fails where it sees no Odoo table, instead of passing on nothing",
               result.returncode != 0 and "no Odoo tables" in result.stderr, result.stderr)
+        _staged_copies(cluster, env)
     finally:
         cluster.stop()
+
+
+def _staged_copy(source: str, target: str) -> str:
+    reader = InstanceConfig(instance="dev")
+    return backup_restore._local_copy_command(
+        "copy", target, "dev", backup_restore._seed_db_commands(source, target, "dev", "dump"),
+        "Moved (keep UUID)", False, "http://127.0.0.1:8069", reader,
+    ).command
+
+
+def _staged_copies(cluster: Cluster, env: dict[str, str]) -> None:
+    """The copy is one step: done whole, or its database is dropped."""
+    def exists(db: str) -> bool:
+        return cluster.value(f"SELECT count(*) FROM pg_database WHERE datname = '{db}'") == "1"
+
+    result = _run(_staged_copy("copy_plain", "staged_ok"), env)
+    check("a staged copy succeeds", result.returncode == 0, result.stderr)
+    state = cluster.value("SELECT pg_get_userbyid(datdba) || ' ' || has_database_privilege('dev', 'staged_ok', "
+                          "'CONNECT') || ' ' || coalesce(shobj_description(oid, 'pg_database'), '-') "
+                          "FROM pg_database WHERE datname = 'staged_ok'")
+    check("and is handed over: owned by its role, connectable, unmarked", state == "dev true -", state)
+
+    result = _run(_staged_copy("no_such_source", "staged_fail"), env)
+    check("a copy that fails partway fails the step", result.returncode != 0)
+    check("and leaves no unfinished database behind", not exists("staged_fail"), result.stderr)
+
+    cluster.value('CREATE DATABASE "already_there"')
+    result = _run(_staged_copy("copy_plain", "already_there"), env)
+    check("a target that already exists is never dropped by the copy",
+          result.returncode != 0 and exists("already_there"), result.stderr)
+
+    cluster.value('CREATE DATABASE "left_over"')
+    cluster.value(f"COMMENT ON DATABASE \"left_over\" IS '{backup_restore.STAGING_COMMENT}'")
+    with mock.patch.dict(os.environ, env):
+        check("an interrupted run's copy is recognised as its own", backup_restore._is_staging_leftover("left_over")
+              and backup_restore._existing_target_error("left_over", "dev") is None)
+        check("a database merely owned by postgres is not",
+              not backup_restore._is_staging_leftover("already_there")
+              and backup_restore._existing_target_error("already_there", "dev") is not None)
 
 
 def main() -> int:

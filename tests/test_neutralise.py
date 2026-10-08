@@ -32,7 +32,7 @@ class ApplyTests(unittest.TestCase):
 
     def test_one_statement_guarded_per_rule(self) -> None:
         self.assertTrue(self.sql.startswith("DO $$") and self.sql.endswith("END $$;"))
-        self.assertEqual(self.sql.count("FROM pg_attribute a JOIN pg_class c"), len(neutralise.CATALOGUE) + 1)
+        self.assertEqual(self.sql.count("JOIN pg_namespace n ON n.oid"), len(neutralise.CATALOGUE))
 
     def test_housekeeping_cron_stays(self) -> None:
         self.assertIn("('base', 'autovacuum_job')", self.sql)
@@ -64,10 +64,13 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(sql.count("SELECT 'crons'"), 1)
 
     def test_applicable_needs_every_column(self) -> None:
-        existing = {("ir_cron", "id"), ("ir_cron", "active")}
+        existing = {("ir_cron", "id")}
         self.assertEqual(neutralise.applicable(existing), [])
+        # The label only names rows in the check: without it the rule still applies.
+        existing.add(("ir_cron", "active"))
+        self.assertEqual([(r.id, r.label) for r in neutralise.applicable(existing)], [("crons", "")])
         existing.add(("ir_cron", "cron_name"))
-        self.assertEqual([r.id for r in neutralise.applicable(existing)], ["crons"])
+        self.assertEqual([(r.id, r.label) for r in neutralise.applicable(existing)], [("crons", "cron_name")])
 
 
 if __name__ == "__main__":

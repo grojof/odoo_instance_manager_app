@@ -94,7 +94,8 @@ class SeedDbCommandsTests(unittest.TestCase):
         for method in ("dump", "template"):
             joined = "\n".join(c.command for c in _seed_db_commands("prod", "dev", "dev", method))
             self.assertIn('REVOKE CONNECT ON DATABASE "dev" FROM PUBLIC;', joined)
-            self.assertIn('GRANT CONNECT ON DATABASE "dev" TO "dev";', joined)
+            # Its own role connects only once it is handed over, neutralised.
+            self.assertNotIn('GRANT CONNECT', joined)
 
 
 class DropDbCommandsTests(unittest.TestCase):
@@ -144,7 +145,10 @@ class PostDbModeLocalTests(unittest.TestCase):
 
     def test_hand_over_gives_the_database_to_its_role(self) -> None:
         [cmd] = backup_restore._hand_over_commands("dev", "dev")
-        self.assertIn('ALTER DATABASE "dev" OWNER TO "dev";', shlex.split(cmd.command)[-1])
+        words = shlex.split(cmd.command)
+        self.assertIn('ALTER DATABASE "dev" OWNER TO "dev"; GRANT CONNECT ON DATABASE "dev" TO "dev"; '
+                      'COMMENT ON DATABASE "dev" IS NULL;', words)
+        self.assertIn("REVOKE CREATE ON SCHEMA public FROM PUBLIC;", words)
 
 
 class FilestoreCopyTests(unittest.TestCase):

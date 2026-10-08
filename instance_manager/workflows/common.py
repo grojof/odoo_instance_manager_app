@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import shlex
 from dataclasses import dataclass
 
@@ -179,6 +180,22 @@ def _probe_databases_for_management(instance: str) -> tuple[str, str | None, lis
         db_name = ask_text('DB for validation (optional)', "", required=False)
 
     return db_name, db_error, listed_dbs
+
+
+_ADDONS_DIR_RE = re.compile(r"/[A-Za-z0-9/._-]{1,250}")
+
+
+def _addons_paths(config: InstanceConfig) -> list[str]:
+    """Where the instance's modules live: its odoo.conf ``addons_path`` plus the two
+    directories Odoo itself always adds (``odoo/addons`` and ``addons`` of the
+    checkout), each an absolute path of plain characters."""
+    paths = [f"{config.odoo_home}/odoo/odoo/addons", f"{config.odoo_home}/odoo/addons"]
+    for conf_path in _odoo_conf_candidates(config.instance):
+        value = read_odoo_conf(conf_path).get("addons_path", "")
+        if value:
+            paths += [item.strip().rstrip("/") for item in value.split(",")]
+            break
+    return [p for p in dict.fromkeys(paths) if _ADDONS_DIR_RE.fullmatch(p) and ".." not in p.split("/")]
 
 
 def _resolve_data_dir(config: InstanceConfig) -> str:

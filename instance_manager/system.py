@@ -161,6 +161,19 @@ def database_exists(db_name: str) -> bool:
     return _local_psql_value(f"SELECT 1 FROM pg_database WHERE datname = {sql_literal(db_name)}") == "1"
 
 
+def database_comment(db_name: str) -> str:
+    """The comment on ``db_name`` on the local server ("" when none or unreadable)."""
+    return _local_psql_value(
+        "SELECT coalesce(shobj_description(oid, 'pg_database'), '') FROM pg_database "
+        f"WHERE datname = {sql_literal(db_name)}"
+    ) or ""
+
+
+def local_postgres_available() -> bool:
+    """True when the local server answers as postgres (``sudo -u postgres``)."""
+    return _local_psql_value("SELECT 1") == "1"
+
+
 def database_owner(db_name: str) -> str | None:
     """The role owning ``db_name`` on the local server, or None when it does not
     exist (or the server cannot be queried)."""

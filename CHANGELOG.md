@@ -43,6 +43,26 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **A neutralised copy could still reach the outside.**
+  - Several rules named columns some versions lack, so they were skipped silently and left those copies in
+    production:
+    - SII and TicketBAI on 14–17;
+    - the EDI proxy on 14–16;
+    - Google Calendar on 15–17;
+    - IAP on 18–19.
+  - Other integrations were not covered at all: VERI\*FACTU, web push, cloud storage, certificates, SMS, and the
+    Malaysian and Greek EDI.
+  - A mail sink cloned from a `cli` server still sent through `odoo.conf`.
+
+  On 16–19 a copy now first runs Odoo's own `neutralize.sql` for every installed module. Then the tool's rules,
+  now checked against each version's sources, cover 12–19 and the OCA modules.
+- **A failed restore or duplication left a half-made copy.** It could be armed and visible to the instance's
+  cron worker, the service stayed stopped, and every retry was refused. Each copy is now one step: done whole, or
+  its database is dropped and the service started again. A local restore is now done like a duplication, without
+  stopping the service. An interrupted copy is recognised and replaced.
+- The copy's role can connect to it only once it is handed over: an Odoo with `db_name` set could reach the copy
+  before it was neutralised.
+
 - **Root shell and superuser exposure.**
   - The certificate paths and the venv package names reached a root shell unescaped, so a file or package named
     `$(…)` ran as root.

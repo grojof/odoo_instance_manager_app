@@ -974,4 +974,11 @@ _ES: dict[str, str] = {
     'Control characters are not allowed.': 'No se admiten caracteres de control.',
     'Ignored (not a package): {}': 'Ignorado (no es un paquete): {}',
     'Invalid service name. Use letters, digits and @ . _ : -': 'Nombre de servicio no válido. Usa letras, dígitos y @ . _ : -',
+    "Run Odoo's own neutralize.sql of every installed module (16.0-19.0)": 'Ejecutar el neutralize.sql de Odoo de cada módulo instalado (16.0-19.0)',
+    'Close the copy to every role until it is handed over (revoke PUBLIC connect)': 'Cerrar la copia a todos los roles hasta el traspaso (revocar CONNECT a PUBLIC)',
+    'Restore {} into {}, neutralise it and hand it over (undone if a step fails)': 'Restaurar {} en {}, neutralizarla y traspasarla (se deshace si falla un paso)',
+    'Copy {} into {}, neutralise it and hand it over (undone if a step fails)': 'Copiar {} en {}, neutralizarla y traspasarla (se deshace si falla un paso)',
+    'Restore the dump as role {}': 'Restaurar el dump como rol {}',
+    "'cli' servers send through odoo.conf's smtp_server": "los servidores 'cli' envían por el smtp_server de odoo.conf",
+    'The copy failed: its unfinished database {} is dropped.': 'La copia ha fallado: se elimina su base de datos a medias {}.',
 }
