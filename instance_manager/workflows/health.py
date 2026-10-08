@@ -9,6 +9,7 @@ from ..i18n import tf
 from ..models import InstanceConfig
 from ..system import (
     path_exists,
+    pg_env,
     read_odoo_conf,
     run,
     service_active,
@@ -40,11 +41,13 @@ def _db_probe(config: InstanceConfig, conf: dict[str, str]) -> tuple[bool, str]:
     db_port = conf.get("db_port", str(config.db_port)) or "5432"
     db_user = conf.get("db_user", config.db_user) or config.instance
     db_password = conf.get("db_password", "")
+    # `db_host = False` (or empty) is Odoo's local Unix socket: psql takes no -h then.
+    host = "" if db_host.strip().lower() in {"", "false", "none"} else f"-h {_quote(db_host)} "
     cmd = (
-        f"PGPASSWORD={_quote(db_password)} psql -h {_quote(db_host)} -p {_quote(str(db_port))} "
+        f"psql -X {host}-p {_quote(str(db_port))} "
         f"-U {_quote(db_user)} -d postgres -tAc 'SELECT 1' >/dev/null 2>&1"
     )
-    ok = run(cmd, check=False).returncode == 0
+    ok = run(cmd, check=False, env=pg_env(db_password)).returncode == 0
     return ok, f"{db_user}@{db_host}:{db_port}"
 
 

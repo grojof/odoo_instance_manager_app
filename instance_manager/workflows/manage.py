@@ -29,6 +29,7 @@ from ..system import (
     detect_cpu_count,
     detect_nginx_version,
     path_exists,
+    pg_env,
     read_odoo_conf,
     service_active,
     service_exists,
@@ -570,7 +571,8 @@ def _delete_instance(
         commands.append(
             Command(
                 'Delete DB',
-                f"PGPASSWORD={_quote(db_password)} dropdb --if-exists -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} {_quote(db_name)}",
+                f"dropdb --if-exists -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} {_quote(db_name)}",
+                env=pg_env(db_password),
             )
         )
 

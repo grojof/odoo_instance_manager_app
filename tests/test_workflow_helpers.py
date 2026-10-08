@@ -8,6 +8,7 @@ from instance_manager.models import InstanceConfig
 from instance_manager.workflows.common import _keep_data_dir_commands
 from instance_manager.workflows.purge import (
     DbAdminSession,
+    _admin_env,
     _db_admin_psql_command,
     _instance_databases_sql,
     _prefix_only_databases_sql,
@@ -66,9 +67,10 @@ class DbAdminPsqlCommandTests(unittest.TestCase):
         # containing "-c"; the flags path must leave PGPASSWORD intact.
         cmd = _db_admin_psql_command(self.remote, "SELECT 1;", psql_flags="-tA")
         self.assertIn("-tA -c", cmd)
-        # Password with a "-c" substring must survive intact (the old
-        # .replace("-c", "-tA -c", 1) would have mangled it to "se-tA -cret").
-        self.assertIn("PGPASSWORD=se-cret", cmd)
+        # The password is never in the command text: it goes in the environment.
+        self.assertNotIn("se-cret", cmd)
+        self.assertEqual(_admin_env(self.remote)["PGPASSWORD"], "se-cret")
+        self.assertEqual(_admin_env(self.local), {})
         self.assertNotIn("se-tA", cmd)
 
     def test_no_flags_has_no_tuples_output(self) -> None:

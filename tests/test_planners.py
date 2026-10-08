@@ -51,7 +51,7 @@ class ScheduledBackupTests(unittest.TestCase):
         )
         defaults.update(kw)
         cmds = plan_scheduled_backup(_config(), **defaults)  # type: ignore[arg-type]
-        return "\n".join(f"{c.description}\n{c.command}" for c in cmds)
+        return "\n".join(f"{c.description}\n{c.shown}" for c in cmds)
 
     def test_writes_script_service_timer_and_enables(self) -> None:
         text = self._plan_text()
@@ -185,7 +185,7 @@ class NginxLogrotateContentTests(unittest.TestCase):
 class PlanLogrotateConfigTests(unittest.TestCase):
     def _commands_text(self, **kwargs: object) -> str:
         commands = plan_logrotate_config(_config(), **kwargs)  # type: ignore[arg-type]
-        return "\n".join(f"{c.description} :: {c.command}" for c in commands)
+        return "\n".join(f"{c.description} :: {c.shown}" for c in commands)
 
     def test_default_plan_writes_validates_and_installs(self) -> None:
         text = self._commands_text()

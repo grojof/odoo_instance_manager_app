@@ -19,6 +19,7 @@ from ..system import (
     Command,
     list_instances,
     path_exists,
+    pg_env,
     read_odoo_conf,
     run,
     service_exists,
@@ -68,10 +69,10 @@ def _resolve_db_admin_access() -> DbAdminSession | None:
     db_admin_password = ask_secret('DB admin password')
 
     probe_cmd = (
-        f"PGPASSWORD={_quote(db_admin_password)} psql -h {_quote(db_host)} -p {db_port} "
-        f"-U {_quote(db_admin_user)} -d postgres -tAc \"SELECT 1;\""
+        f"psql -X -h {_quote(db_host)} -p {int(db_port)} "
+        f"-U {_quote(db_admin_user)} -d postgres -tAc 'SELECT 1;'"
     )
-    probe = run(probe_cmd, check=False)
+    probe = run(probe_cmd, check=False, env=pg_env(db_admin_password))
     if probe.returncode == 0 and "1" in probe.stdout:
         print(t('[OK] Remote admin connection validated.'))
         return DbAdminSession("remote", db_host, db_port, db_admin_user, db_admin_password)
@@ -90,10 +91,15 @@ def _db_admin_psql_command(session: DbAdminSession, sql: str, psql_flags: str = 
         return f"sudo -u postgres psql -v ON_ERROR_STOP=1 -d postgres {flags}-c {shlex.quote(sql)}"
 
     return (
-        f"PGPASSWORD={_quote(session.admin_password)} psql -v ON_ERROR_STOP=1 "
-        f"-h {_quote(session.db_host)} -p {session.db_port} "
+        f"psql -X -v ON_ERROR_STOP=1 "
+        f"-h {_quote(session.db_host)} -p {int(session.db_port)} "
         f"-U {_quote(session.admin_user)} -d postgres {flags}-c {shlex.quote(sql)}"
     )
+
+
+def _admin_env(session: DbAdminSession) -> dict[str, str]:
+    """The admin password for a remote session, in the environment only."""
+    return pg_env(session.admin_password) if session.mode == "remote" else {}
 
 
 def _db_admin_dropdb_command(session: DbAdminSession, db_name: str) -> str:
@@ -103,8 +109,8 @@ def _db_admin_dropdb_command(session: DbAdminSession, db_name: str) -> str:
         return f"sudo -u postgres dropdb --if-exists --force {_quote(db_name)}"
 
     return (
-        f"PGPASSWORD={_quote(session.admin_password)} dropdb --if-exists "
-        f"-h {_quote(session.db_host)} -p {session.db_port} "
+        "dropdb --if-exists "
+        f"-h {_quote(session.db_host)} -p {int(session.db_port)} "
         f"-U {_quote(session.admin_user)} {_quote(db_name)}"
     )
 
@@ -160,7 +166,7 @@ def _prefix_only_databases_sql(instance: str, db_user: str) -> str:
 
 def _query_names(session: DbAdminSession, sql: str) -> tuple[list[str], str | None]:
     query_cmd = _db_admin_psql_command(session, sql, psql_flags="-tA")
-    result = run(query_cmd, check=False)
+    result = run(query_cmd, check=False, env=_admin_env(session))
     if result.returncode != 0:
         error_text = result.stderr.strip() or result.stdout.strip() or "Unknown error"
         return [], error_text
@@ -326,12 +332,14 @@ def purge_instance_superuser() -> None:
                 Command(
                     tf('Close active connections of DB {}', db_name),
                     _db_admin_psql_command(session, terminate_sql) + " || true",
+                    env=_admin_env(session),
                 )
             )
             commands.append(
                 Command(
                     tf('Delete DB {}', db_name),
                     _db_admin_dropdb_command(session, db_name),
+                    env=_admin_env(session),
                 )
             )
 
@@ -349,6 +357,7 @@ def purge_instance_superuser() -> None:
                 Command(
                     tf('Delete PostgreSQL role {} (if it exists)', role),
                     _db_admin_psql_command(session, drop_role_sql) + " || true",
+                    env=_admin_env(session),
                 )
             )
 

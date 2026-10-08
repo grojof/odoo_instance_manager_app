@@ -17,7 +17,7 @@ class _FakeRun:
         self.returncode = returncode
         self.stdout = stdout
 
-    def __call__(self, command: str, check: bool = False):
+    def __call__(self, command: str, check: bool = False, env=None):
         self.command = command
         return subprocess.CompletedProcess(command, self.returncode, self.stdout, "")
 

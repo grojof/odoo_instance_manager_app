@@ -21,6 +21,7 @@ from ..system import (
     list_databases,
     list_instances,
     path_exists,
+    pg_env,
     preview_commands,
     read_odoo_conf,
     require_root_for_apply,
@@ -274,10 +275,10 @@ def _database_exists(creds: DbCredentials, db_name: str) -> bool:
     """
     sql = "SELECT 1 FROM pg_database WHERE datname='" + db_name.replace("'", "''") + "'"
     cmd = (
-        f"PGPASSWORD={shlex.quote(creds.password)} psql -h {shlex.quote(creds.host)} "
-        f"-p {creds.port} -U {shlex.quote(creds.user)} -d postgres -tAc {shlex.quote(sql)}"
+        f"psql -X -h {shlex.quote(creds.host)} "
+        f"-p {int(creds.port)} -U {shlex.quote(creds.user)} -d postgres -tAc {shlex.quote(sql)}"
     )
-    result = run(cmd, check=False)
+    result = run(cmd, check=False, env=pg_env(creds.password))
     return result.returncode == 0 and result.stdout.strip() == "1"
 
 

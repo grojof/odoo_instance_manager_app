@@ -66,7 +66,10 @@ flowchart LR
     apply -- error during install --> cleanup["Best-effort<br/>cleanup residues"]
 ```
 
-- **Commands** are `(description, command)` pairs (`system.Command`). A plan is just a `list[Command]`.
+- **Commands** are `system.Command(description, command, env, display)`. A plan is just a `list[Command]`.
+  Secrets never go in `command`: a password or a file holding one travels in `env` (the step's environment,
+  readable only by root, unlike its arguments, which `ps` shows every user), and `display` is what the preview
+  shows instead, with the secrets masked. A failed step is reported by its description.
 - `preview_commands` renders the whole plan before anything runs; `apply_commands` runs it, stopping on error
   (and re-raising so install flows can clean up).
 - Destructive actions add `confirm_with_phrase` — the operator must type an exact phrase naming the

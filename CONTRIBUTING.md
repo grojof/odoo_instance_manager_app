@@ -50,6 +50,7 @@ python3 tools/verify_data_safety.py  # run the generated backup/retention/delete
 python3 tools/verify_install_runtime.py --clone 14=/path/odoo-14.0 --clone 16=/path/odoo-16.0
 python3 tools/verify_neutralisation.py --odoo 18=/path/venv/bin/python:/path/odoo-18.0
 python3 tools/verify_ops_configs.py    # nginx -t and fail2ban on the generated config
+python3 tools/verify_secrets.py        # secrets in no process argument, preview or error
 ```
 
 `tools/verify_data_safety.py` is not part of CI: it executes the generated scheduled-backup script, the

@@ -39,6 +39,7 @@ from ..system import (
     database_owner,
     detect_nginx_version,
     path_exists,
+    pg_env,
     read_odoo_conf,
     run,
     service_active,
@@ -80,11 +81,9 @@ def _is_safe_db_name(name: str) -> bool:
 def _psql_target(
     db_host: str, db_port: int, db_user: str, db_password: str, target_db: str
 ) -> str:
-    """A psql invocation pointed at ``target_db`` using client credentials."""
-    return (
-        f"PGPASSWORD={_quote(db_password)} psql -h {_quote(db_host)} -p {db_port} "
-        f"-U {_quote(db_user)} -d {_quote(target_db)}"
-    )
+    """A psql invocation pointed at ``target_db`` using client credentials; the
+    password goes in the step's environment (``pg_env``), never in this text."""
+    return f"psql -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} -d {_quote(target_db)}"
 
 
 def _psql_target_local(target_db: str) -> str:
@@ -111,6 +110,7 @@ def _post_db_mode_commands(
     migration_mode: str,
     neutralize: bool,
     local_url: str,
+    env: dict[str, str] | None = None,
 ) -> list[Command]:
     """Apply Odoo migration semantics to an already-restored target database.
 
@@ -127,6 +127,7 @@ def _post_db_mode_commands(
             Command(
                 'Give the copy its own identity: new database.uuid, database.secret, create date',
                 f"{psql} {_quote(neutralise.copied_identity_sql())}",
+                env=dict(env or {}),
             )
         )
     if neutralize:
@@ -134,10 +135,12 @@ def _post_db_mode_commands(
             Command(
                 'Neutralise the copy (crons, mail, payment, EDI/SII, calendars, webhooks, IAP, base URL)',
                 f"{psql} {_quote(neutralise.apply_sql(local_url))}",
+                env=dict(env or {}),
             ),
             Command(
                 'Check nothing in the copy can still act on the outside',
                 f"{psql} {_quote(neutralise.guard_sql(local_url))}",
+                env=dict(env or {}),
             ),
         ]
     return commands
@@ -300,8 +303,9 @@ def _backup_instance(
             Command(
                 'Export DB backup (custom format, atomic)',
                 f"umask 077 && TMP={_quote(dump_path + '.partial')} && "
-                f"PGPASSWORD={_quote(db_password)} pg_dump -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -Fc -f \"$TMP\" {_quote(db_name)} && "
+                f"pg_dump -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} -Fc -f \"$TMP\" {_quote(db_name)} && "
                 f"mv \"$TMP\" {_quote(dump_path)} || {{ rm -f \"$TMP\"; exit 1; }}",
+                env=pg_env(db_password),
             )
         )
 
@@ -378,11 +382,13 @@ def _restore_backup(
             [
                 Command(
                     'Create target DB',
-                    f"PGPASSWORD={_quote(db_password)} createdb -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -O {_quote(db_user)} {_quote(target_db)}",
+                    f"createdb -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} -O {_quote(db_user)} {_quote(target_db)}",
+                    env=pg_env(db_password),
                 ),
                 Command(
                     'Restore the dump into the target DB',
-                    f"PGPASSWORD={_quote(db_password)} pg_restore -h {_quote(db_host)} -p {db_port} -U {_quote(db_user)} -d {_quote(target_db)} --no-owner --no-privileges {_quote(dump_file)}",
+                    f"pg_restore -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} -d {_quote(target_db)} --no-owner --no-privileges {_quote(dump_file)}",
+                    env=pg_env(db_password),
                 ),
             ]
         )
@@ -392,6 +398,7 @@ def _restore_backup(
                 migration_mode,
                 neutralize,
                 _local_url(_config_with_port(config, read_odoo_conf(config.odoo_conf_file))),
+                env=pg_env(db_password),
             )
         )
         if stop_service:
@@ -968,14 +975,15 @@ def _check_neutralisation(
         print(level_text("ERROR", _INVALID_DB_NAME))
         return creds
     psql = f"{_psql_target(creds.host, creds.port, creds.user, creds.password, db_name)} -X -tA -F '|' -c"
-    found = run(f"{psql} {_quote(neutralise.columns_sql())}", check=False)
+    env = pg_env(creds.password)
+    found = run(f"{psql} {_quote(neutralise.columns_sql())}", check=False, env=env)
     if found.returncode != 0:
         print(level_text("ERROR", found.stderr.strip() or 'Could not read the database.'))
         return creds
     existing = {tuple(line.split("|", 1)) for line in found.stdout.splitlines() if "|" in line}
     rules = neutralise.applicable(existing)  # type: ignore[arg-type]
     url = _local_url(_config_with_port(config, read_odoo_conf(config.odoo_conf_file)))
-    armed = run(f"{psql} {_quote(neutralise.check_sql(rules, url))}", check=False)
+    armed = run(f"{psql} {_quote(neutralise.check_sql(rules, url))}", check=False, env=env)
     rows = [line.split("|", 2) for line in armed.stdout.splitlines() if line.count("|") >= 2]
     sink = run(
         f"{psql} "
@@ -984,6 +992,7 @@ def _check_neutralisation(
             f"'{neutralise.MAIL_SINK_NAME}' AND smtp_host = '{neutralise.MAIL_SINK_HOST}'"
         ),
         check=False,
+        env=env,
     )
     if sink.stdout.strip() != "1":
         rows.append(["mail-sink", "0", t('missing: mail can leave through odoo.conf\'s smtp_server')])
