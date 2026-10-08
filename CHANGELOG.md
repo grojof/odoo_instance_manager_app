@@ -31,6 +31,13 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **Copies were not neutralised.** Only crons, mail servers and fetchmail were switched off, each failure
+  ignored; with no mail server active Odoo falls back to `odoo.conf`'s `smtp_server` and a local MTA relayed real
+  mail, and payment providers, carriers, OAuth, calendars, webhooks, IAP, EDI/SII and the base URL stayed live. The
+  copy was also visible to the instance's cron worker before any of it ran. Now the catalogue of Odoo's own
+  `neutralize.sql` (extended to 12.0–19.0 and OCA modules) is applied as one statement with a mail sink, checked
+  afterwards, and the copy is handed to its role only once neutralised (a restore stops the service meanwhile).
+  Copied mode also renews `database.secret`. New read-only action: *Check a copy is neutralised*.
 - **Delete instance kept no filestore.** Without a `data_dir` in `odoo.conf`, the filestores live in the
   instance home, which the delete removed even when you answered "No" to deleting the filestore. The data dir
   is now moved to `/var/backups/<instance>/kept-data-dir-<timestamp>` first; only the filestore you name is

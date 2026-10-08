@@ -38,8 +38,10 @@ Terms as they are used in this project.
 - **Copied vs moved** — restore/duplicate semantics. **Copied** regenerates the target's `database.uuid` so it
   is a distinct database; **moved** keeps the UUID.
 
-- **Neutralize** — deactivate a database's automation after copying: `ir_cron` (scheduled jobs),
-  `ir_mail_server` (outgoing mail), and `fetchmail_server` (incoming mail), so a copy can't act as production.
+- **Neutralize** — make a copied database unable to act as production: crons, mail (servers off, credentials
+  dropped, a mail sink so `odoo.conf`'s server is never used), fetchmail, payment providers, carriers, OAuth,
+  calendar tokens, webhooks, IAP, EDI/SII modes, queued jobs and the base URL. Checked afterwards; see
+  `instance_manager/neutralise.py` for each rule and its source.
 
 - **database.uuid** — Odoo's per-database identifier stored in `ir_config_parameter`; regenerated in copied
   mode.

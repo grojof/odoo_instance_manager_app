@@ -93,11 +93,25 @@ payment secrets.
 Both **Restore backup** and **Duplicate instance** apply Odoo's migration semantics and require an exact
 confirmation phrase (`RESTORE <instance>` / `DUPLICATE <instance>`):
 
-- **Copied (new UUID on target)** — regenerates `database.uuid` on the target so it is a distinct
-  database from the source.
-- **Moved (keep UUID)** — keeps the UUID (the database "moves").
-- **Neutralize** (optional, recommended) — deactivates `ir_cron`, outgoing mail servers (`ir_mail_server`),
-  and `fetchmail_server` in the target so a copy can't send mail or run jobs meant for production.
+- **Copied (new UUID on target)** — gives the target its own `database.uuid`, `database.secret` and creation
+  date, as Odoo's own copy does, so it is a distinct database from the source.
+- **Moved (keep UUID)** — keeps the identity (the database "moves").
+- **Neutralize** (optional, recommended) — makes the copy unable to act as production. It follows Odoo's own
+  `neutralize.sql` (16.0–19.0) on every version from 12 to 19, plus the OCA modules a Spanish or queue-based
+  instance runs: crons off (except Odoo's autovacuum and queue_job's cleanup), mail servers off with their
+  credentials dropped, fetchmail off, and one active **mail sink** (`invalid:1025`) so Odoo never falls back to
+  the `smtp_server` of `odoo.conf`; payment providers, external carriers and their production mode, OAuth,
+  calendar tokens, webhooks, IAP, SII/TicketBAI/EDI/Peppol production modes and queued jobs; `web.base.url`
+  points at the target. The plan then **checks** that nothing can still act on the outside and stops if
+  something can.
+
+A copy cannot be picked up by a running Odoo before it is neutralised. An Odoo's cron worker lists every
+database its role owns, whatever the `dbfilter`. So a duplicated database stays owned by `postgres` until it is
+neutralised, and only then is handed to its role. A restore stops the instance's service while the copy is
+restored and neutralised.
+
+A module update switches crons back on: **Check a copy is neutralised** (in *Status & health*) lists, read-only,
+what in a database can still act on the outside.
 
 Guardrails: restore refuses to overwrite an existing target **database**; an existing target **filestore**
 requires an explicit overwrite confirmation, and is then moved aside to `<filestore>.replaced-<timestamp>`

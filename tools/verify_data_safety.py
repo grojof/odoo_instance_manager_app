@@ -219,8 +219,11 @@ class Cluster:
                     PGHOST=str(self.root), PGPORT=str(self.port), PGUSER="postgres")
 
     def value(self, sql: str) -> str:
+        return self.value_in("postgres", sql)
+
+    def value_in(self, db: str, sql: str) -> str:
         result = subprocess.run([str(self.bin / "psql"), "-X", "-h", str(self.root), "-p",
-                                 str(self.port), "-U", "postgres", "-d", "postgres", "-tAc", sql],
+                                 str(self.port), "-U", "postgres", "-d", db, "-tAc", sql],
                                 capture_output=True, text=True)
         return result.stdout.strip()
 
@@ -260,11 +263,11 @@ def _against_a_server(root: Path) -> None:
                                     "-U", "postgres", "-d", "prod", "-c", "SELECT pg_sleep(60)"],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.5)
-        script = backup_restore._template_copy_script("prod", "prod_copy", "prod")
+        script = backup_restore._template_copy_script("prod", "prod_copy")
         result = _run(script, env)
         check("template copy succeeds with a live session on the source", result.returncode == 0, result.stderr)
-        check("the copy exists, owned as asked", cluster.value(
-            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'prod_copy'") == "prod")
+        check("the copy exists, owned by postgres until it is handed over", cluster.value(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'prod_copy'") == "postgres")
         check("the source is open again", cluster.value(
             "SELECT datallowconn FROM pg_database WHERE datname = 'prod'") == "t")
         session.wait(timeout=10)
