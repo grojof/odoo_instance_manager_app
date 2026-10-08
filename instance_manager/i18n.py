@@ -969,4 +969,9 @@ _ES: dict[str, str] = {
     'That name is a system account or service name. Choose another instance name.': 'Ese nombre es de una cuenta o un servicio del sistema. Elige otro nombre de instancia.',
     'Data dirs': 'Data dirs',
     'Filestore folders': 'Carpetas de filestore',
+    'Install the certificate files, kept only if the key and chain check out': 'Instalar los certificados, solo si la clave y la cadena son correctas',
+    'Download, verify (SHA-256) and install patched wkhtmltopdf ({})': 'Descargar, verificar (SHA-256) e instalar wkhtmltopdf parcheado ({})',
+    'Control characters are not allowed.': 'No se admiten caracteres de control.',
+    'Ignored (not a package): {}': 'Ignorado (no es un paquete): {}',
+    'Invalid service name. Use letters, digits and @ . _ : -': 'Nombre de servicio no válido. Usa letras, dígitos y @ . _ : -',
 }

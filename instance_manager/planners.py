@@ -26,11 +26,21 @@ def _is_local_db_host(db_host: str) -> bool:
     }
 
 
+def _dollar_tag(*bodies: str) -> str:
+    """A dollar-quote tag that none of ``bodies`` contains: a password holding ``$$``
+    would otherwise end the quoted block early."""
+    index = 0
+    while any(f"$oim{index}$" in body for body in bodies):
+        index += 1
+    return f"$oim{index}$"
+
+
 def _db_role_create_if_missing_sql(config: InstanceConfig) -> str:
     db_user_literal = _sql_literal(config.db_user)
     db_password_literal = _sql_literal(config.db_password)
+    tag = _dollar_tag(db_password_literal)
     return (
-        "DO $$ "
+        f"DO {tag} "
         "BEGIN "
         f"IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{db_user_literal}') THEN "
         f"CREATE ROLE {config.db_user} WITH LOGIN CREATEDB PASSWORD '{db_password_literal}'; "
@@ -39,7 +49,7 @@ def _db_role_create_if_missing_sql(config: InstanceConfig) -> str:
         f"RAISE NOTICE 'Role {db_user_literal} already exists; reusing it without changing the password.'; "
         "END IF; "
         "END "
-        "$$;"
+        f"{tag};"
     )
 
 
@@ -1128,128 +1138,89 @@ def plan_nginx_https(
     ]
 
 
+_PEM_CERTS_AWK = (
+    "awk 'BEGIN{c=0} /-----BEGIN CERTIFICATE-----/{c=1} c{gsub(/\\r$/,\"\"); print} "
+    "/-----END CERTIFICATE-----/{c=0; print \"\"}'"
+)
+
+
 def plan_copy_custom_certs(
     config: InstanceConfig,
     cert_src: str,
     key_src: str,
     intermediate_src: str | None,
 ) -> list[Command]:
-    commands: list[Command] = [
-        Command(
-            'Create dedicated SSL directory',
-            f"install -d -m 750 -o root -g www-data '{config.nginx_ssl_dir}'",
-        ),
-        Command(
-            'Copy server.crt',
-            f"install -m 644 -o root -g www-data '{cert_src}' '{config.ssl_cert_file}'",
-        ),
-        Command(
-            'Copy server.key',
-            f"install -m 640 -o root -g www-data '{key_src}' '{config.ssl_key_file}'",
-        ),
+    """Install the operator's certificate, key and optional chain in one step.
+
+    They are copied into a staging directory beside the live files and checked there
+    — the key, the certificate, that they match, the full chain — and only then
+    moved into place, the previous files kept as ``.previous``. A wrong file never
+    replaces a working one: the next nginx restart, of any instance, would fail."""
+    q = shlex.quote
+    ssl_dir = q(config.nginx_ssl_dir)
+    targets = [("crt", config.ssl_cert_file, "644"), ("key", config.ssl_key_file, "640"),
+               ("fullchain", config.ssl_fullchain_file, "644")]
+    lines = [
+        "set -e",
+        f"install -d -m 750 -o root -g www-data {ssl_dir}",
+        f'stage=$(mktemp -d {q(config.nginx_ssl_dir + "/.stage.XXXXXX")})',
+        'trap \'rm -rf "$stage"\' EXIT',
+        f'cp -- {q(cert_src)} "$stage/crt"',
+        f'cp -- {q(key_src)} "$stage/key"',
     ]
-
     if intermediate_src:
-        commands.append(
-            Command(
-                'Copy intermediate.crt',
-                f"install -m 644 -o root -g www-data '{intermediate_src}' '{config.ssl_intermediate_file}'",
-            )
-        )
-        commands.append(
-            Command(
-                'Build fullchain (cert + intermediate)',
-                "{ "
-                + "awk 'BEGIN{in_cert=0} /-----BEGIN CERTIFICATE-----/{in_cert=1} in_cert{gsub(/\\r$/,\"\"); print} /-----END CERTIFICATE-----/{in_cert=0; print \"\"}' "
-                + f"'{config.ssl_cert_file}'; "
-                + "awk 'BEGIN{in_cert=0} /-----BEGIN CERTIFICATE-----/{in_cert=1} in_cert{gsub(/\\r$/,\"\"); print} /-----END CERTIFICATE-----/{in_cert=0; print \"\"}' "
-                + f"'{config.ssl_intermediate_file}'; "
-                + f"}} > '{config.ssl_fullchain_file}'",
-            )
-        )
+        targets.append(("intermediate", config.ssl_intermediate_file, "644"))
+        lines += [
+            f'cp -- {q(intermediate_src)} "$stage/intermediate"',
+            f'{{ {_PEM_CERTS_AWK} "$stage/crt"; {_PEM_CERTS_AWK} "$stage/intermediate"; }} > "$stage/fullchain"',
+        ]
     else:
-        commands.append(
-            Command(
-                'Use server.crt as fullchain',
-                f"cp '{config.ssl_cert_file}' '{config.ssl_fullchain_file}'",
-            )
+        lines.append('cp "$stage/crt" "$stage/fullchain"')
+    lines += [
+        'openssl pkey -in "$stage/key" -noout',
+        'openssl x509 -in "$stage/crt" -noout',
+        'cert_fp=$(openssl x509 -in "$stage/crt" -pubkey -noout | openssl pkey -pubin -outform PEM | sha256sum)',
+        'key_fp=$(openssl pkey -in "$stage/key" -pubout -outform PEM | sha256sum)',
+        'if [ "$cert_fp" != "$key_fp" ]; then '
+        "echo '[ERROR] The private key does not match the selected public certificate.' >&2; exit 1; fi",
+        'openssl x509 -in "$stage/fullchain" -noout',
+    ]
+    for name, target, mode in targets:
+        lines += [
+            f'chown root:www-data "$stage/{name}" && chmod {mode} "$stage/{name}"',
+            f"if [ -e {q(target)} ]; then cp -a {q(target)} {q(target + '.previous')}; fi",
+        ]
+    lines += [f'mv -f "$stage/{name}" {q(target)}' for name, target, _mode in targets]
+    return [
+        Command(
+            'Install the certificate files, kept only if the key and chain check out',
+            "\n".join(lines),
         )
-
-    commands.extend(
-        [
-            Command(
-                'Validate TLS private key',
-                f"openssl pkey -in '{config.ssl_key_file}' -noout >/dev/null",
-            ),
-            Command(
-                'Validate main TLS certificate',
-                f"openssl x509 -in '{config.ssl_cert_file}' -noout >/dev/null",
-            ),
-            Command(
-                'Validate KEY/CRT match',
-                "CERT_FP=$(openssl x509 -in '"
-                + config.ssl_cert_file
-                + "' -pubkey -noout | openssl pkey -pubin -outform PEM 2>/dev/null | sha256sum | awk '{print $1}') && "
-                + "KEY_FP=$(openssl pkey -in '"
-                + config.ssl_key_file
-                + "' -pubout -outform PEM 2>/dev/null | sha256sum | awk '{print $1}') && "
-                + "test -n \"$CERT_FP\" -a -n \"$KEY_FP\" -a \"$CERT_FP\" = \"$KEY_FP\" "
-                + "|| (echo '[ERROR] The private key does not match the selected public certificate.' && exit 1)",
-            ),
-            Command(
-                'Validate TLS fullchain',
-                f"openssl x509 -in '{config.ssl_fullchain_file}' -noout >/dev/null",
-            ),
-        ]
-    )
-
-    commands.extend(
-        [
-            Command(
-                "Owner fullchain", f"chown root:www-data '{config.ssl_fullchain_file}'"
-            ),
-            Command('Permissions on fullchain', f"chmod 644 '{config.ssl_fullchain_file}'"),
-        ]
-    )
-    return commands
+    ]
 
 
 def plan_ensure_self_signed_certs(config: InstanceConfig) -> list[Command]:
+    q = shlex.quote
+    key, cert, chain = q(config.ssl_key_file), q(config.ssl_cert_file), q(config.ssl_fullchain_file)
     return [
         Command(
             'Ensure dedicated SSL directory',
-            f"install -d -m 750 -o root -g www-data '{config.nginx_ssl_dir}'",
+            f"install -d -m 750 -o root -g www-data {q(config.nginx_ssl_dir)}",
         ),
         Command(
             'Generate self-signed if missing (server.key/fullchain)',
-            "if [ -s '"
-            + config.ssl_key_file
-            + "' ] && [ -s '"
-            + config.ssl_fullchain_file
-            + "' ]; then "
-            + "echo '[INFO] Existing self-signed certificate, reusing it.'; "
-            + "else "
-            + "command -v openssl >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install openssl); "
-            + "openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 825 "
-            + "-keyout '"
-            + config.ssl_key_file
-            + "' "
-            + "-out '"
-            + config.ssl_cert_file
-            + "' "
-            + "-subj '/CN="
-            + config.domain
-            + "'; "
-            + "cp '"
-            + config.ssl_cert_file
-            + "' '"
-            + config.ssl_fullchain_file
-            + "'; "
-            + "fi",
+            f"if [ -s {key} ] && [ -s {chain} ]; then "
+            "echo '[INFO] Existing self-signed certificate, reusing it.'; "
+            "else "
+            "command -v openssl >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install openssl); "
+            "openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 825 "
+            f"-keyout {key} -out {cert} -subj {q('/CN=' + config.domain)} && "
+            f"cp {cert} {chain}; "
+            "fi",
         ),
         Command(
             'Adjust self-signed certificate permissions',
-            f"chown root:www-data '{config.ssl_key_file}' '{config.ssl_cert_file}' '{config.ssl_fullchain_file}' && chmod 640 '{config.ssl_key_file}' && chmod 644 '{config.ssl_cert_file}' '{config.ssl_fullchain_file}'",
+            f"chown root:www-data {key} {cert} {chain} && chmod 640 {key} && chmod 644 {cert} {chain}",
         ),
     ]
 
@@ -1364,8 +1335,11 @@ def _scheduled_backup_script(
             'if [ ! -d "$FILESTORE" ]; then echo "Filestore not found: $FILESTORE" >&2; exit 1; fi',
             'PARTIAL="$BACKUP_DIR/$PREFIX$TS.filestore.tar.gz.partial"',
             # Exit 1 is GNU tar's "a file changed while read": Odoo keeps writing
-            # attachments, and every file already archived is complete.
-            'rc=0; tar --warning=no-file-changed -czf "$PARTIAL" -C "$FILESTORE" . || rc=$?',
+            # attachments, and every file already archived is complete. tar reads as
+            # the instance user (a link it planted reaches nothing root alone could
+            # read); root writes the archive.
+            f"rc=0; sudo -u {shlex.quote(config.odoo_user)} -H "
+            'tar --warning=no-file-changed -czf - -C "$FILESTORE" . > "$PARTIAL" || rc=$?',
             'if [ "$rc" -gt 1 ]; then exit "$rc"; fi',
             f'mv -- "$PARTIAL" "$BACKUP_DIR/$PREFIX$TS{BACKUP_FILESTORE_SUFFIX}"',
             'PARTIAL=""',
@@ -1564,25 +1538,24 @@ def plan_install_wkhtmltopdf(mode: str, codename: str = "") -> list[Command]:
     if asset is None:
         return []
     url, filename, sha256 = asset
-    tmp = f"/tmp/{filename}"
+    # One step in a private temporary directory: a fixed /tmp name could be planted,
+    # or swapped between the check and the install.
+    deb = f'"$tmp"/{shlex.quote(filename)}'
     return [
         Command(
             'Ensure curl is available',
             "command -v curl >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install curl)",
         ),
         Command(
-            tf('Download patched wkhtmltopdf ({})', filename),
-            f"curl -fSL -o {shlex.quote(tmp)} {shlex.quote(url)}",
+            tf('Download, verify (SHA-256) and install patched wkhtmltopdf ({})', filename),
+            "tmp=$(mktemp -d) && trap 'rm -rf \"$tmp\"' EXIT && "
+            f"curl -fSL -o {deb} {shlex.quote(url)} && "
+            f'echo {shlex.quote(sha256)}"  "{deb} | sha256sum -c - && '
+            # apt reads local packages as _apt: the verified file is made readable.
+            f'chmod 755 "$tmp" && chmod 644 {deb} && '
+            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold "
+            f"-o DPkg::Lock::Timeout=600 install {deb}",
         ),
-        Command(
-            'Verify wkhtmltopdf SHA-256 (aborts on mismatch)',
-            f"echo {shlex.quote(sha256 + '  ' + tmp)} | sha256sum -c -",
-        ),
-        Command(
-            'Install verified wkhtmltopdf .deb',
-            f"apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install {shlex.quote(tmp)}",
-        ),
-        Command('Remove downloaded wkhtmltopdf .deb', f"rm -f {shlex.quote(tmp)}"),
     ]
 
 

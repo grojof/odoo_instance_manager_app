@@ -28,9 +28,13 @@ class ReplicateVenvPackagesTests(unittest.TestCase):
         cmd = _replicate_venv_packages_command(
             InstanceConfig(instance="prod"), InstanceConfig(instance="dev")
         ).command
-        self.assertIn("sudo -u prod /opt/odoo/prod/venv/bin/pip freeze", cmd)
-        self.assertIn("grep -E '^[A-Za-z0-9_.-]+=='", cmd)
-        self.assertIn("sudo -u dev /opt/odoo/dev/venv/bin/pip install -r", cmd)
+        self.assertIn("sudo -u prod -H bash -c '/opt/odoo/prod/venv/bin/pip freeze --exclude-editable'", cmd)
+        self.assertIn("grep -E '^[A-Za-z0-9][A-Za-z0-9_.-]*==[A-Za-z0-9_.+!-]+$'", cmd)
+        self.assertIn("sudo -u dev -H bash -c '/opt/odoo/dev/venv/bin/pip install -r /dev/stdin' < \"$tmp/reqs\"", cmd)
+        # A private temporary directory, never a fixed /tmp name; failures propagate.
+        self.assertIn("tmp=$(mktemp -d)", cmd)
+        self.assertNotIn("/tmp/", cmd)
+        self.assertIn("set -eo pipefail", cmd)
 
 
 class SafeDbNameTests(unittest.TestCase):

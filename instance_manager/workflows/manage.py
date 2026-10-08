@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import datetime
+import re
 
 from ..i18n import t, tf
 from ..models import InstanceConfig, db_host_error, domain_error, is_valid_db_name
 from ..planners import (
+    _as_instance_user,
     plan_nginx_http,
     plan_nginx_https,
     plan_remove_scheduled_backup,
@@ -240,8 +242,28 @@ def _repair_instance_nginx_logs(config: InstanceConfig) -> None:
     _execute_plan(commands)
 
 
+# A new requirement starts after a comma only where a name follows: `requests, lxml`
+# is two, `babel>=2.14,<3` is one (its comma joins two version clauses).
+_REQUIREMENT_SPLIT = re.compile(r",\s*(?=[A-Za-z0-9])")
+
+
+def _split_requirements(chunks: list[str]) -> tuple[list[str], list[str]]:
+    """Requirements typed by the operator, and the ones refused: an option (``-…``,
+    such as ``--index-url``) or a control character is not a package."""
+    packages: list[str] = []
+    refused: list[str] = []
+    for chunk in chunks:
+        for item in (part.strip() for part in _REQUIREMENT_SPLIT.split(chunk)):
+            if not item:
+                continue
+            if item.startswith("-") or any(ord(char) < 32 for char in item):
+                refused.append(item)
+            else:
+                packages.append(item)
+    return packages, refused
+
+
 def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
-    venv_activate = f"{config.odoo_home}/venv/bin/activate"
     venv_pip = f"{config.odoo_home}/venv/bin/pip"
 
     print(f"\n{title('Install Python packages in the instance venv')}")
@@ -279,10 +301,13 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
                 f"test -f {_quote(req_path)}",
             )
         )
+        # Root reads the file (the instance user may not reach it) and pip, run as the
+        # instance user, reads it on stdin.
         commands.append(
             Command(
                 'Install packages from requirements into the venv',
-                f"sudo -u {_quote(config.odoo_user)} bash -lc \"source {_quote(venv_activate)} && pip install -r {_quote(req_path)}\"",
+                _as_instance_user(config, f"{_quote(venv_pip)} install -r /dev/stdin")
+                + f" < {_quote(req_path)}",
             )
         )
     else:
@@ -312,11 +337,9 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
             chunks.append(raw_packages)
         chunks.extend(extra_lines)
 
-        packages: list[str] = []
-        for chunk in chunks:
-            parts = [item.strip() for item in chunk.split(",") if item.strip()]
-            packages.extend(parts)
-
+        packages, refused = _split_requirements(chunks)
+        if refused:
+            print(level_text("WARN", tf('Ignored (not a package): {}', ", ".join(refused))))
         if not packages:
             print(level_text("WARN", 'No valid packages detected. Operation cancelled.'))
             return
@@ -325,14 +348,14 @@ def _install_python_packages_in_instance_venv(config: InstanceConfig) -> None:
         commands.append(
             Command(
                 'Install packages into the venv',
-                f"sudo -u {_quote(config.odoo_user)} bash -lc \"source {_quote(venv_activate)} && pip install {package_args}\"",
+                _as_instance_user(config, f"{_quote(venv_pip)} install {package_args}"),
             )
         )
 
     commands.append(
         Command(
             'Show installed packages (summary)',
-            f"sudo -u {_quote(config.odoo_user)} bash -lc \"source {_quote(venv_activate)} && pip list\"",
+            _as_instance_user(config, f"{_quote(venv_pip)} list"),
         )
     )
 

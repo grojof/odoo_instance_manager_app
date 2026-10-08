@@ -18,6 +18,7 @@ from ..models import (
 from ..planners import (
     BACKUP_DUMP_SUFFIX,
     BACKUP_FILESTORE_SUFFIX,
+    _as_instance_user,
     _is_local_db_host,
     backup_basename,
     plan_ensure_db_role,
@@ -113,6 +114,7 @@ def _post_db_mode_commands(
     neutralize: bool,
     local_url: str,
     env: dict[str, str] | None = None,
+    role: str = "",
 ) -> list[Command]:
     """Apply Odoo migration semantics to an already-restored target database.
 
@@ -121,14 +123,21 @@ def _post_db_mode_commands(
     both the credential-based restore and the local, superuser-driven duplication.
     Each step is one statement that stops the plan when it fails: a copy left
     half-neutralised must not be handed to a running Odoo.
+
+    With ``role`` (the copy's owner), the statements run as that role with
+    ``search_path = public``: a trigger or function the source database carries then
+    runs with the owner's rights, never the superuser's. ``pg_catalog`` stays searched
+    first (it is, unless listed), and ``public`` stays the current schema the
+    catalogue's guards look in. Names MUST be safe.
     """
     psql = f"{psql_target} -X -q -v ON_ERROR_STOP=1 -c"
+    prefix = f'SET ROLE "{role}"; SET search_path = public; ' if role else ""
     commands: list[Command] = []
     if migration_mode == 'Copied (new UUID on target)':
         commands.append(
             Command(
                 'Give the copy its own identity: new database.uuid, database.secret, create date',
-                f"{psql} {_quote(neutralise.copied_identity_sql())}",
+                f"{psql} {_quote(prefix + neutralise.copied_identity_sql())}",
                 env=dict(env or {}),
             )
         )
@@ -136,12 +145,12 @@ def _post_db_mode_commands(
         commands += [
             Command(
                 'Neutralise the copy (crons, mail, payment, EDI/SII, calendars, webhooks, IAP, base URL)',
-                f"{psql} {_quote(neutralise.apply_sql(local_url))}",
+                f"{psql} {_quote(prefix + neutralise.apply_sql(local_url))}",
                 env=dict(env or {}),
             ),
             Command(
                 'Check nothing in the copy can still act on the outside',
-                f"{psql} {_quote(neutralise.guard_sql(local_url))}",
+                f"{psql} {_quote(prefix + neutralise.guard_sql(local_url))}",
                 env=dict(env or {}),
             ),
         ]
@@ -319,8 +328,12 @@ def _backup_instance(
                 f"umask 077 && TMP={_quote(archive_path + '.partial')} && "
                 f"test -d {_quote(filestore_dir)} && "
                 # GNU tar exits 1 when a file changed while read (Odoo keeps
-                # writing attachments); anything above 1 is a real failure.
-                f"{{ tar --warning=no-file-changed -czf \"$TMP\" -C {_quote(filestore_dir)} . || [ $? -eq 1 ]; }} && "
+                # writing attachments); anything above 1 is a real failure. tar
+                # reads as the instance user, so a link it planted reaches nothing
+                # root alone could read; root writes the archive.
+                "{ " + _as_instance_user(
+                    config, f"tar --warning=no-file-changed -czf - -C {_quote(filestore_dir)} ."
+                ) + " > \"$TMP\" || [ $? -eq 1 ]; } && "
                 f"mv \"$TMP\" {_quote(archive_path)} || {{ rm -f \"$TMP\"; exit 1; }}",
             )
         )
@@ -435,15 +448,21 @@ def _restore_backup(
                     f"mv -- {_quote(target_filestore)} {_quote(kept)}",
                 )
             )
+        # Extracted as the instance user, root only reading the archive: an archive
+        # or a path the instance controls can write nowhere the instance cannot.
         commands.append(
             Command(
-                'Create the filestore base path', f"mkdir -p {_quote(target_filestore)}"
+                'Create the filestore base path',
+                _as_instance_user(config, f"mkdir -p {_quote(target_filestore)}"),
             )
         )
         commands.append(
             Command(
                 'Restore the filestore into the target',
-                f"tar --no-same-owner -xzf {_quote(filestore_backup)} -C {_quote(target_filestore)}",
+                _as_instance_user(
+                    config,
+                    f"tar --no-same-owner --no-same-permissions -xzf - -C {_quote(target_filestore)}",
+                ) + f" < {_quote(filestore_backup)}",
             )
         )
         commands.extend(_own_filestore_commands(config, target_db))
@@ -459,25 +478,30 @@ def _restore_backup(
     return creds
 
 
+def _source_git(config: InstanceConfig, args: str) -> str:
+    """``git <args>`` in the source checkout, as its owner: git refuses a repository
+    another user owns ("dubious ownership"), and root has no reason to run the
+    instance's hooks or config."""
+    result = run(
+        _as_instance_user(config, f"git -C {_quote(config.odoo_home + '/odoo')} {args}") + " 2>/dev/null",
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def _detect_source_repo_branch(config: InstanceConfig) -> str:
     """Best-effort detection of the source instance's checked-out Odoo branch, so a
     replica clones the same version."""
-    result = run(
-        f"git -C {_quote(config.odoo_home + '/odoo')} rev-parse --abbrev-ref HEAD 2>/dev/null",
-        check=False,
-    )
-    branch = result.stdout.strip()
+    branch = _source_git(config, "rev-parse --abbrev-ref HEAD")
     return branch if branch and branch != "HEAD" else ""
 
 
 def _detect_source_core(config: InstanceConfig) -> str:
     """``ocb`` when the source checkout's origin is OCA's OCB, else ``odoo``, so a
     replica runs the same core."""
-    result = run(
-        f"git -C {_quote(config.odoo_home + '/odoo')} remote get-url origin 2>/dev/null",
-        check=False,
-    )
-    return "ocb" if "/oca/ocb" in result.stdout.strip().lower() else "odoo"
+    origin = _source_git(config, "remote get-url origin").lower()
+    # https://github.com/OCA/OCB(.git) or git@github.com:OCA/OCB.git
+    return "ocb" if re.search(r"[/:]oca/ocb(\.git)?/?$", origin) else "odoo"
 
 
 def _nginx_server_name_in_use(domain: str, directory: str = "/etc/nginx/sites-enabled") -> bool:
@@ -550,14 +574,20 @@ def _replicate_venv_packages_command(
     target as the target user."""
     source_pip = f"{source_config.odoo_home}/venv/bin/pip"
     target_pip = f"{target_config.odoo_home}/venv/bin/pip"
-    reqs = f"/tmp/{target_config.instance}_venv_reqs.txt"
-    script = (
-        f"sudo -u {_quote(source_config.odoo_user)} {_quote(source_pip)} freeze 2>/dev/null "
-        f"| grep -E '^[A-Za-z0-9_.-]+==' > {_quote(reqs)} || true; "
-        f"if [ -s {_quote(reqs)} ]; then "
-        f"sudo -u {_quote(target_config.odoo_user)} {_quote(target_pip)} install -r {_quote(reqs)}; "
-        f"fi; rm -f {_quote(reqs)}"
-    )
+    # A private temporary directory (never a fixed /tmp name another user could
+    # plant), only exact `name==version` lines, shown before they are installed;
+    # the step fails when the freeze or the install does.
+    script = "\n".join([
+        "set -eo pipefail",
+        'tmp=$(mktemp -d)',
+        'trap \'rm -rf "$tmp"\' EXIT',
+        _as_instance_user(source_config, f"{_quote(source_pip)} freeze --exclude-editable") + ' > "$tmp/freeze"',
+        "grep -E '^[A-Za-z0-9][A-Za-z0-9_.-]*==[A-Za-z0-9_.+!-]+$' \"$tmp/freeze\" > \"$tmp/reqs\" || true",
+        'if [ -s "$tmp/reqs" ]; then',
+        '  echo "Packages to install:"; cat "$tmp/reqs"',
+        "  " + _as_instance_user(target_config, f"{_quote(target_pip)} install -r /dev/stdin") + ' < "$tmp/reqs"',
+        "fi",
+    ])
     return Command('Replicate the source venv Python packages', script)
 
 
@@ -636,7 +666,7 @@ def _plan_refresh_target(
     commands.extend(_seed_db_commands(source_db, target_db, target_owner, method))
     commands.extend(_post_db_mode_commands(
         _psql_target_local(target_db), migration_mode, neutralize,
-        _local_url(_config_with_port(target_config, existing)),
+        _local_url(_config_with_port(target_config, existing)), role=target_owner,
     ))
     commands.extend(_hand_over_commands(target_db, target_owner))
     if duplicate_filestore:
@@ -753,7 +783,8 @@ def _plan_replica_target(
             _filestore_copy_commands(source_config, source_db, target_config, target_db)
         )
     commands.extend(_post_db_mode_commands(
-        _psql_target_local(target_db), migration_mode, neutralize, _local_url(target_config)
+        _psql_target_local(target_db), migration_mode, neutralize, _local_url(target_config),
+        role=target_db,
     ))
     commands.extend(_hand_over_commands(target_db, target_db))
     commands.append(
@@ -843,7 +874,7 @@ def _duplicate_database(
     commands.extend(_seed_db_commands(source_db, target_db, target_owner, method))
     commands.extend(_post_db_mode_commands(
         _psql_target_local(target_db), migration_mode, neutralize,
-        _local_url(_config_with_port(config, existing)),
+        _local_url(_config_with_port(config, existing)), role=target_owner,
     ))
     commands.extend(_hand_over_commands(target_db, target_owner))
     if duplicate_filestore:

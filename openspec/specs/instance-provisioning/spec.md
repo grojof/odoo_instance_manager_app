@@ -273,8 +273,8 @@ that PDF report generation will fail until wkhtmltopdf is installed.
 
 - **WHEN** the operator accepts the recommended wkhtmltopdf option
 - **THEN** the plan selects the patched 0.12.6 asset mapped to the detected OS codename (or the closest
-  ABI-compatible build when the codename has no native asset), downloads it, and installs it only if
-  its SHA-256 matches the pinned checksum
+  ABI-compatible build when the codename has no native asset), downloads it into a private temporary
+  directory, and installs it only if its SHA-256 matches the pinned checksum, in the same step
 
 #### Scenario: Distribution package is offered as a reduced-fidelity fallback
 

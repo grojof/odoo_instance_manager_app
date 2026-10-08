@@ -39,7 +39,8 @@ list **only installed** modules or **all** discovered modules.
 
 After rendering the inventory, the tool SHALL offer to export it to a single text file at an operator-chosen
 path (defaulting under `./reports/`), mirroring the server-audit report export. The exported content reflects
-the active installed/all filter. Declining writes nothing.
+the active installed/all filter. Declining writes nothing. The file SHALL be new (an existing file, or a link in
+its place, is refused) and private (`600`): the export runs as root.
 
 #### Scenario: Inventory is exported on request
 

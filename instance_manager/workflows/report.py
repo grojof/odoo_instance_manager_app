@@ -35,6 +35,7 @@ from .common import (
     _odoo_conf_candidates,
     _quote,
     _read_text_file,
+    _write_export,
 )
 
 
@@ -518,6 +519,20 @@ def _nginx_matches_instance(
     return False
 
 
+def _venv_python_version(python_path: str) -> str:
+    """The Python of the venv holding ``python_path``, read from its ``pyvenv.cfg``.
+    Read, not run: the interpreter belongs to the instance user, and the report runs
+    as root."""
+    if not python_path:
+        return ""
+    venv = os.path.dirname(os.path.dirname(python_path))
+    for line in _read_text_file(os.path.join(venv, "pyvenv.cfg")).splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() in {"version", "version_info"} and re.fullmatch(r"[0-9.]+(\.final\.0)?", value.strip()):
+            return f"Python {value.strip().removesuffix('.final.0')}"
+    return ""
+
+
 def _detect_odoo_release_version(odoo_home: str) -> str:
     if not odoo_home:
         return ""
@@ -649,7 +664,7 @@ def _collect_external_instance_rows(
 
         context = service_context_by_name.get(config.odoo_service, {})
         python_path = context.get("python_path", "")
-        python_version = _command_output(f"{_quote(python_path)} --version") if python_path else ""
+        python_version = _venv_python_version(python_path)
         odoo_home = context.get("odoo_home", "") or config.odoo_home
         odoo_version = _detect_odoo_release_version(odoo_home)
 
@@ -1093,9 +1108,7 @@ def external_server_report() -> None:
     export_path = ask_text('Report export path', default_path, required=True)
 
     try:
-        os.makedirs(os.path.dirname(export_path) or ".", exist_ok=True)
-        with open(export_path, "w", encoding="utf-8") as file_handle:
-            file_handle.write("\n\n".join(report_sections) + "\n")
+        _write_export(export_path, "\n\n".join(report_sections) + "\n")
     except OSError as error:
         print(level_text("ERROR", tf('Could not write {}: {}', export_path, error.strerror or error)))
         return

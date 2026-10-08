@@ -38,6 +38,20 @@ def supports_color() -> bool:
     return True
 
 
+# What a host string (a database or file name, a command's output) must not send to
+# the terminal: every control character but tab and newline, and any escape
+# sequence except a colour (SGR). An OSC or CSI sequence can retitle the window,
+# write the clipboard, or move the cursor to hide what a plan really does.
+_UNSAFE_RE = re.compile(r"\x1b(?!\[[0-9;]*m)|[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f-\x9f]")
+_UNSAFE_KEEP_CR_RE = re.compile(r"\x1b(?!\[[0-9;]*m)|[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f-\x9f]")
+
+
+def sanitize(text: str, keep_cr: bool = False) -> str:
+    """``text`` safe to print: unsafe controls shown as ``?``. ``keep_cr`` keeps
+    carriage returns, which progress bars in a command's output use."""
+    return (_UNSAFE_KEEP_CR_RE if keep_cr else _UNSAFE_RE).sub("?", text)
+
+
 def style(text: str, *tokens: str) -> str:
     if not supports_color() or not tokens:
         return text
@@ -49,7 +63,7 @@ def style(text: str, *tokens: str) -> str:
 
 
 def level_text(level: str, message: str) -> str:
-    message = t(message)
+    message = sanitize(t(message))
     token_map = {
         "INFO": ("blue",),
         "WARN": ("yellow", "bold"),
@@ -71,7 +85,7 @@ def prompt_label(label: str) -> str:
 
 
 def title(text: str) -> str:
-    return style(t(text), "bold")
+    return style(sanitize(t(text)), "bold")
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -139,8 +153,8 @@ def _wrap_cell(cell: str, cap: int) -> list[str]:
 def render_table(
     headers: list[str], rows: list[list[str]], max_width: int | None = None
 ) -> str:
-    safe_headers = [t(str(item)) for item in headers]
-    safe_rows = [[t(str(cell)) for cell in row] for row in rows]
+    safe_headers = [sanitize(t(str(item))) for item in headers]
+    safe_rows = [[sanitize(t(str(cell))) for cell in row] for row in rows]
     column_count = len(safe_headers)
     if column_count == 0:
         return ""

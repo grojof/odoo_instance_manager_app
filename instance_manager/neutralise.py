@@ -231,11 +231,13 @@ def apply_sql(local_url: str) -> str:
         + f" WHERE ({rule.where}) AND ({_armed(rule, local_url)}); END IF; "
         for rule in CATALOGUE
     )
+    # Nested, not `AND`: PL/pgSQL plans the whole condition, so a query on a table
+    # that is not there fails even behind a false `to_regclass` test.
     flag = (
-        "IF to_regclass('ir_config_parameter') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "
+        "IF to_regclass('ir_config_parameter') IS NOT NULL THEN IF NOT EXISTS (SELECT 1 FROM "
         "ir_config_parameter WHERE key = 'database.is_neutralized') THEN "
         "INSERT INTO ir_config_parameter (key, value) VALUES ('database.is_neutralized', 'True'); "
-        "END IF; "
+        "END IF; END IF; "
     )
     return f"DO $$ BEGIN {blocks}{_mail_sink_block()}{flag}END $$;"
 
@@ -250,13 +252,20 @@ def guard_sql(local_url: str) -> str:
         for rule in CATALOGUE
     )
     sink = (
-        "IF to_regclass('ir_mail_server') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ir_mail_server "
+        "IF to_regclass('ir_mail_server') IS NOT NULL THEN IF NOT EXISTS (SELECT 1 FROM ir_mail_server "
         f"WHERE active AND name = {_lit(MAIL_SINK_NAME)} AND smtp_host = {_lit(MAIL_SINK_HOST)}) THEN "
-        "found := found || 'mail-sink (missing) '; END IF; "
+        "found := found || 'mail-sink (missing) '; END IF; END IF; "
+    )
+    # Every rule looks in the current schema: if Odoo's tables are not there, no rule
+    # applied and the check above saw nothing, so it must not pass.
+    odoo = (
+        "IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace "
+        "WHERE s.nspname = current_schema() AND c.relname = 'ir_cron') THEN "
+        "found := found || 'no Odoo tables in schema ' || current_schema() || ' '; END IF; "
     )
     return (
         "DO $$ DECLARE n integer; found text := ''; BEGIN "
-        f"{blocks}{sink}"
+        f"{odoo}{blocks}{sink}"
         "IF found <> '' THEN RAISE EXCEPTION 'the copy can still act on the outside: %', found; "
         "END IF; END $$;"
     )

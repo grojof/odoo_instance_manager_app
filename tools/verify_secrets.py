@@ -102,7 +102,7 @@ def _role(root: Path) -> None:
         return
     stubs = root / "stubs"
     stubs.mkdir()
-    _write_exe(stubs / "sudo", 'if [ "$1" = "-u" ]; then shift 2; fi\nexec "$@"\n')
+    _write_exe(stubs / "sudo", 'while [ "${1#-}" != "$1" ]; do if [ "$1" = "-u" ]; then shift; fi; shift; done\nexec "$@"\n')
     cluster = Cluster(root / "pg", bindir)
     (root / "pg").mkdir()
     try:

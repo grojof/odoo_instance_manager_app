@@ -70,7 +70,8 @@ To go back, copy the files from the `config_preupdate/<timestamp>` directory and
   (`www-data:adm`, mode `640`) and reopens Nginx's logs.
 - **Log rotation** — see [Log rotation](log-rotation.md).
 - **Install Python packages in the venv** installs into the instance's virtualenv from a requirements file or an
-  inline package list, running pip as the instance user.
+  inline package list, running pip as the instance user. Separate packages with commas (`requests, lxml`); a
+  version range keeps its own comma (`babel>=2.14,<3`), and pip options (`--index-url …`) are refused.
 
 ## Backups & duplication
 
@@ -109,7 +110,9 @@ for a refresh in place):
   - SII, TicketBAI, EDI proxy and Peppol in test mode;
   - website domain and CDN cleared, `web.base.url` pointing at the target, the "neutralised" banner and flag.
 
-  The rules, each with its source, are in `instance_manager/neutralise.py`.
+  The rules, each with its source, are in `instance_manager/neutralise.py`. They run as the copy's owner role,
+  not as the PostgreSQL superuser, so code the source database carries (a trigger, a function) gets no more
+  rights than its own role has.
 
 A copy is never visible to a running Odoo before it is neutralised. An Odoo's cron worker lists every database
 its role owns, whatever the `dbfilter`, so a duplication goes this way:
