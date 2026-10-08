@@ -40,8 +40,9 @@ derived path):
 
 1. Installs OS build dependencies and the PostgreSQL client (apt runs unattended and waits for the dpkg lock).
 2. Creates the system user `<instance>` and the directory layout under `/opt/odoo/<instance>`
-   (`odoo`, `addons-oca`, `addons-custom`) plus `/etc/odoo/<instance>`, `/var/log/odoo` and the data dir
-   `/var/lib/odoo/<instance>` (filestores and sessions, outside the home).
+   (`odoo`, `addons-oca`, `addons-custom`) plus `/etc/odoo/<instance>` and the data dir
+   `/var/lib/odoo/<instance>` (filestores and sessions, outside the home). `/var/log/odoo` stays root's; the
+   instance owns only its own log, `/var/log/odoo/<instance>.log`.
 3. Clones the core you chose — **Odoo** (official) or **OCB** (OCA's backports, same branches) — at the
    requested branch (only if absent).
 4. Builds the virtualenv with the Python interpreter the version needs (see below), installs pip, wheel and the
@@ -140,12 +141,18 @@ For HTTPS you pick a certificate strategy:
 | **Let's Encrypt (managed externally)** | Adds no certificate commands — you manage LE outside the tool. |
 | **Copy your own certificates** | Installs your CRT/KEY (+ optional intermediate), builds the fullchain, and **validates that the key matches the certificate** before Nginx is reconfigured. |
 
+## The instance name must be free
+
+The name becomes the instance's Linux user, systemd unit, home and log, so an install refuses a system account
+or service name (`backup`, `nginx`, `postgres`, …) and a name the host already has a home, config, unit, vhost,
+SSL directory or user for. To change an existing instance, use **Manage instances**.
+
 ## If an install fails
 
-If an install plan fails partway, or you interrupt it with Ctrl+C, the tool runs a **best-effort cleanup** of
-that instance's residues — service, config, home, Nginx vhosts, SSL dir, the new data dir while it holds no
-filestore, and the DB role when this run created it (a role that already existed is kept) — and returns to the
-menu, so you can retry cleanly.
+Cancelling, or pressing Ctrl+C, at the plan confirmation changes nothing. If the plan fails partway, or you
+interrupt it while it runs, the tool shows the steps that undo what that run made — service, config, home,
+Nginx vhosts, SSL dir, log, logrotate policy, Linux user, the data dir if the run created it, and the DB role if
+the run created it — and asks before running them. Then it returns to the menu, so you can retry cleanly.
 
 ## Related
 

@@ -150,6 +150,15 @@ def db_role_exists(role_name: str) -> bool:
     return _local_psql_value(f"SELECT 1 FROM pg_roles WHERE rolname = {sql_literal(role_name)}") == "1"
 
 
+def db_role_absent(role_name: str) -> bool:
+    """True only when the role certainly does not exist yet: the local server says
+    so, or there is no local PostgreSQL at all. A role an install may drop on failure
+    must be one it created, so "cannot tell" is False."""
+    if not user_exists("postgres"):
+        return True
+    return _local_psql_value(f"SELECT 1 FROM pg_roles WHERE rolname = {sql_literal(role_name)}") == ""
+
+
 def database_exists(db_name: str) -> bool:
     return _local_psql_value(f"SELECT 1 FROM pg_database WHERE datname = {sql_literal(db_name)}") == "1"
 

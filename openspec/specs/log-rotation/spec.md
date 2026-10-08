@@ -13,8 +13,8 @@ optional size threshold, using `copytruncate` so the running service is not rest
 
 - **WHEN** the operator configures log rotation for an instance
 - **THEN** the plan ensures `logrotate` is installed, writes `/etc/logrotate.d/odoo-<instance>` for
-  `/var/log/odoo/<instance>.log` with the chosen frequency/retention/compression (and `copytruncate` plus an
-  `su <user> <user>` directive), and validates it with `logrotate -d`
+  `/var/log/odoo/<instance>.log` with the chosen frequency/retention/compression and `copytruncate`, with no
+  `su` directive (`/var/log/odoo` is root's, so root rotates), and validates it with `logrotate -d`
 
 #### Scenario: Size threshold is honored when requested
 

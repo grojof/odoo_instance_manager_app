@@ -1,9 +1,4 @@
-# scheduled-backups Specification
-
-## Purpose
-Back up an instance's database, and optionally its filestore, on a systemd timer: private files, a run that fails whenever the dump, its check or the archive fails, and retention per database — with the timer's status and removal at hand.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Configure a scheduled backup
 
@@ -39,18 +34,3 @@ retention SHALL keep the newest backups by the timestamp in their names.
 - **THEN** it keeps the chosen number of newest dumps (and filestore archives) named
   `<instance>--<db>--<timestamp>` and removes the older ones, never touching other instances' or other
   databases' backups
-
-### Requirement: Inspect and remove a scheduled backup
-
-The tool SHALL show the timer status and next run, and SHALL remove the schedule (disable the timer, delete the
-units and script).
-
-#### Scenario: Status shows the timer and next run
-
-- **WHEN** the operator views the scheduled-backup status
-- **THEN** the tool shows the timer's systemd status and its next scheduled run (read-only)
-
-#### Scenario: Removal disables the timer and deletes the files
-
-- **WHEN** the operator removes the schedule
-- **THEN** the plan disables/stops the timer and deletes the timer, service, and script, then reloads systemd

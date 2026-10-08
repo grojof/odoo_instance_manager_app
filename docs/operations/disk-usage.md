@@ -24,8 +24,9 @@ Removes the oldest backups, **keeping the N most recent of each kind per databas
 filestore archives (`.filestore.tar.gz`) are counted separately. Only names of the exact form
 `<instance>--<db>--<timestamp>` are matched, so backups of another instance whose name starts the same way
 (`shop_eu` next to `shop`) are never touched. Backups written before the database was part of the name
-(`<instance>_<timestamp>`) are pruned as one more group. You choose N; the plan is previewed before it runs. A
-missing backup directory is a no-op.
+(`<instance>_<timestamp>`) are pruned as one more group. The most recent are the latest timestamps in the
+names, so a backup copied back in later does not count as new. You choose N; the plan is previewed before it
+runs. A missing backup directory is a no-op.
 
 ## Related
 

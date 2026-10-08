@@ -29,6 +29,30 @@ DB_HOST_RE = re.compile(
 )
 
 
+# Names a new instance must not take: the instance name is also its Linux user, its
+# systemd unit, its home and log names, so a system account or service name would
+# hand the tool an existing account (``userdel -r backup`` removes /var/backups) or
+# shadow a distribution unit (``/etc/systemd/system/nginx.service``).
+RESERVED_INSTANCE_NAMES = frozenset({
+    # Debian/Ubuntu base accounts and common service accounts
+    "root", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news", "uucp",
+    "proxy", "backup", "list", "irc", "gnats", "nobody", "messagebus", "syslog", "sshd",
+    "uuidd", "tcpdump", "tss", "landscape", "pollinate", "lxd", "usbmux", "dnsmasq",
+    "polkitd", "postfix", "ntp", "chrony", "ubuntu", "debian", "admin", "www_data",
+    # services this tool configures or relies on
+    "postgres", "postgresql", "nginx", "ssh", "cron", "fail2ban", "ufw", "rsyslog",
+    "logrotate", "certbot", "systemd", "networking", "docker", "snapd", "dbus", "odoo",
+    # directory names the tool keeps beside the instances
+    "ssl", "default", "filestore", "sessions",
+})
+
+
+def reserved_name_error(name: str) -> str | None:
+    if name in RESERVED_INSTANCE_NAMES:
+        return "That name is a system account or service name. Choose another instance name."
+    return None
+
+
 def is_valid_db_name(name: str) -> bool:
     """True if ``name`` is a database name Odoo accepts and every command can take."""
     return bool(DB_NAME_RE.fullmatch(name or ""))

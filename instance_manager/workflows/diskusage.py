@@ -6,12 +6,12 @@ import os
 import re
 
 from ..i18n import tf
-from ..models import InstanceConfig
+from ..models import InstanceConfig, is_valid_db_name
 from ..planners import BACKUP_DUMP_SUFFIX, BACKUP_FILESTORE_SUFFIX, plan_backup_retention
 from ..prompts import ask_int, ask_text, choose
 from ..system import path_exists, run
 from ..ui import level_text, render_table, title
-from .common import _execute_plan, _quote, _resolve_data_dir
+from .common import _backup_dir_error, _execute_plan, _quote, _resolve_data_dir
 
 
 def _size_of(path: str) -> str:
@@ -64,7 +64,8 @@ def _backed_up_databases(config: InstanceConfig, backup_dir: str) -> list[str]:
         names = os.listdir(backup_dir)
     except OSError:
         return []
-    return sorted({m.group("db") for m in map(pattern.match, names) if m})
+    # A file name is not a checked database name: one that is not valid is skipped.
+    return sorted({m.group("db") for m in map(pattern.match, names) if m and is_valid_db_name(m.group("db"))})
 
 
 def _cleanup_old_backups(config: InstanceConfig, backup_dir: str) -> None:
@@ -80,7 +81,8 @@ def _cleanup_old_backups(config: InstanceConfig, backup_dir: str) -> None:
 
 def manage_disk_usage(config: InstanceConfig) -> None:
     backup_dir = ask_text(
-        'Backup directory to review', f"/var/backups/{config.instance}", required=True
+        'Backup directory to review', f"/var/backups/{config.instance}", required=True,
+        validate=_backup_dir_error,
     )
     while True:
         action = choose(

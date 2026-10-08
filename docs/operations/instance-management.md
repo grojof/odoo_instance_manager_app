@@ -79,7 +79,8 @@ To go back, copy the files from the `config_preupdate/<timestamp>` directory and
 
 ### Backups
 
-**Create backup** exports the database and/or filestore into the backup directory you choose:
+**Create backup** exports the database and/or filestore into the backup directory you choose — a dedicated one,
+such as `/var/backups/<instance>`; a shared directory (`/tmp`, `/var/backups`, …) is refused:
 
 - Database → `pg_dump -Fc` → `<instance>--<db>--<timestamp>.dump`
 - Filestore → gzipped tar → `<instance>--<db>--<timestamp>.filestore.tar.gz`
@@ -92,7 +93,8 @@ by root only: a dump holds password hashes, API keys and mail or payment secrets
 ### Restore and duplicate — copied vs moved
 
 **Restore backup**, **Duplicate database** and **Duplicate instance** ask how the copy relates to its source,
-and each asks for its confirmation phrase (`RESTORE <instance>` / `DUPLICATE <instance>`):
+and each asks for its confirmation phrase (`RESTORE <instance>`, `DUPLICATE <source>`, or `REPLACE <target>`
+for a refresh in place):
 
 - **Copied (new UUID on target)** — the target gets its own `database.uuid`, `database.secret` and creation
   date, as Odoo's own copy does.
@@ -140,7 +142,8 @@ what in a database can still act on the outside, rule by rule, and whether the m
 
 Restore refuses to overwrite an existing target **database**. An existing target **filestore** needs an explicit
 overwrite, and is then moved aside to `<filestore>.replaced-<timestamp>`, not deleted; the restored files are
-handed to the instance user.
+handed to the instance user. When the data dir may be shared with other instances (a custom `data_dir`), only
+the restored database's filestore changes owner.
 
 ### Duplicate instance — replica or refresh
 
@@ -158,7 +161,9 @@ differs from the source database's owner.
 - **Target exists → refresh in place.** The tool stops the target service, replaces its database and filestore
   from the source, applies the semantics, and restarts it, without recreating its config or service. The
   target's database is dropped only when it belongs to the target's own role (from its `odoo.conf`) and you
-  confirm the overwrite; the source instance or database can never be the target.
+  confirm the overwrite with `REPLACE <target>`; its previous filestore is moved aside, not deleted. The source
+  instance or database can never be the target, and a name that is a system account or a half-removed
+  instance is neither refreshed nor provisioned.
 
 Every seeded database is **restricted to its owner** (`CONNECT` revoked from `PUBLIC`, granted to the owning
 role), and the target's data dir is owned by the target user.
@@ -181,10 +186,10 @@ Two levels, both phrase-gated and asked before the plan is shown:
 
 | Action | Removes | Phrase |
 |--------|---------|--------|
-| **Delete instance** (in *Manage instances*) | Service, backup timer, config, home, Nginx vhosts, SSL; optionally the database and one database's filestore | `DELETE <instance>` |
-| **Remove instances** (main menu → total purge) | Everything above **plus** the Linux user, Odoo and Nginx logs, the fail2ban jail, the filestore root, the instance's databases, and its PostgreSQL roles | `DELETE-ALL <instance>` |
+| **Delete instance** (in *Manage instances*) | Service, backup timer, config, logrotate policy, home, Nginx vhosts, SSL; optionally the database (if its owner is the instance's role) and one database's filestore | `DELETE <instance>` |
+| **Remove instances** (main menu → total purge) | Everything above **plus** the Linux user, Odoo and Nginx logs, the fail2ban jail, the instance's filestores, its databases, and its PostgreSQL roles | `DELETE-ALL <instance>` |
 
-Neither removes the instance's logrotate policy (`/etc/logrotate.d/odoo-<instance>`).
+Both reload Nginx only when it is installed, and go on if `nginx -t` fails because of another site.
 
 **Delete instance keeps the filestores you did not ask to delete.** An instance installed with
 `data_dir = /var/lib/odoo/<instance>` keeps its data dir where it is. An older instance without a `data_dir`
@@ -192,12 +197,15 @@ keeps its filestores inside the home, so the plan first moves its data dir to
 `/var/backups/<instance>/kept-data-dir-<timestamp>` and only then removes the home.
 
 The **total purge** selects the databases the instance's DB role owns and the one named exactly like the
-instance, plus those found in its filestore root and any you add. Databases whose name merely starts with the
-instance name (`shop2`, `shop_eu` when purging `shop`) are listed as **not selected**; add them yourself if they
-belong to it. When another instance connects with the same DB role, the purge says so, selects nothing by owner
-and keeps the role. Without admin DB access it performs the local cleanup only. It removes the filestore root
-(`<data_dir>/filestore`), not the rest of the data dir. The full contract is the
-[removal spec](../../openspec/specs/instance-removal/spec.md).
+instance, plus any you add. A filestore folder, or a name that merely starts with the instance name (`shop2`,
+`shop_eu` when purging `shop`), is listed as **not selected**; add those yourself if they belong to it. The role
+cannot be `postgres` or another superuser. When another instance connects with the same DB role, the purge says
+so, selects nothing by owner and keeps the role. Without admin DB access it performs the local cleanup only.
+
+The databases are dropped first, then their files. The instance's own data dir (`/var/lib/odoo/<instance>`) is
+removed whole; from any other data dir, which other instances may share, only the selected databases'
+filestores are removed. The Linux user is removed only when its home is `/opt/odoo/<instance>`. The full
+contract is the [removal spec](../../openspec/specs/instance-removal/spec.md).
 
 ## Related
 

@@ -154,7 +154,8 @@ class LogrotateContentTests(unittest.TestCase):
         self.assertIn("    weekly", content)
         self.assertIn("    rotate 14", content)
         self.assertIn("    copytruncate", content)
-        self.assertIn("    su odoo18 odoo18", content)
+        # /var/log/odoo is root's: root rotates, with no `su`.
+        self.assertNotIn(" su ", content)
         self.assertIn("    compress", content)
         self.assertIn("    delaycompress", content)
         self.assertTrue(content.rstrip().endswith("}"))

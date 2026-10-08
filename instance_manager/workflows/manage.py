@@ -48,9 +48,10 @@ from .backup_restore import (
 from .common import (
     DbCredentials,
     _ask_db_credentials,
-    _database_exists,
+    _database_owner,
     _execute_plan,
     _filestore_path,
+    _instance_db_user,
     _is_self_signed_certificate,
     _keep_data_dir_commands,
     _probe_databases_for_management,
@@ -503,10 +504,21 @@ def _delete_instance(
     creds = cached
 
     if drop_db:
-        db_name = ask_text('DB to delete', config.instance, required=True)
+        db_name = ask_text(
+            'DB to delete', config.instance, required=True,
+            validate=lambda value: None if is_valid_db_name(value) else 'Invalid database name.',
+        )
         creds = _ask_db_credentials(config.instance, cached)
         db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
-        if not _database_exists(creds, db_name):
+        owner = _database_owner(creds, db_name)
+        instance_role = _instance_db_user(config)
+        if owner and owner != instance_role:
+            print(level_text("ERROR", tf(
+                'Database {} belongs to role {}, not to this instance ({}): it is not deleted.',
+                db_name, owner, instance_role,
+            )))
+            drop_db = False
+        elif not owner:
             print(
                 level_text(
                     "WARN",
@@ -530,9 +542,6 @@ def _delete_instance(
         ),
         Command('Reload systemd', "systemctl daemon-reload"),
         *plan_remove_scheduled_backup(config),
-        Command(
-            'Remove Odoo configuration', f"rm -rf {_quote(config.odoo_conf_dir)}"
-        ),
     ]
     data_dir = _resolve_data_dir(config)
     if remove_store:
@@ -552,7 +561,19 @@ def _delete_instance(
     # that is Odoo's whole data dir — every database's filestore — so it is moved
     # out first: only the filestore the operator named above is deleted.
     commands.extend(_keep_data_dir_commands(config, data_dir))
+    if drop_db and db_name:
+        commands.append(
+            Command(
+                'Delete DB',
+                f"dropdb --if-exists -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} {_quote(db_name)}",
+                env=pg_env(db_password),
+            )
+        )
     commands.extend([
+        Command(
+            'Remove Odoo configuration', f"rm -rf {_quote(config.odoo_conf_dir)}"
+        ),
+        Command('Remove the logrotate policy', f"rm -f {_quote(config.logrotate_config_file)}"),
         Command('Remove instance home', f"rm -rf {_quote(config.odoo_home)}"),
         Command(
             'Remove Nginx HTTP',
@@ -563,18 +584,15 @@ def _delete_instance(
             f"rm -f {_quote(f'/etc/nginx/sites-available/{config.nginx_https_name}')} {_quote(f'/etc/nginx/sites-enabled/{config.nginx_https_name}')}",
         ),
         Command('Remove instance SSL', f"rm -rf {_quote(config.nginx_ssl_dir)}"),
-        Command('Validate Nginx', "nginx -t"),
-        Command('Reload Nginx', "systemctl reload nginx || true"),
+        # Best effort: a host without nginx, or whose config another site broke, still
+        # gets the instance removed.
+        Command(
+            'Validate and reload Nginx (if installed)',
+            "if command -v nginx >/dev/null 2>&1; then "
+            "if nginx -t; then systemctl reload nginx || true; "
+            "else echo 'nginx -t failed: Nginx was not reloaded' >&2; fi; fi",
+        ),
     ])
-
-    if drop_db and db_name:
-        commands.append(
-            Command(
-                'Delete DB',
-                f"dropdb --if-exists -h {_quote(db_host)} -p {int(db_port)} -U {_quote(db_user)} {_quote(db_name)}",
-                env=pg_env(db_password),
-            )
-        )
 
     if not confirm_with_phrase(
         'Destructive action detected.',

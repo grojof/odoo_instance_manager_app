@@ -31,6 +31,24 @@ loopback and the tool SHALL NOT open PostgreSQL to the network.
 - **THEN** the plan performs the DB setup without remote access (no `listen_addresses` change, no `pg_hba`
   rule) followed by the Odoo base setup, and optionally configures Nginx
 
+### Requirement: A new instance takes a free name
+
+An install with Odoo, and a replica, SHALL refuse an instance name that is a system account or service name
+(`backup`, `nginx`, `postgres`, `root`, …) or under which the host already has a home, config dir, systemd unit,
+Nginx vhost, SSL dir or Linux user, and SHALL ask for the name again, pointing to Manage instances for an
+existing instance. The name becomes the instance's Linux user, unit, home and log: taking an existing one would
+hand the tool another account or service, and the cleanup of a failed install would remove it.
+
+#### Scenario: An existing instance is not installed over
+
+- **WHEN** the operator types the name of an instance that already exists on the host
+- **THEN** the tool reports what exists under that name and asks for another name before any plan is built
+
+#### Scenario: A system name is refused
+
+- **WHEN** the operator types `backup` (whose home is `/var/backups`) or `nginx` as the instance name
+- **THEN** the tool refuses it and asks for another name
+
 ### Requirement: Odoo base setup
 
 The Odoo base setup SHALL install OS dependencies, create the instance system user and directory layout, clone
@@ -42,9 +60,15 @@ config and systemd unit, and register the service.
 
 - **WHEN** the base setup runs for a new instance
 - **THEN** it creates the system user (if missing), the `/opt/odoo/<instance>` home with `odoo`, `addons-oca`,
-  `addons-custom` subdirs, the `/etc/odoo/<instance>` config dir, `/var/log/odoo`, and the data dir
-  `/var/lib/odoo/<instance>` (mode `750`, owned by the instance user), with correct ownership and a `750`
-  config dir
+  `addons-custom` subdirs, the `/etc/odoo/<instance>` config dir, and the data dir `/var/lib/odoo/<instance>`
+  (mode `750`, owned by the instance user), with correct ownership and a `750` config dir
+
+#### Scenario: Each instance owns only its own log
+
+- **WHEN** the base setup prepares the logs
+- **THEN** `/var/log/odoo` is `root:root` mode `755`, the instance owns only `/var/log/odoo/<instance>.log`
+  (mode `640`), the logs of earlier instances (accounts whose home is `/opt/odoo/<name>`) get their own owner
+  back, and the `su` directive leaves this tool's logrotate policies for `/var/log/odoo`, which root rotates
 
 #### Scenario: Odoo repo and venv are prepared
 

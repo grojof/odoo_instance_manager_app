@@ -43,22 +43,24 @@ from ..system import (
     read_odoo_conf,
     run,
     service_active,
-    service_exists,
 )
 from ..ui import level_text, render_table
 from .common import (
     DbCredentials,
     _ask_db_credentials,
+    _backup_dir_error,
     _execute_plan,
     _filestore_path,
+    _odoo_conf_candidates,
+    _own_filestore_commands,
     _pick_db_name,
     _quote,
-    _resolve_data_dir,
 )
 from .install import (
     _choose_nginx_mode,
     _maybe_plan_certs,
     _maybe_plan_wkhtmltopdf,
+    _new_instance_name_error,
     _plan_runtime,
     _prompt_production_hardening,
     _prompt_secret,
@@ -270,7 +272,8 @@ def _backup_instance(
     db_host, db_port, db_user, db_password = creds.host, creds.port, creds.user, creds.password
 
     backup_dir = ask_text(
-        'Backup destination directory', f"/var/backups/{config.instance}", required=True
+        'Backup destination directory', f"/var/backups/{config.instance}", required=True,
+        validate=_backup_dir_error,
     )
     backup_mode = choose(
         'Backup type',
@@ -443,13 +446,7 @@ def _restore_backup(
                 f"tar --no-same-owner -xzf {_quote(filestore_backup)} -C {_quote(target_filestore)}",
             )
         )
-        commands.append(
-            Command(
-                'Own the data dir by the instance user (filestore, sessions, …)',
-                f"chown -R {_quote(config.odoo_user)}:{_quote(config.odoo_user)} "
-                f"{_quote(_resolve_data_dir(config))}",
-            )
-        )
+        commands.extend(_own_filestore_commands(config, target_db))
 
     if not confirm_with_phrase(
         'Sensitive restore action detected.',
@@ -514,37 +511,33 @@ def _filestore_copy_commands(
     source_db: str,
     target_config: InstanceConfig,
     target_db: str,
-    overwrite: bool,
 ) -> list[Command]:
-    """Copy the source filestore into the **target** instance's data dir, then hand
-    the **whole data dir** to the target user.
+    """Copy the source filestore into the **target** instance's data dir and give it
+    to the target user.
 
-    ``mkdir``/``cp`` run as root, so the created ``.local/share/Odoo`` tree would be
-    root-owned and Odoo (running as the target user) could not create its
-    ``sessions``/``filestore`` entries. Chowning the entire resolved data dir fixes
-    that, not just the copied filestore subdirectory."""
+    A filestore already at the target is moved aside, never deleted: attachments
+    created after the copy was taken are still referenced by its database. The copy
+    lands *in* the target (``src/.``), never nested inside an existing one, and runs
+    only once the source is known to be there."""
     source_filestore = _filestore_path(source_config, source_db)
     target_filestore = _filestore_path(target_config, target_db)
-    target_parent = target_filestore.rsplit("/", 1)[0]
-    target_data_dir = _resolve_data_dir(target_config)
-    owner = f"{_quote(target_config.odoo_user)}:{_quote(target_config.odoo_user)}"
-    commands = [
-        Command('Create the target filestore base path', f"mkdir -p {_quote(target_parent)}")
-    ]
-    if overwrite:
-        commands.append(
-            Command('Remove the previous target filestore', f"rm -rf {_quote(target_filestore)}")
-        )
-    commands.append(
-        Command('Duplicate the filestore', f"cp -a {_quote(source_filestore)} {_quote(target_filestore)}")
-    )
-    commands.append(
+    kept = f"{target_filestore}.replaced-{datetime.datetime.now():%Y%m%d_%H%M%S}"
+    return [
         Command(
-            'Own the target data dir (filestore, sessions, …)',
-            f"chown -R {owner} {_quote(target_data_dir)}",
-        )
-    )
-    return commands
+            tf('Check the source filestore {} exists', source_filestore),
+            f"test -d {_quote(source_filestore)}",
+        ),
+        Command(
+            tf('Move a previous target filestore aside to {}', kept),
+            f"if [ -e {_quote(target_filestore)} ]; then mv -- {_quote(target_filestore)} {_quote(kept)}; fi",
+        ),
+        Command(
+            'Duplicate the filestore',
+            f"mkdir -p {_quote(target_filestore)} && "
+            f"cp -a {_quote(source_filestore + '/.')} {_quote(target_filestore + '/')}",
+        ),
+        *_own_filestore_commands(target_config, target_db),
+    ]
 
 
 def _replicate_venv_packages_command(
@@ -648,7 +641,7 @@ def _plan_refresh_target(
     commands.extend(_hand_over_commands(target_db, target_owner))
     if duplicate_filestore:
         commands.extend(
-            _filestore_copy_commands(source_config, source_db, target_config, target_db, overwrite=True)
+            _filestore_copy_commands(source_config, source_db, target_config, target_db)
         )
     commands.append(
         Command('Start the target Odoo service', f"systemctl start {_quote(target_config.odoo_service)}")
@@ -757,7 +750,7 @@ def _plan_replica_target(
         commands.append(_replicate_venv_packages_command(source_config, target_config))
     if duplicate_filestore:
         commands.extend(
-            _filestore_copy_commands(source_config, source_db, target_config, target_db, overwrite=False)
+            _filestore_copy_commands(source_config, source_db, target_config, target_db)
         )
     commands.extend(_post_db_mode_commands(
         _psql_target_local(target_db), migration_mode, neutralize, _local_url(target_config)
@@ -855,7 +848,7 @@ def _duplicate_database(
     commands.extend(_hand_over_commands(target_db, target_owner))
     if duplicate_filestore:
         commands.extend(
-            _filestore_copy_commands(config, source_db, config, target_db, overwrite=overwrite)
+            _filestore_copy_commands(config, source_db, config, target_db)
         )
 
     if not confirm_with_phrase(
@@ -911,11 +904,17 @@ def _duplicate_instance(
         print(level_text("ERROR", str(error)))
         return creds
 
-    target_exists = (
-        service_exists(target_instance)
-        or path_exists(target_config.odoo_home)
-        or path_exists(target_config.odoo_conf_file)
+    # A refresh needs a whole instance of this tool (home and odoo.conf); anything
+    # less under that name — a system service or account, a half-removed instance —
+    # is neither refreshed nor provisioned over.
+    target_exists = path_exists(target_config.odoo_home) and any(
+        path_exists(conf) for conf in _odoo_conf_candidates(target_instance)
     )
+    if not target_exists:
+        error = _new_instance_name_error(target_instance)
+        if error:
+            print(level_text("ERROR", error))
+            return creds
 
     method_choice = choose(
         'Database copy method',
@@ -952,10 +951,9 @@ def _duplicate_instance(
     if commands is None:
         return creds
 
-    if not confirm_with_phrase(
-        'Sensitive duplication action detected.',
-        f"DUPLICATE {config.instance}",
-    ):
+    # A refresh replaces the target's data, so its phrase names the target.
+    phrase = f"REPLACE {target_config.instance}" if target_exists else f"DUPLICATE {config.instance}"
+    if not confirm_with_phrase('Sensitive duplication action detected.', phrase):
         print(level_text("INFO", 'Invalid confirmation. Operation cancelled.'))
         return creds
 

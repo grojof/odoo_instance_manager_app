@@ -8,20 +8,13 @@ from ..planners import plan_remove_scheduled_backup, plan_scheduled_backup
 from ..prompts import ask_bool, ask_int, ask_text, choose
 from ..system import run
 from ..ui import level_text, title
-from .common import _execute_plan, _filestore_path
+from .common import _backup_dir_error, _execute_plan, _filestore_path
 
 _ONCALENDAR = {
     'Daily (02:30)': "*-*-* 02:30:00",
     'Weekly (Sunday 03:00)': "Sun *-*-* 03:00:00",
     'Monthly (day 1, 03:30)': "*-*-01 03:30:00",
 }
-
-
-def _backup_dir_error(path: str) -> str | None:
-    """An absolute directory path: it is written into a root-run script."""
-    if path.startswith("/") and "\n" not in path and ".." not in path.split("/"):
-        return None
-    return 'Use an absolute directory path.'
 
 
 def _configure_schedule(config: InstanceConfig) -> None:
