@@ -130,7 +130,7 @@ the whole configuration; otherwise the previous vhost and links are put back, so
 enabled to stop nginx (and every instance) at its next restart.
 
 The vhosts accept uploads up to 2 GB and compress with gzip. The HTTPS vhost follows Odoo's deployment guide:
-TLS 1.2/1.3 with its cipher list, HSTS, and the `session_id` cookie marked `secure` (nginx ≥ 1.19.8).
+TLS 1.2/1.3 with its cipher list, HSTS, and the `session_id` cookie marked `secure` (nginx ≥ 1.19.3).
 
 For HTTPS you pick a certificate strategy:
 

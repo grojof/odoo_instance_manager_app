@@ -24,8 +24,11 @@ class NginxTests(unittest.TestCase):
         self.assertIn("ssl_session_timeout 30m;", text)
         self.assertIn("gzip on;", text)
 
-    def test_cookie_flags_need_nginx_1_19_8(self) -> None:
-        self.assertNotIn("proxy_cookie_flags", planners._nginx_https_content(_config(), (1, 18, 0)))
+    def test_cookie_flags_need_nginx_1_19_3(self) -> None:
+        self.assertNotIn("proxy_cookie_flags", planners._nginx_https_content(_config(), (1, 19, 2)))
+        self.assertIn("proxy_cookie_flags", planners._nginx_https_content(_config(), (1, 19, 3)))
+        # Unknown: written as for an older nginx, which nginx -t accepts.
+        self.assertNotIn("proxy_cookie_flags", planners._nginx_https_content(_config(), None))
 
     def test_http_allows_uploads_and_sends_no_hsts(self) -> None:
         text = planners._nginx_http_content(_config())

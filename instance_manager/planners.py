@@ -26,6 +26,12 @@ def _is_local_db_host(db_host: str) -> bool:
     }
 
 
+# The pg_hba rule the tool writes asks for scram-sha-256, and a password stored as
+# md5 cannot pass it. PostgreSQL 13 (Debian 11) still stores md5 by default; 14 and
+# later store scram. Set for the session that sets the password.
+SCRAM = "SET password_encryption = 'scram-sha-256'; "
+
+
 def _dollar_tag(*bodies: str) -> str:
     """A dollar-quote tag that none of ``bodies`` contains: a password holding ``$$``
     would otherwise end the quoted block early."""
@@ -35,18 +41,24 @@ def _dollar_tag(*bodies: str) -> str:
     return f"$oim{index}$"
 
 
-def _db_role_create_if_missing_sql(config: InstanceConfig) -> str:
+def _db_role_create_if_missing_sql(config: InstanceConfig, reset_password: bool = False) -> str:
+    """Create the role with the password, or — when it exists — keep it, setting the
+    password only when ``reset_password`` (the operator chose to)."""
     db_user_literal = _sql_literal(config.db_user)
     db_password_literal = _sql_literal(config.db_password)
     tag = _dollar_tag(db_password_literal)
     return (
-        f"DO {tag} "
+        SCRAM + f"DO {tag} "
         "BEGIN "
         f"IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{db_user_literal}') THEN "
         f"CREATE ROLE {config.db_user} WITH LOGIN CREATEDB PASSWORD '{db_password_literal}'; "
         "ELSE "
-        f"ALTER ROLE {config.db_user} WITH LOGIN CREATEDB; "
-        f"RAISE NOTICE 'Role {db_user_literal} already exists; reusing it without changing the password.'; "
+        + (f"ALTER ROLE {config.db_user} WITH LOGIN CREATEDB PASSWORD '{db_password_literal}'; "
+           f"RAISE NOTICE 'Role {db_user_literal} already exists; its password is set to the new one.'; "
+           if reset_password else
+           f"ALTER ROLE {config.db_user} WITH LOGIN CREATEDB; "
+           f"RAISE NOTICE 'Role {db_user_literal} already exists; reusing it without changing the password.'; ")
+        +
         "END IF; "
         "END "
         f"{tag};"
@@ -54,15 +66,22 @@ def _db_role_create_if_missing_sql(config: InstanceConfig) -> str:
 
 
 def _db_connectivity_check(config: InstanceConfig) -> Command:
-    """Log in as the instance's role, the way Odoo will (TCP for a local host)."""
+    """Log in as the instance's role, the way Odoo will: TCP for a local host, and
+    the SSL mode odoo.conf sets — checked against the CA where libpq looks for the
+    instance user's (``~/.postgresql/root.crt``)."""
     check_host = config.db_host
     if _is_local_db_host(check_host):
         check_host = "127.0.0.1"
+    env = pg_env(config.db_password)
+    if config.db_sslmode:
+        env["PGSSLMODE"] = config.db_sslmode
+        if config.db_sslmode.startswith("verify"):
+            env["PGSSLROOTCERT"] = f"{config.odoo_home}/.postgresql/root.crt"
     return Command(
         'Validate DB user login',
         f"psql -X -h {shlex.quote(check_host)} -p {int(config.db_port)} -U {shlex.quote(config.db_user)} "
         "-d postgres -tAc 'SELECT 1;' >/dev/null",
-        env=pg_env(config.db_password),
+        env=env,
     )
 
 
@@ -131,11 +150,17 @@ def _conf_key(line: str) -> str | None:
     return line.split("=", 1)[0].strip()
 
 
-def render_merged_odoo_conf(config: InstanceConfig, existing: dict[str, str]) -> str:
+def _conf_line(key: str, value: str) -> str:
+    """``key = value``, a value of several lines continued as Odoo's parser reads it."""
+    return f"{key} = " + value.replace("\n", "\n    ")
+
+
+def render_merged_odoo_conf(config: InstanceConfig, existing: dict[str, str], other_sections: str = "") -> str:
     """The instance's ``odoo.conf`` regenerated without losing what it held: the
-    keys in ``CONF_KEYS_KEPT_ON_UPDATE`` keep their current value, and every key the
+    keys in ``CONF_KEYS_KEPT_ON_UPDATE`` keep their current value, every key the
     tool does not write (``smtp_*``, ``server_wide_modules``, ``db_name``, …) is
-    carried over below. Pure — ``existing`` is the parsed current file."""
+    carried over below, and the file's other sections (``[queue_job]``, …) follow as
+    they were. Pure — ``existing`` is the parsed ``[options]`` of the current file."""
     lines = _odoo_conf_content(config).rstrip("\n").split("\n")
     written: set[str] = set()
     for index, line in enumerate(lines):
@@ -144,16 +169,18 @@ def render_merged_odoo_conf(config: InstanceConfig, existing: dict[str, str]) ->
             continue
         written.add(key)
         if key in CONF_KEYS_KEPT_ON_UPDATE and existing.get(key, "") != "":
-            lines[index] = f"{key} = {existing[key]}"
+            lines[index] = _conf_line(key, existing[key])
     for key in CONF_KEYS_KEPT_ON_UPDATE:
         if key not in written and existing.get(key, "") != "":
-            lines.append(f"{key} = {existing[key]}")
+            lines.append(_conf_line(key, existing[key]))
             written.add(key)
     if written & set(_BUS_PORT_KEYS):
         written |= set(_BUS_PORT_KEYS)
-    carried = [f"{key} = {value}" for key, value in existing.items() if key not in written]
+    carried = [_conf_line(key, value) for key, value in existing.items() if key not in written]
     if carried:
         lines += ["", "; kept from the previous configuration", *carried]
+    if other_sections:
+        lines += ["", other_sections]
     return "\n".join(lines) + "\n"
 
 
@@ -163,6 +190,7 @@ def plan_update_instance_config(
     *,
     new_db_password: bool,
     restart: bool,
+    other_sections: str = "",
 ) -> list[Command]:
     """Rewrite an existing instance's ``odoo.conf`` (merged) and unit, and apply them.
 
@@ -171,7 +199,7 @@ def plan_update_instance_config(
     the next start could not connect. The service is restarted when it runs, since
     ``systemctl start`` on a running unit loads nothing."""
     commands = write_text_file_command(
-        config.odoo_conf_file, render_merged_odoo_conf(config, existing), "640",
+        config.odoo_conf_file, render_merged_odoo_conf(config, existing, other_sections), "640",
         secrets=(config.odoo_admin_passwd, config.db_password,
                  *(value for key, value in existing.items() if "pass" in key or "secret" in key)),
     )
@@ -182,10 +210,10 @@ def plan_update_instance_config(
     commands += write_text_file_command(service_path, _systemd_content(config), "644")
     commands.append(Command('Reload systemd', "systemctl daemon-reload"))
     if new_db_password and not config.is_remote_db_host:
-        sql = f"ALTER ROLE {config.db_user} WITH PASSWORD '{_sql_literal(config.db_password)}';"
+        sql = f"{SCRAM}ALTER ROLE \"{config.db_user}\" WITH PASSWORD '{_sql_literal(config.db_password)}';"
         commands.append(
             _psql_stdin_command(
-                "sudo -u postgres psql -X -q -v ON_ERROR_STOP=1", sql, (config.db_password,),
+                f"{_local_psql(config)} -q -v ON_ERROR_STOP=1", sql, (config.db_password,),
                 'Set the new password on the local PostgreSQL role',
             )
         )
@@ -291,7 +319,9 @@ def _proxy_headers(extra: str = "") -> str:
 def _secure_location_headers(nginx_version: tuple[int, int, int] | None) -> str:
     # add_header in a location replaces the server's, so each location carries it.
     lines = '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains";\n'
-    if nginx_version is None or nginx_version >= (1, 19, 8):
+    # proxy_cookie_flags appeared in nginx 1.19.3; an unknown version is taken as
+    # older, since nginx -t rejects a directive it does not know.
+    if nginx_version is not None and nginx_version >= (1, 19, 3):
         lines += "    proxy_cookie_flags session_id samesite=lax secure;\n"
     return lines
 
@@ -881,12 +911,18 @@ def plan_odoo_base_setup(
     return commands
 
 
+def _local_psql(config: InstanceConfig) -> str:
+    """psql as postgres on the local server, at the instance's port (a host may run
+    a second cluster)."""
+    return f"sudo -u postgres psql -X -p {int(config.db_port)}"
+
+
 def _pg_hba_append_command(config: InstanceConfig) -> str:
     """Append the app server's rule to pg_hba.conf unless the same line is there.
     The values are validated (role, IP) and the line is shell-quoted as one word."""
     rule = f"host    all     {config.db_user}     {host_cidr(config.app_server_ip)}     scram-sha-256"
     return (
-        'PG_HBA=$(sudo -u postgres psql -X -t -P format=unaligned -c "SHOW hba_file;") && '
+        f'PG_HBA=$({_local_psql(config)} -t -P format=unaligned -c "SHOW hba_file;") && '
         f'{{ grep -qxF -- {shlex.quote(rule)} "$PG_HBA" || printf \'%s\\n\' {shlex.quote(rule)} >> "$PG_HBA"; }}'
     )
 
@@ -919,7 +955,7 @@ def _venv_commands(config: InstanceConfig) -> list[Command]:
         create = (
             f"env UV_PYTHON_INSTALL_DIR={shlex.quote(support.UV_PYTHON_DIR)} UV_PYTHON_DOWNLOADS=never "
             "UV_PYTHON_PREFERENCE=only-managed "
-            f"uv venv --seed --allow-existing --no-project --python {shlex.quote(config.python)} "
+            f"{support.UV_BIN} venv --seed --allow-existing --no-project --python {shlex.quote(config.python)} "
             f"{shlex.quote(venv)}"
         )
         label = tf('Create the venv with Python {} (uv)', config.python)
@@ -948,8 +984,9 @@ def _venv_commands(config: InstanceConfig) -> list[Command]:
 
 
 def plan_ensure_uv(arch: str) -> list[Command]:
-    """Install the pinned uv into /usr/local/bin when it is missing, from GitHub's
-    release asset, checked against its published SHA-256 before anything runs."""
+    """Install the pinned uv into /usr/local/bin unless that exact version is there,
+    from GitHub's release asset, checked against its published SHA-256 before
+    anything runs. Another uv on root's PATH does not count."""
     asset = support.UV_ASSETS.get(arch)
     if asset is None:
         return []
@@ -957,7 +994,8 @@ def plan_ensure_uv(arch: str) -> list[Command]:
     url = f"https://github.com/astral-sh/uv/releases/download/{support.UV_VERSION}/{filename}"
     stem = filename.removesuffix(".tar.gz")
     script = (
-        "command -v uv >/dev/null 2>&1 && exit 0; "
+        f'[ "$({support.UV_BIN} --version 2>/dev/null | cut -d" " -f2)" = {shlex.quote(support.UV_VERSION)} ] && exit 0; '
+
         'tmp=$(mktemp -d) && trap \'rm -rf "$tmp"\' EXIT && '
         f'curl -fsSL -o "$tmp/{filename}" {shlex.quote(url)} && '
         f'echo {shlex.quote(sha256 + "  ")}"$tmp/{filename}" | sha256sum -c - && '
@@ -969,7 +1007,7 @@ def plan_ensure_uv(arch: str) -> list[Command]:
             'Ensure curl is available',
             "command -v curl >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=600 install curl)",
         ),
-        Command(tf('Install uv {} (checksum-verified) if missing', support.UV_VERSION), script),
+        Command(tf('Install uv {} (checksum-verified) unless it is there', support.UV_VERSION), script),
     ]
 
 
@@ -981,7 +1019,8 @@ def plan_uv_python(python: str) -> list[Command]:
         Command(
             tf('Install Python {} with uv into {}', python, support.UV_PYTHON_DIR),
             f"install -d -m 755 {directory} && "
-            f"UV_PYTHON_INSTALL_DIR={directory} uv python install {shlex.quote(python)} && "
+            # --no-bin: no `python3.x` link in root's PATH; venvs name the interpreter.
+            f"UV_PYTHON_INSTALL_DIR={directory} {support.UV_BIN} python install --no-bin {shlex.quote(python)} && "
             f"chmod -R a+rX,go-w {directory}",
         )
     ]
@@ -996,7 +1035,7 @@ def _postgres_floor_commands(config: InstanceConfig) -> list[Command]:
     return [
         Command(
             tf('Check PostgreSQL is {} or newer (Odoo {} requirement)', floor, version.major),
-            "v=$(sudo -u postgres psql -X -tAc 'SHOW server_version_num') && "
+            f"v=$({_local_psql(config)} -tAc 'SHOW server_version_num') && "
             f'[ "$v" -ge {floor * 10000} ] || '
             f"{{ echo \"PostgreSQL $v is older than {floor}, the floor of Odoo {version.major}.\" >&2; exit 1; }}",
         )
@@ -1004,12 +1043,12 @@ def _postgres_floor_commands(config: InstanceConfig) -> list[Command]:
 
 
 def plan_db_setup(
-    config: InstanceConfig, ensure_remote_access: bool = True
+    config: InstanceConfig, ensure_remote_access: bool = True, reset_password: bool = False
 ) -> list[Command]:
     config.normalize_defaults()
     config.ensure_strong_secrets()
     config.validate_identifiers()
-    role_sql = _db_role_create_if_missing_sql(config)
+    role_sql = _db_role_create_if_missing_sql(config, reset_password)
 
     commands: list[Command] = [
         Command(
@@ -1018,7 +1057,7 @@ def plan_db_setup(
         Command('Enable and start PostgreSQL', "systemctl enable --now postgresql"),
         *_postgres_floor_commands(config),
         _psql_stdin_command(
-            "sudo -u postgres psql -X -v ON_ERROR_STOP=1", role_sql, (config.db_password,),
+            f"{_local_psql(config)} -v ON_ERROR_STOP=1", role_sql, (config.db_password,),
             'Ensure PostgreSQL role (create if missing)',
         ),
         _db_connectivity_check(config),
@@ -1027,32 +1066,38 @@ def plan_db_setup(
     if ensure_remote_access:
         commands.extend(
             [
+                # ALTER SYSTEM wins over postgresql.conf and conf.d; listen_addresses
+                # needs a restart, which drops every instance's connections, so only
+                # when the value changes. The result is read back.
                 Command(
-                    "Allow listen_addresses='*'",
-                    'PG_CONF=$(sudo -u postgres psql -t -P format=unaligned -c "SHOW config_file;") && sed -ri "s/^#?\\s*listen_addresses\\s*=.*/listen_addresses = \'*\'/" "$PG_CONF"',
+                    "Listen on every address (listen_addresses = '*')",
+                    f"psql=({_local_psql(config)} -tA -v ON_ERROR_STOP=1); "
+                    'if [ "$("${psql[@]}" -c "SHOW listen_addresses")" != "*" ]; then '
+                    '"${psql[@]}" -c "ALTER SYSTEM SET listen_addresses = \'*\'" && systemctl restart postgresql; fi && '
+                    '[ "$("${psql[@]}" -c "SHOW listen_addresses")" = "*" ]',
                 ),
                 Command(
                     'Add pg_hba rule for the app-server IP',
                     _pg_hba_append_command(config),
                 ),
-                Command('Restart PostgreSQL', "systemctl restart postgresql"),
+                Command('Reload PostgreSQL (pg_hba)', "systemctl reload postgresql"),
             ]
         )
 
     return commands
 
 
-def plan_ensure_db_role(config: InstanceConfig) -> list[Command]:
+def plan_ensure_db_role(config: InstanceConfig, reset_password: bool = False) -> list[Command]:
     config.normalize_defaults()
     config.ensure_strong_secrets()
     config.validate_identifiers()
 
     commands: list[Command] = []
     if _is_local_db_host(config.db_host):
-        role_sql = _db_role_create_if_missing_sql(config)
+        role_sql = _db_role_create_if_missing_sql(config, reset_password)
         commands.append(
             _psql_stdin_command(
-                "sudo -u postgres psql -X -v ON_ERROR_STOP=1", role_sql, (config.db_password,),
+                f"{_local_psql(config)} -v ON_ERROR_STOP=1", role_sql, (config.db_password,),
                 'Ensure local PostgreSQL role (create if missing)',
             )
         )
@@ -1481,43 +1526,45 @@ def plan_ufw_delete_rule(number: int, expected_line: str) -> list[Command]:
 _WKHTMLTOPDF_BASE_URL = (
     "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3"
 )
-# Detected OS codename -> (asset filename, sha256). amd64, Qt-patched 0.12.6.1-3.
-# The jammy build is verified against Odoo's own pinned checksum (its SHA-1
-# 967390a759707337b46d1c02452e2bb6b2dc6d59 matches the Odoo 18 Dockerfile) and
-# also runs on noble (24.04). Codenames without a compatible asset resolve to
-# None so the caller recommends the distro package or skip — never a guessed URL.
-_WKHTMLTOPDF_ASSETS: dict[str, tuple[str, str]] = {
-    "jammy": (
-        "wkhtmltox_0.12.6.1-3.jammy_amd64.deb",
-        "4f723b2691ad8638a9df960e0421d346d7315083e3583a334f33362280ddba15",
-    ),
-    "noble": (
-        "wkhtmltox_0.12.6.1-3.jammy_amd64.deb",
-        "4f723b2691ad8638a9df960e0421d346d7315083e3583a334f33362280ddba15",
-    ),
-    "bookworm": (
-        "wkhtmltox_0.12.6.1-3.bookworm_amd64.deb",
-        "98ba0d157b50d36f23bd0dedf4c0aa28c7b0c50fcdcdc54aa5b6bbba81a3941d",
-    ),
-    "bullseye": (
-        "wkhtmltox_0.12.6.1-3.bullseye_amd64.deb",
-        "9c687f0c58cf50e01f2a6375d2e34372f8feeec56a84690ea113d298fccadd98",
-    ),
+# (OS codename, machine) -> (asset filename, sha256), Qt-patched 0.12.6.1-3. The
+# jammy amd64 build is verified against Odoo's own pinned checksum (its SHA-1
+# 967390a759707337b46d1c02452e2bb6b2dc6d59 matches the Odoo 18 Dockerfile) and also
+# runs on noble (24.04); the other checksums were computed from the release's
+# assets (GitHub publishes no digest for this release). Pairs without a compatible
+# asset — Debian 13, Ubuntu 26.04, other machines — resolve to None, so the caller
+# offers the distribution package or skip, never a guessed URL.
+_WKHTMLTOPDF_ASSETS: dict[tuple[str, str], tuple[str, str]] = {
+    ("jammy", "x86_64"): ("wkhtmltox_0.12.6.1-3.jammy_amd64.deb",
+                          "4f723b2691ad8638a9df960e0421d346d7315083e3583a334f33362280ddba15"),
+    ("jammy", "aarch64"): ("wkhtmltox_0.12.6.1-3.jammy_arm64.deb",
+                           "2095f20256661ebf0983b9311168596c9d012666e21a94bc24f304db6ac69ec5"),
+    ("bookworm", "x86_64"): ("wkhtmltox_0.12.6.1-3.bookworm_amd64.deb",
+                             "98ba0d157b50d36f23bd0dedf4c0aa28c7b0c50fcdcdc54aa5b6bbba81a3941d"),
+    ("bookworm", "aarch64"): ("wkhtmltox_0.12.6.1-3.bookworm_arm64.deb",
+                              "b6606157b27c13e044d0abbe670301f88de4e1782afca4f9c06a5817f3e03a9c"),
+    ("bullseye", "x86_64"): ("wkhtmltox_0.12.6.1-3.bullseye_amd64.deb",
+                             "9c687f0c58cf50e01f2a6375d2e34372f8feeec56a84690ea113d298fccadd98"),
+    ("bullseye", "aarch64"): ("wkhtmltox_0.12.6.1-3.bullseye_arm64.deb",
+                              "e73435a82cf21ba0387bfee32a193f221fa43e48dda6ed38b12e4c1b70c69728"),
 }
+# Ubuntu 24.04 runs the 22.04 build.
+_WKHTMLTOPDF_SAME_AS = {"noble": "jammy"}
 
 
-def resolve_wkhtmltopdf_asset(codename: str) -> tuple[str, str, str] | None:
-    """``(url, filename, sha256)`` for the patched wkhtmltopdf matching ``codename``,
-    or ``None`` when no compatible verified asset is pinned (the caller then
-    recommends the distro package or skip; it never guesses a URL)."""
-    entry = _WKHTMLTOPDF_ASSETS.get((codename or "").strip().lower())
+def resolve_wkhtmltopdf_asset(codename: str, arch: str = "x86_64") -> tuple[str, str, str] | None:
+    """``(url, filename, sha256)`` for the patched wkhtmltopdf matching ``codename``
+    and the machine ``arch`` (``x86_64``, ``aarch64``), or ``None`` when no compatible
+    verified asset is pinned (the caller then offers the distro package or skip; it
+    never guesses a URL)."""
+    name = (codename or "").strip().lower()
+    entry = _WKHTMLTOPDF_ASSETS.get((_WKHTMLTOPDF_SAME_AS.get(name, name), arch))
     if not entry:
         return None
     filename, sha256 = entry
     return f"{_WKHTMLTOPDF_BASE_URL}/{filename}", filename, sha256
 
 
-def plan_install_wkhtmltopdf(mode: str, codename: str = "") -> list[Command]:
+def plan_install_wkhtmltopdf(mode: str, codename: str = "", arch: str = "x86_64") -> list[Command]:
     """Plan a wkhtmltopdf install.
 
     ``mode == "patched"``: download the codename's pinned Qt-patched ``.deb``,
@@ -1534,7 +1581,7 @@ def plan_install_wkhtmltopdf(mode: str, codename: str = "") -> list[Command]:
         ]
     if mode != "patched":
         return []
-    asset = resolve_wkhtmltopdf_asset(codename)
+    asset = resolve_wkhtmltopdf_asset(codename, arch)
     if asset is None:
         return []
     url, filename, sha256 = asset

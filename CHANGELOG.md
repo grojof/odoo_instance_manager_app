@@ -12,7 +12,7 @@ All notable changes to this project are documented here. The format is based on
   with the host `python3` only when it can build the version, else with a CPython installed by uv (pinned,
   SHA-256-checked) into `/opt/odoo-python`. setuptools is pinned per version (`<58` up to 13, `<81` up to 16) and
   Odoo 12's `pyldap` is replaced. Before, Odoo 14 did not install on Ubuntu 24.04 (its requirements stop at
-  Python 3.10) and Odoo 15–16 did not start there (setuptools 81 removed the `pkg_resources` they import).
+  Python 3.10) and Odoo 15–16 did not start there (setuptools 82 removed the `pkg_resources` they import).
 - **OCB.** The install asks for the core — official Odoo or OCA's OCB; a replica runs the source's core.
 - New instances get `without_demo = all` (Odoo ≤ 18) and `data_dir = /var/lib/odoo/<instance>`, outside the
   home. The PostgreSQL floor of the Odoo version is checked when PostgreSQL is installed.
@@ -42,6 +42,25 @@ All notable changes to this project are documented here. The format is based on
 - The duplication confirmation phrase is `DUPLICATE <instance>` (was `DUPLICAR`).
 
 ### Fixed
+
+- **Installs that failed on supported hosts.**
+  - **Python.** Odoo 15 on Debian 12 (Python 3.11) and Odoo 14 on a host Python 3.10 hit the `gevent==21.8.0` pin,
+    which has no wheel there and no longer builds; they now get uv's interpreter.
+  - **PostgreSQL 13** (Debian 11) stored the role's password as md5, which the scram `pg_hba` rule refuses.
+  - **nginx.** The first HTTPS install on Ubuntu 22.04 and Debian 11 wrote `proxy_cookie_flags` for an nginx that
+    was not installed yet (1.18 rejects it).
+  - **An existing database role** kept its old password while `odoo.conf` got the new one; the install now asks
+    which password to use.
+  - **arm64** got the amd64 wkhtmltopdf package.
+- **Corrected facts.** Odoo 16's Python maximum is 3.12, as `odoo/__init__.py` states, not 3.13: Debian 13's
+  3.13 now gets uv's 3.12. Odoo 15–18 state their range outright (official, not derived). setuptools removed
+  `pkg_resources` in 82.
+- **Update configuration** keeps `odoo.conf`'s other sections and multi-line values, and writes each key once.
+  Before, a key written in two cases made the file unreadable for Odoo.
+- **PostgreSQL steps.**
+  - Local commands use the instance's port.
+  - Remote access survives a distribution's `conf.d` and restarts PostgreSQL only when needed.
+  - uv is always the pinned one.
 
 - **A neutralised copy could still reach the outside.**
   - Several rules named columns some versions lack, so they were skipped silently and left those copies in

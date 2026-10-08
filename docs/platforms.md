@@ -45,16 +45,17 @@ assuming a single stack:
 | OS family | Debian/Ubuntu (**apt**) | Package steps target apt. A non-apt OS is detected and warned, not driven blindly. |
 | Ubuntu | 22.04 (jammy), 24.04 (noble) | Validated primary targets. Newer releases work; the wkhtmltopdf table maps noble → the jammy build. |
 | Debian | 11 (bullseye), 12 (bookworm) | wkhtmltopdf assets pinned for both. |
-| nginx | 1.18 → 1.25+ | HTTP/2 directive form chosen by detected version; `proxy_cookie_flags` written from 1.19.8. `tools/verify_ops_configs.py` runs `nginx -t` on the generated vhosts with the nginx the host distribution ships (1.24 on Ubuntu 24.04). |
+| nginx | 1.18 → 1.25+ | HTTP/2 directive form chosen by detected version; `proxy_cookie_flags` written from 1.19.3. The version is the installed nginx's, or the one apt would install when the plan installs it; when neither is known the vhost is written for an older nginx. `tools/verify_ops_configs.py` runs `nginx -t` on the generated vhosts with the nginx the host distribution ships (1.24 on Ubuntu 24.04). |
 | PostgreSQL | 13+ | Local drops use `dropdb --force` (13+); Odoo's own floor per version is below. Every supported Ubuntu/Debian ships 13 or newer. |
 | Odoo Community | 12 → 19 | Per-version interpreter, setuptools, config keys — see the table below. Official Odoo or OCB. |
 | wkhtmltopdf | 0.12.6.1-3 (patched) | jammy/noble, bookworm, bullseye assets, each SHA-256-pinned; other codenames use the distro package or skip. |
-| CPU architecture | x86_64 (amd64), aarch64 | The pinned uv exists for both; an Odoo version that needs uv's Python cannot be installed on another architecture. The patched wkhtmltopdf assets are amd64 only (use the distro package elsewhere). |
+| CPU architecture | x86_64 (amd64), aarch64 | The pinned uv exists for both; an Odoo version that needs uv's Python cannot be installed on another architecture. The patched wkhtmltopdf has amd64 and arm64 builds for Ubuntu 22.04/24.04 and Debian 11/12; elsewhere the distribution package is offered when it has one. |
 
 ## Odoo versions
 
-Python ranges are those Odoo declares; a maximum marked *derived* is the newest interpreter bucket the branch's
-`requirements.txt` declares (only Odoo 19 states one outright). The fallback interpreter is the one uv installs
+Python ranges are those Odoo declares: Odoo 15–19 state their range outright (`MIN_PY_VERSION` /
+`MAX_PY_VERSION` in `odoo/__init__.py`, `odoo/release.py` from 19). Odoo 14's maximum is *derived*: the newest
+interpreter bucket its `requirements.txt` declares. The fallback interpreter is the one uv installs
 when the host's cannot build the version. The facts are declared once, in `instance_manager/support.py`;
 `tools/verify_install_runtime.py` builds a venv for a given Odoo checkout with them and starts it.
 
@@ -62,14 +63,17 @@ when the host's cannot build the version. The facts are declared once, in `insta
 |------|--------|---------------|------------|------------------|-------|
 | 12 | 3.5 – no maximum stated | 3.8 | `<58` | not stated | host used only up to 3.8; `pyldap` → `python-ldap==3.1.0` |
 | 13 | 3.6 – no maximum stated | 3.8 | `<58` | not stated | host used only up to 3.8 |
-| 14 | 3.7 – 3.10 (derived) | 3.8 | `<81` | 12 | |
-| 15 | 3.7 – 3.12 (derived) | 3.12 | `<81` | 12 | |
-| 16 | 3.7 – 3.13 (derived) | 3.12 | `<81` | 12 | never a host 3.10 (gevent pin) |
-| 17 | 3.10 – 3.14 (derived) | 3.12 | current | 12 | never a host 3.10 (gevent pin) |
-| 18 | 3.10 – 3.14 (derived) | 3.12 | current | 12 | never a host 3.10 (gevent pin) |
+| 14 | 3.7 – 3.10 (derived) | 3.8 | `<81` | 12 | never a host 3.10 (gevent pin) |
+| 15 | 3.7 – 3.12 (official) | 3.12 | `<81` | 12 | never a host 3.10 or 3.11 (gevent pin) |
+| 16 | 3.7 – 3.12 (official) | 3.12 | `<81` | 12 | never a host 3.10 (gevent pin) |
+| 17 | 3.10 – 3.14 (official) | 3.12 | current | 12 | never a host 3.10 (gevent pin) |
+| 18 | 3.10 – 3.14 (official) | 3.12 | current | 12 | never a host 3.10 (gevent pin) |
 | 19 | 3.10 – 3.14 (official) | 3.12 | current | 13 | demo data off by default in Odoo itself |
 
-On Ubuntu 24.04 (Python 3.12) the host interpreter builds Odoo 15–19; Odoo 12–14 get uv's 3.8.
+On Ubuntu 24.04 (Python 3.12) the host interpreter builds Odoo 15–19; Odoo 12–14 get uv's 3.8. The gevent pin is
+the `gevent==21.8.0` row of each branch's `requirements.txt`: that release has no wheel for those interpreters and
+its source no longer builds, so uv's interpreter is used instead. `setuptools<81` keeps `pkg_resources`, which
+Odoo ≤ 16 imports and setuptools 82 removed.
 
 ## Out of scope
 
